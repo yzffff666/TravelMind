@@ -1,0 +1,36 @@
+%%{init: {'theme':'base','themeVariables': {'background':'#ffffff','primaryTextColor':'#111111','secondaryTextColor':'#111111','tertiaryTextColor':'#111111','lineColor':'#333333','fontFamily':'Arial'}}}%%
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant FE as Frontend
+    participant API as FastAPI /api/langgraph/query
+    participant G as LangGraph Travel Flow
+    participant P as Provider Layer
+    participant DB as MySQL/Redis
+
+    rect rgb(235, 245, 255)
+    U->>FE: 输入旅行需求
+    FE->>API: SSE请求(query + user context)
+    API->>G: 启动首次规划流程
+    G-->>FE: stage_start(clarify_constraints)
+    G->>G: 约束检查(缺失必填则追问)
+    G-->>FE: stage_progress(clarification_questions)
+    FE->>API: 用户补充约束
+    API->>G: resume(Command)
+    end
+
+    rect rgb(240, 255, 245)
+    G-->>FE: stage_start(draft_plan)
+    G->>P: 串行确定候选池(Search -> 粗Map)
+    G->>P: 条件并行拉取(Weather + Review)
+    P-->>G: 证据结果(含来源/时间/URL)
+    G-->>FE: tool_result(evidence_batch)
+    G->>G: 预算/时空可达性/风险校验
+    G-->>FE: stage_progress(validation_summary)
+    end
+
+    rect rgb(255, 248, 238)
+    G->>DB: 保存 itinerary revision=1 + evidence refs
+    G-->>FE: final_itinerary(itinerary_v1 + explanation)
+    Note over G,FE: 若结构化校验失败(P0缺失) -> 输出 final_text(澄清问题)
+    end

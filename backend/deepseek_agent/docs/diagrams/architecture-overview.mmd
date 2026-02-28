@@ -1,0 +1,51 @@
+%%{init: {'theme':'base','themeVariables': {'background':'#ffffff','primaryTextColor':'#111111','secondaryTextColor':'#111111','tertiaryTextColor':'#111111','lineColor':'#333333','fontFamily':'Arial'}, 'flowchart':{'curve':'basis'}}}%%
+flowchart LR
+    subgraph FE["Frontend Layer (`frontend/DsAgentChat_web`)"]
+        UI["Travel UI<br/>`src/views/TravelPlanner.vue`<br/>兼容: `Home.vue` / `EcommerceService.vue`"]
+        Store["State & Router<br/>`src/stores/*`<br/>`src/router/index.ts`"]
+        APIClient["API/SSE Client<br/>`src/services/api.ts`<br/>`src/services/travelApi.ts`(新增)"]
+        UI --> Store --> APIClient
+    end
+
+    subgraph BE["Backend Layer (`backend/deepseek_agent/llm_backend`)"]
+        Main["FastAPI Entry<br/>`main.py`"]
+        CP["Control Plane<br/>LangGraph (`lg_builder.py`)"]
+        Tools["Tool/Workflow Layer<br/>`kg_sub_graph/**`"]
+        Svc["Domain Services<br/>conversation / search / indexing / cache"]
+        Main --> CP --> Tools
+        Main --> Svc
+    end
+
+    subgraph DS["Data & State Layer"]
+        MySQL["MySQL<br/>users / conversations / messages<br/>itinerary / revision / diff(新增)"]
+        Redis["Redis<br/>semantic cache"]
+        Neo4j["Neo4j<br/>graph query"]
+        GR["GraphRAG Data<br/>`app/graphrag/data/*`"]
+    end
+
+    subgraph EXT["Provider Layer (抽象，不绑定厂商)"]
+        LLM["LLM Provider"]
+        Search["Search Provider"]
+        Map["Map/Transit Provider"]
+        Weather["Weather Provider"]
+        Review["Review Provider"]
+    end
+
+    APIClient --> Main
+    CP --> Redis
+    Svc --> MySQL
+    Tools --> Neo4j
+    Svc --> GR
+
+    Svc --> LLM
+    Tools --> Search
+    Tools --> Map
+    Tools --> Weather
+    Tools --> Review
+
+    classDef layer fill:#f8fbff,stroke:#6b8cff,stroke-width:1px;
+    classDef data fill:#f3fff5,stroke:#3fa35b,stroke-width:1px;
+    classDef ext fill:#fff8f1,stroke:#d4903b,stroke-width:1px;
+    class FE,BE layer;
+    class DS data;
+    class EXT ext;
