@@ -147,7 +147,6 @@ uvicorn.run(
 - 工程设计：`design.md`
 - 任务拆解：`task.md`
 - 学习路线：`study.md`
-- 变更记录：`CHANGELOG.md`
 
 ## License
 
