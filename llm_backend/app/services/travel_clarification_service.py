@@ -2,10 +2,10 @@ import json
 import re
 from typing import Any, Dict, List, Tuple
 
-from app.domain.travel.clarification_rules import (
-    CLARIFICATION_STAGE_NAME,
+from app.domain.travel.rules import (
     CLARIFICATION_MSG_HARD_AND_SOFT,
     CLARIFICATION_MSG_HARD_ONLY,
+    CLARIFICATION_STAGE_NAME,
     CONSTRAINT_PATTERNS,
     FIELD_LABELS,
     HARD_REQUIRED_FIELDS,

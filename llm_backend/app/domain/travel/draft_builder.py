@@ -1,4 +1,4 @@
-from app.domain.travel.draft_rules import DRAFT_CONFIG, DraftConfig
+from app.domain.travel.rules import DRAFT_CONFIG, DraftConfig
 from app.schemas.itinerary_v1 import ItinerarySlot
 
 # 提取天数

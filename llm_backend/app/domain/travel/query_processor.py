@@ -4,14 +4,13 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-from app.domain.travel.clarification_rules import HARD_REQUIRED_FIELDS
 from app.domain.travel.draft_builder import (
     extract_budget,
     extract_days,
     extract_destination,
     extract_traveler_type,
 )
-from app.domain.travel.qp_rules import QP_RULES
+from app.domain.travel.rules import HARD_REQUIRED_FIELDS, QP_RULES
 
 # 意图类型
 IntentType = Literal["create", "edit", "qa", "reset"]
