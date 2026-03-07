@@ -12,7 +12,7 @@ from app.schemas.itinerary_v1 import (
     TripProfile,
 )
 # 行程草案规则
-from app.domain.travel.draft_rules import DRAFT_CONFIG, DraftConfig
+from app.domain.travel.rules import DRAFT_CONFIG, DraftConfig
 # 行程草案构建器
 from app.domain.travel.draft_builder import (
     build_slots,
