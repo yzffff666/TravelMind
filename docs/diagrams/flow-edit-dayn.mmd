@@ -1,0 +1,38 @@
+%%{init: {'theme':'base','themeVariables': {'background':'#ffffff','primaryTextColor':'#111111','secondaryTextColor':'#111111','tertiaryTextColor':'#111111','lineColor':'#333333','fontFamily':'Arial'}}}%%
+sequenceDiagram
+    autonumber
+    participant U as User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant RS as Revision Service
+    participant G as LangGraph DayN Flow
+    participant P as Provider Layer
+    participant DB as MySQL
+
+    rect rgb(235, 245, 255)
+    U->>FE: 编辑 Day N 需求（如改成室内活动）
+    FE->>API: POST edit_day_n(request_id, day=3, change_request,...)
+    API->>RS: 读取当前 itinerary revision
+    RS-->>API: base_revision + Day N segment
+    Note over API,RS: 同一 request_id 幂等，不重复创建 revision
+    end
+
+    rect rgb(240, 255, 245)
+    API->>G: 仅重规划 Day N 子图
+    G->>P: 拉取 Day N 相关证据（天气/营业状态/评价）
+    P-->>G: 增量证据
+    G->>RS: 生成新 revision + day-level diff
+    RS->>DB: 写入 revision(N+1)、diff、change_summary
+    end
+
+    rect rgb(255, 248, 238)
+    API-->>FE: final_itinerary(revision=N+1, diff, unchanged_days)
+    alt changed_days 超阈值
+        FE-->>U: 弹窗确认（影响日 + 预算差额 + 风险变化）
+    else changed_days 在阈值内
+        FE-->>U: 直接应用并展示对比
+    end
+    FE->>API: rollback(revision_id)（可选）
+    API->>RS: 回滚到指定 revision
+    RS->>DB: 记录回滚事件
+    end
