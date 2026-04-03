@@ -14,9 +14,11 @@ from app.services.providers.call_policy import (
     ProviderCallPolicy,
     ProviderType,
 )
+from app.services.providers.factory import build_registry
 from app.services.providers.mock_providers import MockMapProvider, MockSearchProvider
 from app.services.providers.orchestrator import OrchestratorResult, ProviderOrchestrator
 from app.services.providers.registry import ProviderRegistry
+from app.services.providers.serp_providers import SerpApiMapProvider, SerpApiSearchProvider
 
 __all__ = [
     "ProviderCallContext",
@@ -36,4 +38,7 @@ __all__ = [
     "OrchestratorResult",
     "MockSearchProvider",
     "MockMapProvider",
+    "SerpApiSearchProvider",
+    "SerpApiMapProvider",
+    "build_registry",
 ]
