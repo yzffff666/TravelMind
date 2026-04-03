@@ -53,13 +53,40 @@
         <!-- Status messages -->
         <section v-if="phase !== 'idle'" class="status-section">
           <div class="status-badge" :class="'st-' + phase">
-            <span class="status-dot" :class="{ pulse: phase === 'planning' }" />
+            <span class="status-dot" :class="{ pulse: phase === 'planning' || phase === 'editing' }" />
             {{ statusText }}
           </div>
           <p v-if="clarificationMessage" class="status-msg warn">{{ clarificationMessage }}</p>
           <p v-if="errorText" class="status-msg error">{{ errorText }}</p>
           <p v-if="finalText" class="status-msg">{{ finalText }}</p>
           <p v-if="explanation" class="status-msg muted">{{ explanation }}</p>
+        </section>
+
+        <!-- Edit Diff Summary -->
+        <section v-if="editDiff" class="edit-diff-card fade-in">
+          <div class="diff-header">
+            <svg class="diff-icon" width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="diff-title">行程已修改</span>
+          </div>
+          <ul v-if="editDiff.summary.diff_items.length" class="diff-list">
+            <li
+              v-for="(item, i) in editDiff.summary.diff_items"
+              :key="i"
+              class="diff-item"
+            >{{ item }}</li>
+          </ul>
+          <div v-if="editDiff.summary.changed_days.length" class="diff-days">
+            <span class="diff-days-label">涉及天数：</span>
+            <span
+              v-for="d in editDiff.summary.changed_days"
+              :key="d"
+              class="diff-day-tag"
+            >第 {{ d }} 天</span>
+          </div>
+          <p v-if="editDiff.explanation" class="diff-explanation">{{ editDiff.explanation }}</p>
         </section>
 
         <!-- Trip Overview (visible after itinerary generated) -->
@@ -301,7 +328,12 @@ interface ItineraryResult {
   validation?: ValidationResult
 }
 
-type PlannerPhase = 'idle' | 'clarifying' | 'planning' | 'done' | 'error'
+interface ChangeSummary {
+  changed_days: number[]
+  diff_items: string[]
+}
+
+type PlannerPhase = 'idle' | 'clarifying' | 'planning' | 'editing' | 'done' | 'error'
 
 // ---------- State ----------
 
@@ -319,14 +351,28 @@ const isTextareaFocused = ref(false)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const resultRef = ref<HTMLElement | null>(null)
 const scrollRef = ref<HTMLElement | null>(null)
+const currentIntent = ref('')
+const editDiff = ref<{ summary: ChangeSummary; explanation: string } | null>(null)
 
 // ---------- Computed ----------
 
+const intentLabel = computed(() => {
+  const map: Record<string, string> = {
+    create: '生成行程',
+    edit: '编辑行程',
+    qa: '行程问答',
+    reset: '重置会话',
+  }
+  return map[currentIntent.value] || ''
+})
+
 const statusText = computed(() => {
+  const intentSuffix = intentLabel.value ? `（${intentLabel.value}）` : ''
   switch (phase.value) {
-    case 'planning': return '正在生成草案'
+    case 'planning': return `正在生成草案${intentSuffix}`
+    case 'editing': return `正在编辑行程${intentSuffix}`
     case 'clarifying': return '需要补充信息'
-    case 'done': return itinerary.value ? '草案已生成' : '已完成'
+    case 'done': return itinerary.value ? `草案已生成${intentSuffix}` : `已完成${intentSuffix}`
     case 'error': return '请求失败'
     default: return '等待输入'
   }
@@ -382,6 +428,8 @@ const resetResultState = () => {
   explanation.value = ''
   errorText.value = ''
   itinerary.value = null
+  currentIntent.value = ''
+  editDiff.value = null
 }
 
 const resetPlanner = async () => {
@@ -410,7 +458,12 @@ const submitQuery = async () => {
     return
   }
 
-  resetResultState()
+  editDiff.value = null
+  currentIntent.value = ''
+  clarificationMessage.value = ''
+  finalText.value = ''
+  explanation.value = ''
+  errorText.value = ''
   phase.value = 'planning'
   isStreaming.value = true
 
@@ -422,6 +475,12 @@ const submitQuery = async () => {
         conversationId: conversationId.value || undefined,
       },
       {
+        onIntentRouted: (envelope) => {
+          currentIntent.value = envelope.payload.intent || ''
+          if (envelope.payload.intent === 'edit') {
+            phase.value = 'editing'
+          }
+        },
         onStageStart: () => {
           phase.value = 'clarifying'
         },
@@ -434,6 +493,17 @@ const submitQuery = async () => {
           itinerary.value = envelope.payload.itinerary as ItineraryResult
           explanation.value = envelope.payload.explanation || ''
           scrollToResult()
+        },
+        onEditDiff: (envelope) => {
+          editDiff.value = {
+            summary: envelope.payload.change_summary,
+            explanation: envelope.payload.explanation,
+          }
+        },
+        onResetDone: (envelope) => {
+          phase.value = 'done'
+          itinerary.value = null
+          finalText.value = envelope.payload.text || '会话已重置，可以开始新的行程规划。'
         },
         onFinalText: (envelope) => {
           phase.value = 'done'
@@ -693,6 +763,8 @@ textarea::placeholder { color: var(--text-muted); }
 .st-planning .status-dot  { background: var(--accent); }
 .st-clarifying { background: var(--warn-soft); color: #fde68a; }
 .st-clarifying .status-dot { background: var(--warn); }
+.st-editing { background: rgba(167, 139, 250, 0.12); color: #c4b5fd; }
+.st-editing .status-dot { background: #a78bfa; }
 .st-done { background: var(--success-soft); color: #bbf7d0; }
 .st-done .status-dot { background: var(--success); }
 .st-error { background: var(--error-soft); color: #fecaca; }
@@ -1102,6 +1174,83 @@ textarea::placeholder { color: var(--text-muted); }
   background: var(--accent-warm-soft);
   border-radius: var(--r-sm);
   letter-spacing: 0.01em;
+}
+
+/* ---- Edit Diff Card ---- */
+
+.edit-diff-card {
+  background: var(--bg-card);
+  border: 1px solid rgba(167, 139, 250, 0.2);
+  border-radius: var(--r-lg);
+  padding: 16px 18px;
+}
+
+.diff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.diff-icon { color: #a78bfa; flex-shrink: 0; }
+
+.diff-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #c4b5fd;
+  letter-spacing: 0.02em;
+}
+
+.diff-list {
+  margin: 0 0 10px;
+  padding: 0 0 0 18px;
+  list-style: none;
+}
+
+.diff-item {
+  position: relative;
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.7;
+  padding-left: 2px;
+}
+
+.diff-item::before {
+  content: '›';
+  position: absolute;
+  left: -14px;
+  color: #a78bfa;
+  font-weight: 600;
+}
+
+.diff-days {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.diff-days-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.diff-day-tag {
+  display: inline-flex;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: #c4b5fd;
+  background: rgba(167, 139, 250, 0.10);
+  border-radius: 999px;
+  border: 1px solid rgba(167, 139, 250, 0.18);
+}
+
+.diff-explanation {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--text-sec);
+  line-height: 1.55;
 }
 
 /* ==================== Animations ==================== */
