@@ -1,0 +1,236 @@
+{
+  "上海": {
+    "search": [
+      {
+        "candidate_id": "外滩-上海",
+        "title": "外滩",
+        "snippet": "上海最著名的地标之一，沿黄浦江的历史建筑群",
+        "score": 4.8,
+        "tags": ["地标", "历史", "夜景", "文化"],
+        "extra": {"address": "上海市黄浦区中山东一路", "rating": 4.8, "cost_estimate": 0, "url": "https://example.com/bund"}
+      },
+      {
+        "candidate_id": "豫园-上海",
+        "title": "豫园",
+        "snippet": "明代古典园林，展现江南园林艺术精华",
+        "score": 4.6,
+        "tags": ["园林", "历史", "文化", "建筑"],
+        "extra": {"address": "上海市黄浦区安仁街218号", "rating": 4.6, "cost_estimate": 40, "url": "https://example.com/yuyuan"}
+      },
+      {
+        "candidate_id": "南京路步行街-上海",
+        "title": "南京路步行街",
+        "snippet": "中华第一商业街，购物与美食的集中地",
+        "score": 4.4,
+        "tags": ["购物", "美食", "步行街"],
+        "extra": {"address": "上海市黄浦区南京东路", "rating": 4.4, "cost_estimate": 200, "url": "https://example.com/nanjingrd"}
+      },
+      {
+        "candidate_id": "东方明珠-上海",
+        "title": "东方明珠广播电视塔",
+        "snippet": "上海标志性建筑，可俯瞰城市全景",
+        "score": 4.5,
+        "tags": ["地标", "观景", "建筑"],
+        "extra": {"address": "上海市浦东新区世纪大道1号", "rating": 4.5, "cost_estimate": 180, "url": "https://example.com/oriental-pearl"}
+      },
+      {
+        "candidate_id": "城隍庙-上海",
+        "title": "城隍庙",
+        "snippet": "上海著名的老城区景点，小吃和传统文化集中地",
+        "score": 4.3,
+        "tags": ["美食", "文化", "历史", "小吃"],
+        "extra": {"address": "上海市黄浦区方浜中路249号", "rating": 4.3, "cost_estimate": 30, "url": "https://example.com/chenghuangmiao"}
+      },
+      {
+        "candidate_id": "上海博物馆-上海",
+        "title": "上海博物馆",
+        "snippet": "中国四大博物馆之一，馆藏丰富的综合性博物馆",
+        "score": 4.7,
+        "tags": ["博物馆", "文化", "历史", "艺术"],
+        "extra": {"address": "上海市黄浦区人民大道201号", "rating": 4.7, "cost_estimate": 0, "url": "https://example.com/shanghai-museum"}
+      },
+      {
+        "candidate_id": "田子坊-上海",
+        "title": "田子坊",
+        "snippet": "上海特色创意园区，汇集艺术工作室和特色店铺",
+        "score": 4.2,
+        "tags": ["文创", "艺术", "购物", "咖啡"],
+        "extra": {"address": "上海市黄浦区泰康路210弄", "rating": 4.2, "cost_estimate": 80, "url": "https://example.com/tianzifang"}
+      },
+      {
+        "candidate_id": "新天地-上海",
+        "title": "新天地",
+        "snippet": "集历史风貌与现代生活于一体的时尚街区",
+        "score": 4.3,
+        "tags": ["购物", "美食", "夜生活", "历史"],
+        "extra": {"address": "上海市黄浦区太仓路181弄", "rating": 4.3, "cost_estimate": 150, "url": "https://example.com/xintiandi"}
+      }
+    ],
+    "map": [
+      {
+        "candidate_id": "迪士尼乐园-上海",
+        "title": "上海迪士尼乐园",
+        "snippet": "中国大陆首座迪士尼主题乐园",
+        "score": 4.7,
+        "tags": ["主题公园", "亲子", "娱乐"],
+        "extra": {"address": "上海市浦东新区川沙镇", "rating": 4.7, "cost_estimate": 475, "lat": 31.1434, "lng": 121.6580, "url": "https://example.com/disney"}
+      },
+      {
+        "candidate_id": "武康路-上海",
+        "title": "武康路历史文化街区",
+        "snippet": "网红打卡地，法式梧桐大道与历史洋房",
+        "score": 4.4,
+        "tags": ["历史", "网红", "拍照", "咖啡"],
+        "extra": {"address": "上海市徐汇区武康路", "rating": 4.4, "cost_estimate": 50, "lat": 31.2050, "lng": 121.4380, "url": "https://example.com/wukangrd"}
+      },
+      {
+        "candidate_id": "朱家角-上海",
+        "title": "朱家角古镇",
+        "snippet": "上海保存最完整的水乡古镇",
+        "score": 4.3,
+        "tags": ["古镇", "水乡", "历史", "文化"],
+        "extra": {"address": "上海市青浦区朱家角镇", "rating": 4.3, "cost_estimate": 60, "lat": 31.1087, "lng": 121.0592, "url": "https://example.com/zhujiajiao"}
+      }
+    ]
+  },
+  "北京": {
+    "search": [
+      {
+        "candidate_id": "故宫-北京",
+        "title": "故宫博物院",
+        "snippet": "世界最大的古代宫殿建筑群，明清两朝皇宫",
+        "score": 4.9,
+        "tags": ["历史", "文化", "建筑", "博物馆"],
+        "extra": {"address": "北京市东城区景山前街4号", "rating": 4.9, "cost_estimate": 60, "url": "https://example.com/forbidden-city"}
+      },
+      {
+        "candidate_id": "长城-北京",
+        "title": "八达岭长城",
+        "snippet": "万里长城最著名的段落，世界文化遗产",
+        "score": 4.8,
+        "tags": ["历史", "地标", "自然", "世界遗产"],
+        "extra": {"address": "北京市延庆区八达岭镇", "rating": 4.8, "cost_estimate": 40, "url": "https://example.com/great-wall"}
+      },
+      {
+        "candidate_id": "天坛-北京",
+        "title": "天坛公园",
+        "snippet": "明清皇帝祭天的圣地，世界文化遗产",
+        "score": 4.7,
+        "tags": ["历史", "文化", "建筑", "公园"],
+        "extra": {"address": "北京市东城区天坛东里甲1号", "rating": 4.7, "cost_estimate": 34, "url": "https://example.com/temple-heaven"}
+      },
+      {
+        "candidate_id": "颐和园-北京",
+        "title": "颐和园",
+        "snippet": "中国现存最大的皇家园林，世界文化遗产",
+        "score": 4.8,
+        "tags": ["园林", "历史", "文化", "自然"],
+        "extra": {"address": "北京市海淀区新建宫门路19号", "rating": 4.8, "cost_estimate": 30, "url": "https://example.com/summer-palace"}
+      },
+      {
+        "candidate_id": "南锣鼓巷-北京",
+        "title": "南锣鼓巷",
+        "snippet": "北京最古老的街区之一，集美食与文创于一体",
+        "score": 4.2,
+        "tags": ["美食", "文创", "历史", "胡同"],
+        "extra": {"address": "北京市东城区南锣鼓巷", "rating": 4.2, "cost_estimate": 100, "url": "https://example.com/nanluoguxiang"}
+      },
+      {
+        "candidate_id": "天安门广场-北京",
+        "title": "天安门广场",
+        "snippet": "世界最大的城市广场，国家象征性地标",
+        "score": 4.6,
+        "tags": ["地标", "历史", "广场"],
+        "extra": {"address": "北京市东城区东长安街", "rating": 4.6, "cost_estimate": 0, "url": "https://example.com/tiananmen"}
+      }
+    ],
+    "map": [
+      {
+        "candidate_id": "798艺术区-北京",
+        "title": "798艺术区",
+        "snippet": "当代艺术集聚区，由旧工厂改造",
+        "score": 4.3,
+        "tags": ["艺术", "文创", "拍照", "展览"],
+        "extra": {"address": "北京市朝阳区酒仙桥路", "rating": 4.3, "cost_estimate": 0, "lat": 39.9840, "lng": 116.4945, "url": "https://example.com/798"}
+      },
+      {
+        "candidate_id": "什刹海-北京",
+        "title": "什刹海",
+        "snippet": "北京历史文化景区，可体验老北京胡同文化",
+        "score": 4.4,
+        "tags": ["历史", "夜景", "美食", "胡同"],
+        "extra": {"address": "北京市西城区什刹海", "rating": 4.4, "cost_estimate": 0, "lat": 39.9420, "lng": 116.3830, "url": "https://example.com/shichahai"}
+      }
+    ]
+  },
+  "成都": {
+    "search": [
+      {
+        "candidate_id": "大熊猫基地-成都",
+        "title": "成都大熊猫繁育研究基地",
+        "snippet": "世界著名的大熊猫保护与繁育中心",
+        "score": 4.8,
+        "tags": ["自然", "动物", "亲子", "科普"],
+        "extra": {"address": "成都市成华区熊猫大道1375号", "rating": 4.8, "cost_estimate": 55, "url": "https://example.com/panda-base"}
+      },
+      {
+        "candidate_id": "宽窄巷子-成都",
+        "title": "宽窄巷子",
+        "snippet": "成都最具代表性的历史文化街区",
+        "score": 4.5,
+        "tags": ["历史", "美食", "文化", "休闲"],
+        "extra": {"address": "成都市青羊区宽窄巷子", "rating": 4.5, "cost_estimate": 80, "url": "https://example.com/kuanzhai"}
+      },
+      {
+        "candidate_id": "锦里-成都",
+        "title": "锦里古街",
+        "snippet": "以三国文化为主题的古街，汇集四川特色小吃",
+        "score": 4.4,
+        "tags": ["美食", "历史", "小吃", "文化"],
+        "extra": {"address": "成都市武侯区武侯祠大街231号", "rating": 4.4, "cost_estimate": 60, "url": "https://example.com/jinli"}
+      },
+      {
+        "candidate_id": "武侯祠-成都",
+        "title": "武侯祠",
+        "snippet": "纪念诸葛亮的祠堂，三国文化圣地",
+        "score": 4.6,
+        "tags": ["历史", "文化", "三国", "博物馆"],
+        "extra": {"address": "成都市武侯区武侯祠大街231号", "rating": 4.6, "cost_estimate": 50, "url": "https://example.com/wuhouci"}
+      },
+      {
+        "candidate_id": "春熙路-成都",
+        "title": "春熙路",
+        "snippet": "成都最繁华的商业步行街，美食购物中心",
+        "score": 4.3,
+        "tags": ["购物", "美食", "步行街"],
+        "extra": {"address": "成都市锦江区春熙路", "rating": 4.3, "cost_estimate": 150, "url": "https://example.com/chunxilu"}
+      },
+      {
+        "candidate_id": "都江堰-成都",
+        "title": "都江堰",
+        "snippet": "世界文化遗产，古代水利工程奇迹",
+        "score": 4.7,
+        "tags": ["历史", "自然", "世界遗产", "工程"],
+        "extra": {"address": "成都市都江堰市公园路", "rating": 4.7, "cost_estimate": 80, "url": "https://example.com/dujiangyan"}
+      }
+    ],
+    "map": [
+      {
+        "candidate_id": "人民公园-成都",
+        "title": "人民公园",
+        "snippet": "体验成都慢生活的最佳去处，鹤鸣茶社必去",
+        "score": 4.3,
+        "tags": ["休闲", "茶馆", "公园", "本地体验"],
+        "extra": {"address": "成都市青羊区少城路12号", "rating": 4.3, "cost_estimate": 20, "lat": 30.6598, "lng": 104.0540, "url": "https://example.com/people-park"}
+      },
+      {
+        "candidate_id": "太古里-成都",
+        "title": "成都远洋太古里",
+        "snippet": "开放式时尚购物街区，紧邻大慈寺",
+        "score": 4.4,
+        "tags": ["购物", "时尚", "建筑", "美食"],
+        "extra": {"address": "成都市锦江区中纱帽街8号", "rating": 4.4, "cost_estimate": 200, "lat": 30.6540, "lng": 104.0850, "url": "https://example.com/taikoo-li"}
+      }
+    ]
+  }
+}
