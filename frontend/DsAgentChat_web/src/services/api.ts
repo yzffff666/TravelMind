@@ -32,6 +32,17 @@ export interface TravelSseCallbacks {
   onFinalText?: (envelope: TravelEventEnvelope<{ text: string }>) => void
   onError?: (envelope: TravelEventEnvelope<{ text: string }>) => void
   onTextFallback?: (text: string) => void
+  onIntentRouted?: (envelope: TravelEventEnvelope<{
+    intent: string
+    intent_detail: string
+  }>) => void
+  onEditDiff?: (envelope: TravelEventEnvelope<{
+    old_revision_id: string | null
+    new_revision_id: string
+    change_summary: { changed_days: number[]; diff_items: string[] }
+    explanation: string
+  }>) => void
+  onResetDone?: (envelope: TravelEventEnvelope<{ text: string }>) => void
 }
 
 export interface TravelStreamOptions {
@@ -127,6 +138,24 @@ export class ApiService {
         return
       case 'error':
         callbacks.onError?.(envelope as TravelEventEnvelope<{ text: string }>)
+        return
+      case 'intent_routed':
+        callbacks.onIntentRouted?.(
+          envelope as TravelEventEnvelope<{ intent: string; intent_detail: string }>
+        )
+        return
+      case 'edit_diff':
+        callbacks.onEditDiff?.(
+          envelope as TravelEventEnvelope<{
+            old_revision_id: string | null
+            new_revision_id: string
+            change_summary: { changed_days: number[]; diff_items: string[] }
+            explanation: string
+          }>
+        )
+        return
+      case 'reset_done':
+        callbacks.onResetDone?.(envelope as TravelEventEnvelope<{ text: string }>)
         return
       default:
         return
