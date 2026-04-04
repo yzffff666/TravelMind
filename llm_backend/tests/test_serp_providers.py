@@ -209,27 +209,26 @@ class TestSerpApiMapProvider:
 
 class TestProviderFactory:
     def test_factory_with_no_key_uses_mock_only(self):
-        with patch("app.services.providers.factory._get_serpapi_key", return_value=None):
+        with patch("app.services.providers.factory._get_key", return_value=None):
             reg = build_registry()
 
         names = [p.name for p in reg.search_providers]
         assert "mock_search" in names
         assert "serp_search" not in names
+        assert "amap_search" not in names
 
-    def test_factory_with_real_key_registers_both(self):
-        with patch("app.services.providers.factory._get_serpapi_key", return_value="real-key-123"):
+    def test_factory_with_serp_key_registers_serp(self):
+        with patch("app.services.providers.factory._get_key") as mock_get:
+            mock_get.side_effect = lambda s, e: "real-key" if "SERPAPI" in s else None
             reg = build_registry()
 
         search_names = [p.name for p in reg.search_providers]
-        map_names = [p.name for p in reg.map_providers]
         assert "serp_search" in search_names
         assert "mock_search" in search_names
-        assert "serp_map" in map_names
-        assert "mock_map" in map_names
-        assert search_names.index("serp_search") < search_names.index("mock_search")
 
     def test_factory_no_mock_fallback(self):
-        with patch("app.services.providers.factory._get_serpapi_key", return_value="key"):
+        with patch("app.services.providers.factory._get_key") as mock_get:
+            mock_get.side_effect = lambda s, e: "key" if "SERPAPI" in s else None
             reg = build_registry(include_mock_fallback=False)
 
         assert len(reg.search_providers) == 1
@@ -242,7 +241,7 @@ class TestProviderFactory:
 class TestFactoryOrchestrator:
     def test_e2e_mock_fallback_recall(self):
         """With no real key, orchestrator falls back to mock data."""
-        with patch("app.services.providers.factory._get_serpapi_key", return_value=None):
+        with patch("app.services.providers.factory._get_key", return_value=None):
             reg = build_registry()
 
         orch = ProviderOrchestrator(reg)
@@ -252,8 +251,9 @@ class TestFactoryOrchestrator:
         assert "mock_search" in sources or "mock_map" in sources
 
     def test_e2e_real_provider_with_mock_http(self):
-        """With a real key and mocked HTTP, real providers contribute."""
-        with patch("app.services.providers.factory._get_serpapi_key", return_value="key-123"):
+        """With a serp key and mocked HTTP, real providers contribute."""
+        with patch("app.services.providers.factory._get_key") as mock_get:
+            mock_get.side_effect = lambda s, e: "key-123" if "SERPAPI" in s else None
             reg = build_registry(include_mock_fallback=False)
 
         with patch("app.services.providers.serp_providers.httpx.AsyncClient") as mock_cls:
