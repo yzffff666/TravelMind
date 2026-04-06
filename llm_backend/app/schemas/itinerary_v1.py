@@ -145,11 +145,15 @@ class BudgetSummary(BaseModel):
 class EvidenceItem(BaseModel):
     evidence_id: str = Field(..., min_length=1)
     provider: Optional[str] = None
+    source_type: Optional[Literal["search", "map", "weather", "review", "manual"]] = None
     title: Optional[str] = None
     url: Optional[str] = None
     snippet: Optional[str] = None
     fetched_at: Optional[str] = None
     attribution: Optional[str] = None
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    rating: Optional[float] = None
+    cost_estimate: Optional[float] = None
 
 
 # 这是用来定义行程的验证结果。
