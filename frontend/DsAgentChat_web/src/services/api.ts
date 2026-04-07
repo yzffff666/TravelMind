@@ -24,6 +24,14 @@ export interface TravelSseCallbacks {
     missing_required?: string[]
     missing_optional?: string[]
     message?: string
+    coverage_score?: number
+    assumptions?: string[]
+    conflicts?: string[]
+  }>) => void
+  onToolResult?: (envelope: TravelEventEnvelope<{
+    tool: string
+    evidence_count: number
+    evidence: Record<string, unknown>[]
   }>) => void
   onFinalItinerary?: (envelope: TravelEventEnvelope<{
     itinerary: Record<string, unknown>
@@ -86,7 +94,7 @@ export interface Message {
 }
 
 export class ApiService {
-  private static baseUrl = import.meta.env.VITE_API_BASE_URL
+  private static baseUrl = import.meta.env.VITE_API_BASE_URL || ''
 
   private static _parseSseFrame(frame: string): { event?: string; data?: string } | null {
     const trimmed = frame.trim()
@@ -125,6 +133,18 @@ export class ApiService {
             missing_required?: string[]
             missing_optional?: string[]
             message?: string
+            coverage_score?: number
+            assumptions?: string[]
+            conflicts?: string[]
+          }>
+        )
+        return
+      case 'tool_result':
+        callbacks.onToolResult?.(
+          envelope as TravelEventEnvelope<{
+            tool: string
+            evidence_count: number
+            evidence: Record<string, unknown>[]
           }>
         )
         return

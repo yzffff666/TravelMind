@@ -137,6 +137,10 @@ def _make_registry(search: bool = True, map_: bool = True) -> ProviderRegistry:
 
 
 class TestOrchestrator:
+    def setup_method(self):
+        from app.services.providers.orchestrator import clear_recall_cache
+        clear_recall_cache()
+
     def test_recall_returns_candidates(self):
         orch = ProviderOrchestrator(_make_registry())
         result = _run(orch.recall(query="上海 文化 美食", city="上海"))

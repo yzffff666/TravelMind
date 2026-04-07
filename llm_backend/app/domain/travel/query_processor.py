@@ -84,15 +84,25 @@ class TravelQueryProcessor:
         normalized = re.sub(r"\s+", " ", (query or "").strip())
         return normalized
 
-    # 意图识别
     def _detect_intent(self, query: str) -> tuple[IntentType, IntentDetailType]:
         lower_q = query.lower()
         if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.reset_hints):
             return "reset", "reset_all"
-        if QP_RULES.edit_day_pattern.search(lower_q) or any(
-            self._contains_hint(query, lower_q, word) for word in QP_RULES.edit_hints
-        ):
-            return "edit", "edit_day"
+
+        has_edit_signal = (
+            QP_RULES.edit_day_pattern.search(lower_q)
+            or any(self._contains_hint(query, lower_q, word) for word in QP_RULES.edit_hints)
+        )
+        if has_edit_signal:
+            constraints = self._extract_constraints(query)
+            is_full_create = (
+                bool(constraints.destination_city)
+                and constraints.days is not None
+                and constraints.budget is not None
+            )
+            if not is_full_create:
+                return "edit", "edit_day"
+
         if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.evidence_qa_hints):
             return "qa", "qa_evidence"
         if QP_RULES.qa_question_pattern.search(query):

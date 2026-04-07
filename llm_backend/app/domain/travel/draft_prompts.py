@@ -10,6 +10,7 @@ TRAVEL_DRAFT_SYSTEM_PROMPT = """\
 4. cost_breakdown 按合理比例分配到总预算内
 5. 如果有偏好（如文化、美食），优先安排相关活动
 6. 每天给一个 theme 概括当天主题
+7. 如果提供了"推荐地点列表"，优先从中选择地点安排行程
 
 你必须用纯 JSON 格式回复，不要包含任何 markdown 标记或解释文字。
 """
@@ -89,4 +90,16 @@ TRAVEL_DRAFT_USER_PROMPT_TEMPLATE = """\
 - 每天 3 个 slot（上午/下午/晚上）
 - cost_breakdown 各项费用之和在总预算范围内
 - budget_summary.by_category 汇总所有天的费用
+"""
+
+TRAVEL_DRAFT_CANDIDATES_SECTION = """\
+
+以下是通过搜索引擎和地图服务获取的真实推荐地点（共 {count} 个），请优先从中选择安排行程：
+
+{candidate_lines}
+
+注意：
+- place 字段请尽量使用上述推荐地点的原始名称
+- 如果推荐地点不足以覆盖所有时段，可以补充你知道的其他真实地点
+- 参考费用仅供预算分配参考，实际安排以总预算为准
 """

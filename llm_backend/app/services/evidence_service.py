@@ -137,8 +137,9 @@ class EvidenceFactory:
     ) -> list[str]:
         """Find ``evidence_id`` values matching a slot's POI name.
 
-        Matching is intentionally broad: checks title containment and
-        evidence_id suffix to maximise recall.
+        Uses bidirectional substring matching to handle cases where:
+        - LLM outputs "外滩风景区" but evidence title is "外滩"
+        - LLM outputs "大熊猫基地" but evidence title is "成都大熊猫繁育研究基地"
         """
         if not slot_poi_name:
             return []
@@ -146,7 +147,8 @@ class EvidenceFactory:
         refs: list[str] = []
         name_lower = slot_poi_name.lower()
         for item in evidence_items:
-            if item.title and name_lower in item.title.lower():
+            title_lower = item.title.lower() if item.title else ""
+            if title_lower and (name_lower in title_lower or title_lower in name_lower):
                 refs.append(item.evidence_id)
             elif name_lower in item.evidence_id.lower():
                 refs.append(item.evidence_id)

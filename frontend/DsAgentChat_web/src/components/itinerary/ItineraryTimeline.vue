@@ -3,7 +3,9 @@
     <div
       v-for="(day, dayIdx) in days"
       :key="day.day_index"
+      :ref="(el) => { if (el) dayRefs[day.day_index] = el as HTMLElement }"
       class="day-section slide-up"
+      :class="{ 'day-changed': changedDays?.includes(day.day_index) }"
       :style="{ animationDelay: `${dayIdx * 0.12}s` }"
     >
       <div class="day-hdr">
@@ -42,9 +44,22 @@
               <span>{{ slot.transit }}</span>
             </div>
 
-            <span v-if="slotCost(slot)" class="pc-cost">
-              &yen;{{ fmt(slotCost(slot)!) }}
-            </span>
+            <div class="pc-bottom">
+              <span v-if="slotCost(slot)" class="pc-cost">
+                &yen;{{ fmt(slotCost(slot)!) }}
+              </span>
+              <span
+                v-if="slot.evidence_refs && slot.evidence_refs.length > 0"
+                class="pc-evidence"
+                :title="`${slot.evidence_refs.length} 条数据源佐证`"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5"/>
+                </svg>
+                已验证
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -53,9 +68,24 @@
 </template>
 
 <script setup lang="ts">
+import { ref, nextTick } from 'vue'
 import type { ItineraryDay, ItinerarySlot } from '../../types/itinerary'
 
-defineProps<{ days: ItineraryDay[] }>()
+const props = defineProps<{
+  days: ItineraryDay[]
+  changedDays?: number[]
+}>()
+
+const dayRefs = ref<Record<number, HTMLElement>>({})
+
+defineExpose({ scrollToDay })
+
+function scrollToDay(dayIndex: number) {
+  nextTick(() => {
+    const el = dayRefs.value[dayIndex]
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+}
 
 const fmt = (n: number) => Math.round(n).toLocaleString('zh-CN')
 
@@ -195,9 +225,15 @@ const slotCost = (slot: ItinerarySlot): number | null => {
   font-size: 11.5px;
 }
 
+.pc-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .pc-cost {
   display: inline-flex;
-  margin-top: 10px;
   padding: 3px 10px;
   font-size: 11px;
   font-weight: 500;
@@ -205,6 +241,40 @@ const slotCost = (slot: ItinerarySlot): number | null => {
   background: var(--accent-warm-soft);
   border-radius: var(--r-sm);
   letter-spacing: 0.01em;
+}
+
+.pc-evidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--success);
+  background: var(--success-soft);
+  border-radius: var(--r-sm);
+  letter-spacing: 0.02em;
+}
+
+/* ---- Changed-day highlight ---- */
+
+.day-changed {
+  animation: dayGlow 3s ease-out both;
+}
+
+.day-changed .day-num {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.day-changed .pc {
+  border-color: rgba(34, 197, 94, 0.3);
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.08);
+}
+
+@keyframes dayGlow {
+  0%   { background: rgba(34, 197, 94, 0.06); border-radius: 12px; }
+  100% { background: transparent; }
 }
 
 .slide-up { animation: slideUp 0.5s ease-out both; }

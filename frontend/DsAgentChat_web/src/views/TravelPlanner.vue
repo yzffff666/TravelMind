@@ -92,11 +92,31 @@
           :profile="itinerary.trip_profile"
           :dayCount="itinerary.days.length"
         />
-        <ItineraryTimeline :days="itinerary.days" />
+        <ItineraryTimeline
+          ref="timelineRef"
+          :days="itinerary.days"
+          :changedDays="changedDays"
+        />
         <BudgetCard
           v-if="itinerary.budget_summary"
           :budget="itinerary.budget_summary"
         />
+
+        <!-- Coverage score -->
+        <div
+          v-if="itinerary.validation?.coverage_score != null"
+          class="coverage-bar fade-in"
+        >
+          <span class="coverage-label">数据覆盖率</span>
+          <div class="coverage-track">
+            <div
+              class="coverage-fill"
+              :style="{ width: `${Math.round((itinerary.validation!.coverage_score!) * 100)}%` }"
+            />
+          </div>
+          <span class="coverage-pct">{{ Math.round((itinerary.validation!.coverage_score!) * 100) }}%</span>
+        </div>
+
         <section v-if="itinerary.validation?.assumptions?.length" class="assumptions fade-in">
           <p
             v-for="(note, i) in itinerary.validation!.assumptions"
@@ -146,13 +166,16 @@ const currentIntent = ref('')
 const editDiff = ref<EditDiffData | null>(null)
 const chatHistory = ref<ChatEntry[]>([])
 const lastQuery = ref('')
+const changedDays = ref<number[]>([])
 let msgSeq = 0
+let changedDaysTimer: ReturnType<typeof setTimeout> | null = null
 
 const activeTab = ref<'chat' | 'itinerary'>('chat')
 const isNarrow = ref(false)
 const chatScrollRef = ref<HTMLElement | null>(null)
 const itineraryScrollRef = ref<HTMLElement | null>(null)
 const inputBarRef = ref<InstanceType<typeof InputBar> | null>(null)
+const timelineRef = ref<InstanceType<typeof ItineraryTimeline> | null>(null)
 
 // ---------- Responsive ----------
 
@@ -167,6 +190,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', checkWidth)
+  if (changedDaysTimer) clearTimeout(changedDaysTimer)
 })
 
 // ---------- Computed ----------
@@ -206,6 +230,21 @@ const scrollItineraryToTop = async () => {
   itineraryScrollRef.value?.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
+const highlightChangedDays = (days: number[]) => {
+  changedDays.value = days
+  if (changedDaysTimer) clearTimeout(changedDaysTimer)
+  changedDaysTimer = setTimeout(() => { changedDays.value = [] }, 4000)
+
+  nextTick(() => {
+    if (days.length > 0 && timelineRef.value) {
+      timelineRef.value.scrollToDay(days[0])
+    }
+    if (isNarrow.value) {
+      activeTab.value = 'itinerary'
+    }
+  })
+}
+
 // ---------- Actions ----------
 
 const resetPlanner = async () => {
@@ -219,6 +258,8 @@ const resetPlanner = async () => {
   editDiff.value = null
   chatHistory.value = []
   lastQuery.value = ''
+  changedDays.value = []
+  if (changedDaysTimer) { clearTimeout(changedDaysTimer); changedDaysTimer = null }
   msgSeq = 0
   await nextTick()
   inputBarRef.value?.focus()
@@ -271,12 +312,25 @@ const submitQuery = async (queryText: string) => {
             phase.value = 'editing'
           }
         },
-        onStageStart: () => {
-          phase.value = 'clarifying'
+        onStageStart: (envelope) => {
+          const stage = envelope.payload.stage
+          if (stage === 'draft_plan') {
+            phase.value = 'planning'
+          } else {
+            phase.value = 'clarifying'
+          }
         },
         onStageProgress: (envelope) => {
-          phase.value = 'clarifying'
-          liveClarification.value = envelope.payload.message || ''
+          const stage = envelope.payload.stage
+          if (stage === 'validation_summary') {
+            // validation progress during draft — stay in planning
+          } else {
+            phase.value = 'clarifying'
+            liveClarification.value = envelope.payload.message || ''
+          }
+        },
+        onToolResult: () => {
+          // evidence batch received — keep planning phase
         },
         onFinalItinerary: (envelope) => {
           phase.value = 'done'
@@ -297,6 +351,11 @@ const submitQuery = async (queryText: string) => {
           }
           editDiff.value = diffData
           addChatEntry('assistant', '', 'diff', diffData)
+
+          const days: number[] = diffData.summary?.changed_days ?? []
+          if (days.length > 0) {
+            highlightChangedDays(days)
+          }
         },
         onResetDone: (envelope) => {
           phase.value = 'done'
@@ -639,6 +698,49 @@ const submitQuery = async (queryText: string) => {
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- Coverage Bar ---- */
+
+.coverage-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+
+.coverage-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-sec);
+  white-space: nowrap;
+}
+
+.coverage-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.coverage-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--success);
+  transition: width 0.6s ease-out;
+}
+
+.coverage-pct {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--success);
+  min-width: 32px;
+  text-align: right;
+}
 
 /* ---- Assumptions ---- */
 

@@ -70,77 +70,58 @@ def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
     # 提取目标时段
     target_slot = _extract_target_slot(text)
 
-    # 删除操作
+    # Collect all matching ops (no early return — supports multi-op edits)
+
     if _match_any(text, _DELETE_HINTS):
-        # 如果目标天数和目标时段都存在，则删除目标时段
         if target_day and target_slot:
             ops.append(PatchOp(
                 op=PatchOpType.DELETE_SLOT,
                 day_index=target_day,
                 slot_label=target_slot,
             ))
-        # 如果只有目标天数，则删除目标天数所有时段
         elif target_day:
             ops.append(PatchOp(
                 op=PatchOpType.DELETE_SLOT,
                 day_index=target_day,
                 slot_label=None,
             ))
-        # 如果删除操作失败，则使用 fallback 操作
-        return ops or [_fallback_replace(target_day, target_slot, text)]
 
-    # 插入操作
     if _match_any(text, _ADD_HINTS):
-        # 提取插入内容
         new_content = _extract_content_after_hints(text, _ADD_HINTS)
         ops.append(PatchOp(
             op=PatchOpType.INSERT_SLOT,
-            # 如果目标天数存在，则插入到目标天数，否则插入到最后一
             day_index=target_day or total_days,
-            # 如果目标时段存在，则插入到目标时段，否则插入到晚上
             slot_label=target_slot,
-            # 插入内容
             payload={"activity": new_content or "待定活动"},
         ))
-        return ops
 
-    # 预算操作
     budget_m = _BUDGET_PATTERN.search(text)
-    # 如果预算操作存在，则更新预算
     if budget_m:
         ops.append(PatchOp(
             op=PatchOpType.UPDATE_CONSTRAINT,
             payload={"budget": float(budget_m.group(1))},
         ))
 
-    # 偏好操作
     pref_m = _PREFERENCE_PATTERN.search(text)
-    # 如果偏好操作存在，则更新偏好
     if pref_m:
         ops.append(PatchOp(
             op=PatchOpType.UPDATE_CONSTRAINT,
             payload={"preferences": [p.strip() for p in re.split(r"[,，、/+]", pref_m.group(1)) if p.strip()]},
         ))
 
-    # 如果编辑操作存在，则返回编辑操作
-    if ops:
-        return ops
-
-    # 替换操作
-    if _match_any(text, _REPLACE_HINTS):
-        # 提取替换内容
+    if not ops and _match_any(text, _REPLACE_HINTS):
         new_content = _extract_content_after_hints(text, _REPLACE_HINTS)
-        # 如果目标天数和目标时段都存在，则替换目标时段
         ops.append(PatchOp(
             op=PatchOpType.REPLACE_SLOT,
             day_index=target_day,
             slot_label=target_slot,
             payload={"activity": new_content or "待定活动"},
         ))
-        return ops
 
-    # 如果替换操作失败，则使用 fallback 操作
-    return [_fallback_replace(target_day, target_slot, text)]
+    if not ops:
+        ops.append(_fallback_replace(target_day, target_slot, text))
+
+    return ops
 
 
 # 应用编辑操作
@@ -152,34 +133,29 @@ def apply_patch(
     if not ops:
         return PatchResult(success=False, error="无可执行的编辑操作")
 
-    # 深拷贝当前行程
     itinerary = copy.deepcopy(current_itinerary)
-    # 获取旧 revision id
     old_revision_id = itinerary.get("revision_id")
-    # 生成新 revision id
     new_revision_id = str(uuid.uuid4())
-    # 记录修改的天数
     changed_days: set[int] = set()
     diff_items: list[str] = []
-    # 应用编辑操作
+    succeeded = 0
+    failed = 0
     for op in ops:
         try:
+            pre_len = len(diff_items)
             if op.op == PatchOpType.REPLACE_SLOT:
-                # 替换操作
                 _apply_replace(itinerary, op, changed_days, diff_items)
             elif op.op == PatchOpType.DELETE_SLOT:
-                # 删除操作
                 _apply_delete(itinerary, op, changed_days, diff_items)
             elif op.op == PatchOpType.INSERT_SLOT:
-                # 插入操作
                 _apply_insert(itinerary, op, changed_days, diff_items)
             elif op.op == PatchOpType.UPDATE_CONSTRAINT:
-                # 更新约束
                 _apply_constraint(itinerary, op, diff_items)
+            succeeded += 1
         except Exception as e:
             logger.warning(f"Patch op {op.op} failed: {e}")
-            # 记录失败操作
             diff_items.append(f"操作 {op.op.value} 执行失败: {str(e)}")
+            failed += 1
 
     # 更新行程 revision id
     itinerary["revision_id"] = new_revision_id
@@ -202,9 +178,8 @@ def apply_patch(
         explanation_parts.append("；".join(diff_items[:3]))
     explanation = "。".join(explanation_parts) + "。" if explanation_parts else "编辑已应用。"
 
-    # 返回编辑结果
     return PatchResult(
-        success=True,
+        success=succeeded > 0,
         new_itinerary=itinerary,
         old_revision_id=old_revision_id,
         new_revision_id=new_revision_id,

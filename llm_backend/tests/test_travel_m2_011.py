@@ -25,6 +25,15 @@ def test_qp_intent_reset():
         assert out["intent_detail"] == "reset_all"
 
 
+def test_qp_intent_edit_with_full_constraints_becomes_create():
+    """Edit keywords + full P0 constraints (dest+days+budget) → create, not edit."""
+    processor = TravelQueryProcessor()
+    out = processor.process("帮我改一下，去成都3天预算5000")
+    assert out["intent"] == "create", (
+        f"Expected 'create' for full-constraint query with edit keyword, got '{out['intent']}'"
+    )
+
+
 def test_qp_intent_edit():
     processor = TravelQueryProcessor()
     for query in ("修改第二天", "把第1天改成博物馆", "调整一下行程", "替换成别的"):

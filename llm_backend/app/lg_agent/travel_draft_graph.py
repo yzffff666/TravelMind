@@ -1,4 +1,5 @@
 import json
+import re as _re
 import uuid
 from typing import TypedDict
 
@@ -16,10 +17,12 @@ from app.domain.travel.draft_builder import (
     extract_traveler_type,
 )
 from app.domain.travel.draft_prompts import (
+    TRAVEL_DRAFT_CANDIDATES_SECTION,
     TRAVEL_DRAFT_SYSTEM_PROMPT,
     TRAVEL_DRAFT_USER_PROMPT_TEMPLATE,
 )
 from app.domain.travel.draft_rules import DRAFT_CONFIG
+from app.domain.travel.query_processor import TravelQueryProcessor
 from app.schemas.itinerary_v1 import (
     BudgetByCategory,
     BudgetSummary,
@@ -31,8 +34,105 @@ from app.schemas.itinerary_v1 import (
     TripProfile,
     ValidationResult,
 )
+from app.services.constraint_filter import ConstraintFilter
+from app.services.coverage_tracker import CoverageTracker
+from app.services.evidence_builder import EvidenceBuilder, PipelineResult
+from app.services.ranking_scorer import RankingScorer
+from app.services.recall_service import RecallService
 
 logger = get_logger(service="travel_draft_graph")
+
+
+# ---------------------------------------------------------------------------
+# Pipeline services — lazy singleton to avoid re-creating on every request.
+# ---------------------------------------------------------------------------
+_pipeline_qp: TravelQueryProcessor | None = None
+_pipeline_recall: RecallService | None = None
+_pipeline_scorer: RankingScorer | None = None
+_pipeline_filter: ConstraintFilter | None = None
+_pipeline_eb: EvidenceBuilder | None = None
+
+
+def _get_pipeline():
+    """Return (qp, recall, scorer, filter, evidence_builder) singletons."""
+    global _pipeline_qp, _pipeline_recall, _pipeline_scorer, _pipeline_filter, _pipeline_eb
+    if _pipeline_qp is None:
+        _pipeline_qp = TravelQueryProcessor()
+        _pipeline_recall = RecallService(include_mock_fallback=True)
+        _pipeline_scorer = RankingScorer()
+        _pipeline_filter = ConstraintFilter()
+        _pipeline_eb = EvidenceBuilder()
+    return _pipeline_qp, _pipeline_recall, _pipeline_scorer, _pipeline_filter, _pipeline_eb
+
+
+_MAX_CANDIDATES_IN_PROMPT = 10
+
+
+def _format_candidates_for_prompt(pipeline_result: PipelineResult) -> str:
+    """Format pipeline candidates into a text section for the LLM prompt.
+
+    Returns an empty string if there are no candidates (LLM falls back
+    to its own knowledge).  Caps at ``_MAX_CANDIDATES_IN_PROMPT`` to
+    stay within LLM token budgets.
+    """
+    if not pipeline_result or not pipeline_result.candidates:
+        return ""
+
+    capped = pipeline_result.candidates[:_MAX_CANDIDATES_IN_PROMPT]
+    lines: list[str] = []
+    for i, sc in enumerate(capped, 1):
+        c = sc.candidate
+        tags_str = "、".join(c.tags[:3]) if c.tags else "综合"
+        rating = c.extra.get("rating")
+        rating_str = f"评分{rating}" if rating else "暂无评分"
+        cost = c.extra.get("cost_estimate")
+        cost_str = f"¥{cost:.0f}" if cost else "免费/未知"
+        addr = c.extra.get("address", "")
+        addr_str = f" | {addr}" if addr else ""
+        lines.append(f"{i}. {c.title} [{tags_str}] {rating_str} 参考费用{cost_str}{addr_str}")
+
+    return TRAVEL_DRAFT_CANDIDATES_SECTION.format(
+        count=len(lines),
+        candidate_lines="\n".join(lines),
+    )
+
+
+def _postprocess_with_pipeline(
+    itinerary: ItineraryV1,
+    pipeline_result: PipelineResult | None,
+    evidence_builder: EvidenceBuilder | None,
+) -> None:
+    """Attach pipeline evidence to itinerary, link refs per slot, compute coverage.
+
+    Mutates ``itinerary`` in place.  No-op when ``pipeline_result`` is None
+    (graceful degradation — the itinerary remains valid but without evidence).
+    """
+    if not pipeline_result or not evidence_builder:
+        return
+
+    itinerary.evidence = list(pipeline_result.evidence)
+
+    for day in itinerary.days:
+        for slot in day.slots:
+            poi_name = slot.place or slot.activity
+            refs = evidence_builder.link_slot(pipeline_result.evidence, poi_name)
+            slot.evidence_refs = refs
+
+    existing = set(itinerary.validation.assumptions)
+    for a in pipeline_result.assumptions:
+        if a not in existing:
+            itinerary.validation.assumptions.append(a)
+            existing.add(a)
+
+    tracker = CoverageTracker()
+    report = tracker.compute(itinerary)
+    itinerary.validation.coverage_score = report.coverage_score
+
+    logger.info(
+        f"Post-processing: evidence_count={len(itinerary.evidence)}, "
+        f"coverage={report.coverage_score:.2f}, "
+        f"meets_target={report.meets_target}"
+    )
 
 
 class TravelDraftInput(TypedDict):
@@ -89,7 +189,36 @@ def _build_template_itinerary(
     itinerary.validation.assumptions.extend(assumptions)
     return itinerary
 
-# LLM 输出解析：将 LLM 返回的 JSON 解析为 ItineraryV1。
+def _repair_json(text: str) -> str:
+    """Best-effort repair of common LLM JSON mistakes before parsing.
+
+    Handles: markdown fences, trailing commas, BOM, leading prose,
+    embedded comments, and unquoted control characters.
+    """
+    t = text.strip().lstrip("\ufeff")
+
+    if t.startswith("```"):
+        first_nl = t.find("\n")
+        if first_nl >= 0:
+            t = t[first_nl + 1:]
+        if t.endswith("```"):
+            t = t[:-3].strip()
+
+    if not t.startswith("{"):
+        match = _re.search(r"\{", t)
+        if match:
+            t = t[match.start():]
+
+    last_brace = t.rfind("}")
+    if last_brace >= 0 and last_brace < len(t) - 1:
+        t = t[: last_brace + 1]
+
+    t = _re.sub(r"//[^\n]*", "", t)
+    t = _re.sub(r",\s*([}\]])", r"\1", t)
+
+    return t
+
+
 def _parse_llm_itinerary(
     raw: str,
     destination: str,
@@ -99,14 +228,8 @@ def _parse_llm_itinerary(
     preferences: list[str],
     assumptions: list[str],
 ) -> ItineraryV1:
-    """将 LLM 返回的 JSON 解析为 ItineraryV1。"""
-    text = raw.strip()
-    if text.startswith("```"):
-        first_newline = text.index("\n")
-        text = text[first_newline + 1:]
-        if text.endswith("```"):
-            text = text[:-3].strip()
-
+    """将 LLM 返回的 JSON 解析为 ItineraryV1，带容错修复。"""
+    text = _repair_json(raw)
     data = json.loads(text)
 
     days = []
@@ -231,10 +354,35 @@ async def generate_travel_draft(state: TravelDraftState) -> dict:
             pace = value
             break
 
+    # --- Phase 1a: run pipeline (QP→Recall→Rank→Filter→Evidence) ---
+    pipeline_result: PipelineResult | None = None
+    pipeline_eb: EvidenceBuilder | None = None
+    try:
+        qp, recall_svc, scorer, flt, eb = _get_pipeline()
+        pipeline_eb = eb
+        qp_output = qp.process(query)
+        recall_result = await recall_svc.recall_from_qp(qp_output)
+        ranked = scorer.rank_from_qp(recall_result.candidates, qp_output, top_k=15)
+        filter_result = flt.apply_from_qp(ranked, qp_output)
+        pipeline_result = eb.build(filter_result, recall_result)
+
+        logger.info(
+            f"Pipeline completed: "
+            f"recalled={len(recall_result.candidates)}, "
+            f"ranked={len(ranked)}, "
+            f"accepted={len(filter_result.accepted)}, "
+            f"evidence={len(pipeline_result.evidence)}, "
+            f"coverage={pipeline_result.coverage:.2f}, "
+            f"degraded={pipeline_result.degraded}"
+        )
+        if pipeline_result.assumptions:
+            logger.info(f"Pipeline assumptions: {pipeline_result.assumptions}")
+    except Exception as exc:
+        logger.warning(f"Pipeline failed, will proceed with LLM-only: {exc}")
+
     # --- 尝试 LLM 生成 ---
     try:
         llm = _get_llm()
-        # 构建用户 prompt。
         user_prompt = TRAVEL_DRAFT_USER_PROMPT_TEMPLATE.format(
             destination_city=destination,
             days=days_count,
@@ -243,6 +391,11 @@ async def generate_travel_draft(state: TravelDraftState) -> dict:
             preferences="、".join(preferences) if preferences else "无特别偏好",
             pace=pace or "适中",
         )
+
+        candidates_section = _format_candidates_for_prompt(pipeline_result)
+        if candidates_section:
+            user_prompt += candidates_section
+            logger.info(f"Injected {len(pipeline_result.candidates)} candidates into LLM prompt")
         # 构建消息列表。
         messages = [
             {"role": "system", "content": TRAVEL_DRAFT_SYSTEM_PROMPT},
@@ -277,7 +430,6 @@ async def generate_travel_draft(state: TravelDraftState) -> dict:
     except Exception as e:
         logger.warning(f"LLM draft generation failed, falling back to template: {e}")
         assumptions.append(f"LLM 生成失败（{type(e).__name__}），已降级为模板草案。")
-        # 构建模板行程。
         itinerary = _build_template_itinerary(
             destination=destination,
             days_count=days_count,
@@ -285,12 +437,13 @@ async def generate_travel_draft(state: TravelDraftState) -> dict:
             traveler_type=traveler_type,
             assumptions=assumptions,
         )
-        # 构建解释。
         explanation = DRAFT_CONFIG.explanation_template.format(days=days_count)
         if assumptions:
             explanation = f"{explanation} {' '.join(assumptions)}".strip()
 
-    # 返回结果。
+    # --- Phase 1c: post-processing (evidence refs, assumptions, coverage) ---
+    _postprocess_with_pipeline(itinerary, pipeline_result, pipeline_eb)
+
     return {
         "final_itinerary": itinerary.model_dump(mode="json"),
         "explanation": explanation,

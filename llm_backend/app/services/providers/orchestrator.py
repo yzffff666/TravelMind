@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.services.providers.base import (
     MapProvider,
@@ -17,6 +20,19 @@ from app.services.providers.call_policy import ProviderCallPolicy, ProviderType
 from app.services.providers.registry import ProviderRegistry
 
 logger = logging.getLogger(__name__)
+
+_RECALL_CACHE_TTL = 3600
+_recall_cache: dict[str, tuple[float, "OrchestratorResult"]] = {}
+
+
+def clear_recall_cache() -> None:
+    """Clear the in-memory recall cache (useful for testing)."""
+    _recall_cache.clear()
+
+
+def _cache_key(query: str, city: str, keywords: list[str] | None) -> str:
+    raw = f"{city}|{query}|{sorted(keywords or [])}"
+    return hashlib.md5(raw.encode()).hexdigest()
 
 
 @dataclass
@@ -55,7 +71,16 @@ class ProviderOrchestrator:
         keywords: list[str] | None = None,
         context: ProviderCallContext | None = None,
     ) -> OrchestratorResult:
-        """Run search + map recall within the call budget."""
+        """Run search + map recall within the call budget (with TTL cache)."""
+        key = _cache_key(query, city, keywords)
+        cached = _recall_cache.get(key)
+        if cached:
+            ts, cached_result = cached
+            if time.time() - ts < _RECALL_CACHE_TTL:
+                logger.info("Recall cache hit for %s/%s", city, query[:30])
+                return cached_result
+            del _recall_cache[key]
+
         result = OrchestratorResult()
 
         if self._policy.is_enabled(ProviderType.SEARCH):
@@ -84,6 +109,10 @@ class ProviderOrchestrator:
             )
 
         result.candidates = self._dedup(result.candidates)
+
+        if not result.degraded:
+            _recall_cache[key] = (time.time(), result)
+
         return result
 
     # ------------------------------------------------------------------

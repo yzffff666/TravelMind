@@ -138,24 +138,28 @@ async def _stream_minimal_itinerary(
     request_id: str,
     user_id: int | None = None,
 ):
+    # --- stage_start(draft_plan) → 前端显示骨架屏 ---
+    yield build_event_line(
+        "stage_start",
+        build_event_envelope(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            revision_id=None,
+            payload={"stage": "draft_plan"},
+        ),
+    )
+
     try:
-        # 调用行程草案生成图
         result = await travel_draft_graph.ainvoke(
             input={"query": query_text},
             config=thread_config,
         )
-        # 最终行程草案
         final_itinerary = result.get("final_itinerary")
-        # 解释
         explanation = result.get("explanation")
-        # 最终文本
         final_text = result.get("final_text")
 
-        # 如果最终行程草案为空
         if not final_itinerary:
-            # 回退文本
             fallback_text = final_text or "未能生成结构化草案，请补充目的地、天数和预算后重试。"
-            # 构建事件行
             yield build_event_line(
                 "final_text",
                 build_event_envelope(
@@ -165,11 +169,45 @@ async def _stream_minimal_itinerary(
                     payload={"text": fallback_text},
                 ),
             )
-            # 构建SSE行
             yield _build_sse_line(fallback_text)
             return
 
-        # 构建事件行
+        # --- tool_result(evidence_batch) → 前端填充证据标记 ---
+        evidence_items = final_itinerary.get("evidence", [])
+        if evidence_items:
+            yield build_event_line(
+                "tool_result",
+                build_event_envelope(
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    revision_id=final_itinerary.get("revision_id"),
+                    payload={
+                        "tool": "evidence_batch",
+                        "evidence_count": len(evidence_items),
+                        "evidence": evidence_items,
+                    },
+                ),
+            )
+
+        # --- stage_progress(validation_summary) → 前端显示校验进度 ---
+        validation = final_itinerary.get("validation", {})
+        if validation.get("coverage_score") is not None or validation.get("assumptions"):
+            yield build_event_line(
+                "stage_progress",
+                build_event_envelope(
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    revision_id=final_itinerary.get("revision_id"),
+                    payload={
+                        "stage": "validation_summary",
+                        "coverage_score": validation.get("coverage_score"),
+                        "assumptions": validation.get("assumptions", []),
+                        "conflicts": validation.get("conflicts", []),
+                    },
+                ),
+            )
+
+        # --- final_itinerary → 前端完整渲染 ---
         yield build_event_line(
             "final_itinerary",
             build_event_envelope(
@@ -182,7 +220,6 @@ async def _stream_minimal_itinerary(
                 },
             ),
         )
-        # 持久化会话当前行程状态（T-M2-010）。
         try:
             await ConversationService.upsert_travel_conversation_state(
                 conversation_id=conversation_id,
@@ -193,18 +230,15 @@ async def _stream_minimal_itinerary(
                 last_user_query=query_text,
             )
         except Exception as persist_error:
-            # 状态写入失败不阻断 SSE 主链路。
             logger.error(
                 f"Persist travel conversation state failed: {str(persist_error)}",
                 exc_info=True,
             )
-        # 兼容旧前端纯文本消费。
         if explanation:
             yield _build_sse_line(explanation)
     except Exception as e:
         logger.error(f"Generate travel draft failed: {str(e)}", exc_info=True)
         fallback_text = "草案生成失败，请稍后再试。"
-        # 构建事件行
         yield build_event_line(
             "error",
             build_event_envelope(
@@ -214,7 +248,6 @@ async def _stream_minimal_itinerary(
                 payload={"text": fallback_text},
             ),
         )
-        # 构建SSE行
         yield _build_sse_line(fallback_text)
 
 
