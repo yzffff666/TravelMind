@@ -101,7 +101,7 @@ const slotCost = (slot: ItinerarySlot): number | null => {
 .itinerary { max-width: 680px; }
 
 .day-section { margin-bottom: 44px; }
-.day-section:last-child { margin-bottom: 0; }
+.day-section:last-child { margin-bottom: 24px; }
 
 .day-hdr {
   display: flex;

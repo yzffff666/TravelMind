@@ -36,6 +36,15 @@ def _cache_key(query: str, city: str, keywords: list[str] | None) -> str:
 
 
 @dataclass
+class _ProviderOutcome:
+    """Result of a single parallel provider call."""
+    provider_name: str
+    response: ProviderResponse | None = None
+    error_code: ProviderErrorCode | None = None
+    error_message: str = ""
+
+
+@dataclass
 class OrchestratorResult:
     """Aggregated result from all provider calls in one request."""
 
@@ -49,10 +58,11 @@ class OrchestratorResult:
 class ProviderOrchestrator:
     """Executes provider calls respecting call budget and timeouts.
 
-    When a provider fails the orchestrator catches the exception,
-    records a ``ProviderError``, marks the result as *degraded*,
-    and appends a human-readable assumption string so downstream
-    nodes can surface it in ``validation.assumptions``.
+    All providers are called in parallel via ``asyncio.gather`` to
+    minimise wall-clock latency.  Individual failures are isolated —
+    the orchestrator records a ``ProviderError``, marks the result as
+    *degraded*, and appends a human-readable assumption string so
+    downstream nodes can surface it in ``validation.assumptions``.
     """
 
     def __init__(
@@ -71,7 +81,10 @@ class ProviderOrchestrator:
         keywords: list[str] | None = None,
         context: ProviderCallContext | None = None,
     ) -> OrchestratorResult:
-        """Run search + map recall within the call budget (with TTL cache)."""
+        """Run search + map recall within the call budget (with TTL cache).
+
+        Provider calls are dispatched in parallel with ``asyncio.gather``.
+        """
         key = _cache_key(query, city, keywords)
         cached = _recall_cache.get(key)
         if cached:
@@ -81,26 +94,44 @@ class ProviderOrchestrator:
                 return cached_result
             del _recall_cache[key]
 
-        result = OrchestratorResult()
+        budget = self._policy.max_calls_per_request
+        tasks: list[asyncio.Task] = []
 
         if self._policy.is_enabled(ProviderType.SEARCH):
             for sp in self._registry.search_providers:
-                if result.calls_made >= self._policy.max_calls_per_request:
-                    result.assumptions.append(
-                        "已达到单次请求调用上限，部分搜索源未调用。"
-                    )
+                if len(tasks) >= budget:
                     break
-                await self._call_search(sp, query, context, result)
+                tasks.append(
+                    asyncio.ensure_future(
+                        self._call_search_safe(sp, query, context)
+                    )
+                )
 
         if self._policy.is_enabled(ProviderType.MAP):
             kw = keywords or [query]
             for mp in self._registry.map_providers:
-                if result.calls_made >= self._policy.max_calls_per_request:
-                    result.assumptions.append(
-                        "已达到单次请求调用上限，部分地图源未调用。"
-                    )
+                if len(tasks) >= budget:
                     break
-                await self._call_map(mp, city, kw, context, result)
+                tasks.append(
+                    asyncio.ensure_future(
+                        self._call_map_safe(mp, city, kw, context)
+                    )
+                )
+
+        outcomes: list[_ProviderOutcome] = await asyncio.gather(*tasks)
+
+        result = OrchestratorResult(calls_made=len(tasks))
+        for outcome in outcomes:
+            if outcome.response is not None:
+                self._merge_response(outcome.response, result, outcome.provider_name)
+            elif outcome.error_code is not None:
+                self._record_failure(
+                    result, outcome.provider_name,
+                    outcome.error_code, outcome.error_message,
+                )
+
+        if len(tasks) >= budget:
+            result.assumptions.append("已达到单次请求调用上限，部分数据源未调用。")
 
         if not result.candidates:
             result.degraded = True
@@ -116,17 +147,15 @@ class ProviderOrchestrator:
         return result
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Parallel-safe provider wrappers (return value, no side effects)
     # ------------------------------------------------------------------
 
-    async def _call_search(
+    async def _call_search_safe(
         self,
         provider: SearchProvider,
         query: str,
         context: ProviderCallContext | None,
-        result: OrchestratorResult,
-    ) -> None:
-        result.calls_made += 1
+    ) -> _ProviderOutcome:
         try:
             resp = await asyncio.wait_for(
                 provider.search(
@@ -136,21 +165,27 @@ class ProviderOrchestrator:
                 ),
                 timeout=self._policy.timeout_seconds,
             )
-            self._merge_response(resp, result, provider.name)
+            return _ProviderOutcome(provider_name=provider.name, response=resp)
         except asyncio.TimeoutError:
-            self._record_failure(result, provider.name, ProviderErrorCode.TIMEOUT, "搜索服务超时")
+            return _ProviderOutcome(
+                provider_name=provider.name,
+                error_code=ProviderErrorCode.TIMEOUT,
+                error_message="搜索服务超时",
+            )
         except Exception as exc:  # noqa: BLE001
-            self._record_failure(result, provider.name, ProviderErrorCode.UNKNOWN, str(exc))
+            return _ProviderOutcome(
+                provider_name=provider.name,
+                error_code=ProviderErrorCode.UNKNOWN,
+                error_message=str(exc),
+            )
 
-    async def _call_map(
+    async def _call_map_safe(
         self,
         provider: MapProvider,
         city: str,
         keywords: list[str],
         context: ProviderCallContext | None,
-        result: OrchestratorResult,
-    ) -> None:
-        result.calls_made += 1
+    ) -> _ProviderOutcome:
         try:
             resp = await asyncio.wait_for(
                 provider.nearby_poi(
@@ -161,11 +196,56 @@ class ProviderOrchestrator:
                 ),
                 timeout=self._policy.timeout_seconds,
             )
-            self._merge_response(resp, result, provider.name)
+            return _ProviderOutcome(provider_name=provider.name, response=resp)
         except asyncio.TimeoutError:
-            self._record_failure(result, provider.name, ProviderErrorCode.TIMEOUT, "地图服务超时")
+            return _ProviderOutcome(
+                provider_name=provider.name,
+                error_code=ProviderErrorCode.TIMEOUT,
+                error_message="地图服务超时",
+            )
         except Exception as exc:  # noqa: BLE001
-            self._record_failure(result, provider.name, ProviderErrorCode.UNKNOWN, str(exc))
+            return _ProviderOutcome(
+                provider_name=provider.name,
+                error_code=ProviderErrorCode.UNKNOWN,
+                error_message=str(exc),
+            )
+
+    # ------------------------------------------------------------------
+    # Legacy sequential wrappers (kept for backward compat in tests)
+    # ------------------------------------------------------------------
+
+    async def _call_search(
+        self,
+        provider: SearchProvider,
+        query: str,
+        context: ProviderCallContext | None,
+        result: OrchestratorResult,
+    ) -> None:
+        outcome = await self._call_search_safe(provider, query, context)
+        result.calls_made += 1
+        if outcome.response is not None:
+            self._merge_response(outcome.response, result, outcome.provider_name)
+        elif outcome.error_code is not None:
+            self._record_failure(result, outcome.provider_name, outcome.error_code, outcome.error_message)
+
+    async def _call_map(
+        self,
+        provider: MapProvider,
+        city: str,
+        keywords: list[str],
+        context: ProviderCallContext | None,
+        result: OrchestratorResult,
+    ) -> None:
+        outcome = await self._call_map_safe(provider, city, keywords, context)
+        result.calls_made += 1
+        if outcome.response is not None:
+            self._merge_response(outcome.response, result, outcome.provider_name)
+        elif outcome.error_code is not None:
+            self._record_failure(result, outcome.provider_name, outcome.error_code, outcome.error_message)
+
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _merge_response(

@@ -18,6 +18,13 @@ FIELD_LABELS: Dict[str, str] = {
     "travelers": "出行人群",
 }
 
+GUIDED_FIELD_HINTS: Dict[str, str] = {
+    "destination": "想去哪里旅行",
+    "duration": "计划玩几天",
+    "budget": "大概的预算范围",
+    "travelers": "和谁一起出行",
+}
+
 # Clarification message templates
 # NOTE:
 # - Keep wording here so product copy can evolve without touching service logic.
@@ -44,10 +51,15 @@ CONSTRAINT_PATTERNS: Dict[str, List[str]] = {
     ],
     "duration": [
         r"(\d+\s*[天日])|(\d+\s*(day|days|晚|夜))",
+        r"[一二两三四五六七八九十]+\s*[天日周]",
+        r"\d+\s*周",
+        r"一周|两周|半个月",
     ],
     "budget": [
         r"(预算|人均|总价|费用|cost|budget)",
-        r"(¥|￥|\$|€|£|\d+\s*(元|块|千|k|K|万|w|W|usd|eur|gbp))",
+        r"(¥|￥|\$|€|£|\d+\s*(元|块钱?|千|k|K|万|w|W|usd|eur|gbp))",
+        r"[一二两三四五六七八九十]+\s*(万|千|百)",
+        r"\d{3,}\s*(左右|以内|以下|上下|出头)",
     ],
     "travelers": [
         r"(独行|独自|一个人|情侣|亲子|家庭|朋友|多人|solo|couple|family|friends|group)",

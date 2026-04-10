@@ -2,7 +2,7 @@
   <div class="login-container">
     <div class="login-box">
       <div class="logo">
-        <img src="../assets/deepseek.svg" alt="AssistGen" />
+        <img src="../assets/deepseek.svg" alt="TravelMind" />
       </div>
       
       <h2 class="login-title">{{ activeTab === 'login' ? '账号登录' : '注册账号' }}</h2>

@@ -1,7 +1,8 @@
 import json
 import re as _re
+import time
 import uuid
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from langchain_deepseek import ChatDeepSeek
 from langchain_ollama import ChatOllama
@@ -22,6 +23,7 @@ from app.domain.travel.draft_prompts import (
     TRAVEL_DRAFT_USER_PROMPT_TEMPLATE,
 )
 from app.domain.travel.draft_rules import DRAFT_CONFIG
+from app.domain.travel.qp_rules import QP_RULES
 from app.domain.travel.query_processor import TravelQueryProcessor
 from app.schemas.itinerary_v1 import (
     BudgetByCategory,
@@ -68,7 +70,7 @@ def _get_pipeline():
 _MAX_CANDIDATES_IN_PROMPT = 10
 
 
-def _format_candidates_for_prompt(pipeline_result: PipelineResult) -> str:
+def _format_candidates_for_prompt(pipeline_result: PipelineResult | None) -> str:
     """Format pipeline candidates into a text section for the LLM prompt.
 
     Returns an empty string if there are no candidates (LLM falls back
@@ -135,23 +137,54 @@ def _postprocess_with_pipeline(
     )
 
 
+# ---------------------------------------------------------------------------
+# State definitions — multi-node architecture
+# ---------------------------------------------------------------------------
+
 class TravelDraftInput(TypedDict):
     query: str
 
-# TravelDraftState 状态定义
+
 class TravelDraftState(TravelDraftInput):
+    # -- extract_node outputs --
+    destination: str | None
+    days_count: int | None
+    total_budget: float | None
+    traveler_type: str | None
+    preferences: list[str]
+    pace: str | None
+    assumptions: list[str]
+    missing_p0: list[str]
+
+    # -- recall_node outputs --
+    pipeline_result: Any  # PipelineResult or None (not serialisable as TypedDict)
+    recall_degraded: bool
+
+    # -- llm_draft_node outputs --
+    raw_llm_content: str | None
+    itinerary: dict | None
+
+    # -- final outputs (postprocess_node / early_exit) --
     final_itinerary: dict | None
     explanation: str | None
     final_text: str | None
 
-# 根据 .env 配置选择 LLM 实例。
+    # -- per-node timing --
+    perf: dict
+
+
+# ---------------------------------------------------------------------------
+# LLM helpers
+# ---------------------------------------------------------------------------
+
 def _get_llm():
-    """根据 .env 配置选择 LLM 实例。"""
+    """Select LLM instance based on .env configuration."""
     if settings.AGENT_SERVICE == ServiceType.DEEPSEEK:
         return ChatDeepSeek(
             api_key=settings.DEEPSEEK_API_KEY,
             model_name=settings.DEEPSEEK_MODEL,
             temperature=0.7,
+            max_tokens=4096,
             tags=["travel_draft"],
         )
     return ChatOllama(
@@ -161,7 +194,7 @@ def _get_llm():
         tags=["travel_draft"],
     )
 
-# M1 模板降级：LLM 不可用时输出占位行程。
+
 def _build_template_itinerary(
     destination: str,
     days_count: int,
@@ -169,7 +202,7 @@ def _build_template_itinerary(
     traveler_type: str | None,
     assumptions: list[str],
 ) -> ItineraryV1:
-    """M1 模板降级：LLM 不可用时输出占位行程。"""
+    """Template fallback when LLM is unavailable."""
     itinerary = ItineraryV1(
         itinerary_id=str(uuid.uuid4()),
         revision_id=str(uuid.uuid4()),
@@ -189,12 +222,9 @@ def _build_template_itinerary(
     itinerary.validation.assumptions.extend(assumptions)
     return itinerary
 
-def _repair_json(text: str) -> str:
-    """Best-effort repair of common LLM JSON mistakes before parsing.
 
-    Handles: markdown fences, trailing commas, BOM, leading prose,
-    embedded comments, and unquoted control characters.
-    """
+def _repair_json(text: str) -> str:
+    """Best-effort repair of common LLM JSON mistakes before parsing."""
     t = text.strip().lstrip("\ufeff")
 
     if t.startswith("```"):
@@ -228,15 +258,13 @@ def _parse_llm_itinerary(
     preferences: list[str],
     assumptions: list[str],
 ) -> ItineraryV1:
-    """将 LLM 返回的 JSON 解析为 ItineraryV1，带容错修复。"""
+    """Parse LLM JSON response into ItineraryV1 with error repair."""
     text = _repair_json(raw)
     data = json.loads(text)
 
     days = []
-    # 遍历 data 中的 days，构建 ItineraryDay 列表。
     for day_data in data.get("days", []):
         slots = []
-        # 遍历 day_data 中的 slots，构建 ItinerarySlot 列表。
         for slot_data in day_data.get("slots", []):
             cb = slot_data.get("cost_breakdown")
             cost_breakdown = None
@@ -248,7 +276,6 @@ def _parse_llm_itinerary(
                     food=cb.get("food"),
                     other=cb.get("other"),
                 )
-            # 构建 ItinerarySlot 实例并添加到 slots 列表。
             slots.append(ItinerarySlot(
                 slot=slot_data.get("slot", "上午"),
                 activity=slot_data.get("activity", ""),
@@ -256,14 +283,12 @@ def _parse_llm_itinerary(
                 transit=slot_data.get("transit"),
                 cost_breakdown=cost_breakdown,
             ))
-        # 构建 ItineraryDay 实例并添加到 days 列表。
         days.append(ItineraryDay(
             day_index=day_data.get("day_index", len(days) + 1),
             theme=day_data.get("theme"),
             slots=slots if slots else build_slots(len(days) + 1),
         ))
 
-    # 如果 LLM 未返回有效天数数据，则降级为模板。
     if not days:
         days = [
             ItineraryDay(day_index=i, slots=build_slots(i))
@@ -271,10 +296,8 @@ def _parse_llm_itinerary(
         ]
         assumptions.append("LLM 未返回有效天数数据，已降级为模板。")
 
-    # 构建 BudgetSummary 实例。
     bs = data.get("budget_summary", {})
     by_cat = bs.get("by_category", {})
-    # 构建 BudgetSummary 实例。
     budget_summary = BudgetSummary(
         total_estimate=bs.get("total_estimate", total_budget),
         uncertainty_note=bs.get("uncertainty_note"),
@@ -287,7 +310,6 @@ def _parse_llm_itinerary(
         ),
     )
 
-    # 构建 ItineraryV1 实例。
     itinerary = ItineraryV1(
         itinerary_id=str(uuid.uuid4()),
         revision_id=str(uuid.uuid4()),
@@ -305,66 +327,79 @@ def _parse_llm_itinerary(
     itinerary.validation.assumptions.extend(assumptions)
     return itinerary
 
-# 主图节点：根据用户查询生成行程草案。
-async def generate_travel_draft(state: TravelDraftState) -> dict:
-    # 从状态中获取用户查询。
+
+# ===================================================================
+# Graph Nodes
+# ===================================================================
+
+async def extract_node(state: TravelDraftState) -> dict:
+    """Node 1: Extract travel constraints from query and validate P0 fields."""
+    t0 = time.perf_counter()
     query = state.get("query", "").strip()
-    # 从用户查询中提取天数。
-    days_count = extract_days(query)
-    # 从用户查询中提取预算。
-    total_budget = extract_budget(query)
-    # 从用户查询中提取目的地。
+
     destination = extract_destination(query)
-    # 从用户查询中提取旅行者类型。
+    days_count = extract_days(query)
+    total_budget = extract_budget(query)
     traveler_type = extract_traveler_type(query)
 
-    missing_p0 = []
-    # 如果目的地为空，则添加到 missing_p0 列表。
+    missing_p0: list[str] = []
     if not destination:
         missing_p0.append(DRAFT_CONFIG.required_labels[0])
-    # 如果天数为空，则添加到 missing_p0 列表。
     if not days_count:
         missing_p0.append(DRAFT_CONFIG.required_labels[1])
-    # 如果预算为空，则添加到 missing_p0 列表。
     if total_budget is None:
         missing_p0.append(DRAFT_CONFIG.required_labels[2])
 
-    # 如果 missing_p0 列表不为空，则返回 missing_p0 列表。
-    if missing_p0:
-        return {
-            "final_itinerary": None,
-            "explanation": None,
-            "final_text": DRAFT_CONFIG.missing_p0_template.format(
-                missing_fields="、".join(missing_p0)
-            ),
-        }
-
     assumptions: list[str] = []
-    # 如果旅行者类型为空，则添加到 assumptions 列表。
     if not traveler_type:
         assumptions.append(DRAFT_CONFIG.traveler_default_assumption)
 
-    # 从 QP_RULES 中提取偏好。
-    from app.domain.travel.qp_rules import QP_RULES
     preferences = [kw for kw in QP_RULES.preference_keywords if kw in query]
-    pace = None
-    # 从 QP_RULES 中提取节奏。
-    for key, value in QP_RULES.pace_keywords.items():
-        if key in query:
-            pace = value
-            break
+    pace = next((v for k, v in QP_RULES.pace_keywords.items() if k in query), None)
 
-    # --- Phase 1a: run pipeline (QP→Recall→Rank→Filter→Evidence) ---
+    elapsed = (time.perf_counter() - t0) * 1000
+    logger.info(f"extract_node: destination={destination}, days={days_count}, "
+                f"budget={total_budget}, missing_p0={missing_p0}, elapsed={elapsed:.1f}ms")
+
+    return {
+        "destination": destination,
+        "days_count": days_count,
+        "total_budget": total_budget,
+        "traveler_type": traveler_type,
+        "preferences": preferences,
+        "pace": pace,
+        "assumptions": assumptions,
+        "missing_p0": missing_p0,
+        "perf": {**state.get("perf", {}), "extract_ms": elapsed},
+    }
+
+
+async def early_exit_node(state: TravelDraftState) -> dict:
+    """Return a prompt for missing P0 fields without running pipeline or LLM."""
+    missing = state.get("missing_p0", [])
+    return {
+        "final_itinerary": None,
+        "explanation": None,
+        "final_text": DRAFT_CONFIG.missing_p0_template.format(
+            missing_fields="、".join(missing)
+        ),
+    }
+
+
+async def recall_node(state: TravelDraftState) -> dict:
+    """Node 2: Run QP -> Recall -> Rank -> Filter -> Evidence pipeline."""
+    t0 = time.perf_counter()
+
     pipeline_result: PipelineResult | None = None
-    pipeline_eb: EvidenceBuilder | None = None
+    recall_degraded = False
     try:
         qp, recall_svc, scorer, flt, eb = _get_pipeline()
-        pipeline_eb = eb
-        qp_output = qp.process(query)
+        qp_output = qp.process(state["query"])
         recall_result = await recall_svc.recall_from_qp(qp_output)
         ranked = scorer.rank_from_qp(recall_result.candidates, qp_output, top_k=15)
         filter_result = flt.apply_from_qp(ranked, qp_output)
         pipeline_result = eb.build(filter_result, recall_result)
+        recall_degraded = pipeline_result.degraded
 
         logger.info(
             f"Pipeline completed: "
@@ -379,8 +414,33 @@ async def generate_travel_draft(state: TravelDraftState) -> dict:
             logger.info(f"Pipeline assumptions: {pipeline_result.assumptions}")
     except Exception as exc:
         logger.warning(f"Pipeline failed, will proceed with LLM-only: {exc}")
+        recall_degraded = True
 
-    # --- 尝试 LLM 生成 ---
+    elapsed = (time.perf_counter() - t0) * 1000
+    return {
+        "pipeline_result": pipeline_result,
+        "recall_degraded": recall_degraded,
+        "perf": {**state.get("perf", {}), "recall_ms": elapsed},
+    }
+
+
+async def llm_draft_node(state: TravelDraftState) -> dict:
+    """Node 3: Call LLM to generate the itinerary draft."""
+    t0 = time.perf_counter()
+    t_first_token = None
+
+    destination = state["destination"]
+    days_count = state["days_count"]
+    total_budget = state["total_budget"]
+    traveler_type = state.get("traveler_type")
+    preferences = state.get("preferences", [])
+    pace = state.get("pace")
+    assumptions = list(state.get("assumptions", []))
+    pipeline_result = state.get("pipeline_result")
+
+    itinerary_dict = None
+    explanation = None
+
     try:
         llm = _get_llm()
         user_prompt = TRAVEL_DRAFT_USER_PROMPT_TEMPLATE.format(
@@ -395,19 +455,22 @@ async def generate_travel_draft(state: TravelDraftState) -> dict:
         candidates_section = _format_candidates_for_prompt(pipeline_result)
         if candidates_section:
             user_prompt += candidates_section
-            logger.info(f"Injected {len(pipeline_result.candidates)} candidates into LLM prompt")
-        # 构建消息列表。
+            logger.info(f"Injected candidates into LLM prompt")
+
         messages = [
             {"role": "system", "content": TRAVEL_DRAFT_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
         logger.info(f"Calling LLM for travel draft: {destination} {days_count}天 预算{int(total_budget)}")
-        # 调用 LLM。
-        response = await llm.ainvoke(messages)
-        # 获取 LLM 返回的原始内容。
-        raw_content = response.content
 
-        # 解析 LLM 返回的原始内容。
+        buffer = ""
+        async for chunk in llm.astream(messages):
+            if chunk.content:
+                if t_first_token is None:
+                    t_first_token = time.perf_counter()
+                buffer += chunk.content
+        raw_content = buffer
+
         itinerary = _parse_llm_itinerary(
             raw=raw_content,
             destination=destination,
@@ -417,7 +480,6 @@ async def generate_travel_draft(state: TravelDraftState) -> dict:
             preferences=preferences,
             assumptions=assumptions,
         )
-        # 构建解释。
         explanation = (
             f"已为你生成 {destination} {days_count} 天行程草案"
             f"（预算 {int(total_budget)} 元"
@@ -425,6 +487,7 @@ async def generate_travel_draft(state: TravelDraftState) -> dict:
             f"{'，偏好 ' + '、'.join(preferences) if preferences else ''}"
             f"）。"
         )
+        itinerary_dict = itinerary.model_dump(mode="json")
         logger.info("LLM travel draft generated successfully")
 
     except Exception as e:
@@ -440,20 +503,81 @@ async def generate_travel_draft(state: TravelDraftState) -> dict:
         explanation = DRAFT_CONFIG.explanation_template.format(days=days_count)
         if assumptions:
             explanation = f"{explanation} {' '.join(assumptions)}".strip()
+        itinerary_dict = itinerary.model_dump(mode="json")
 
-    # --- Phase 1c: post-processing (evidence refs, assumptions, coverage) ---
-    _postprocess_with_pipeline(itinerary, pipeline_result, pipeline_eb)
+    elapsed = (time.perf_counter() - t0) * 1000
+    ttft = (t_first_token - t0) * 1000 if t_first_token else None
+    return {
+        "itinerary": itinerary_dict,
+        "explanation": explanation,
+        "assumptions": assumptions,
+        "perf": {**state.get("perf", {}), "llm_ms": elapsed, "llm_ttft_ms": ttft},
+    }
 
+
+async def postprocess_node(state: TravelDraftState) -> dict:
+    """Node 4: Attach evidence, link refs, compute coverage."""
+    t0 = time.perf_counter()
+
+    itinerary_dict = state.get("itinerary")
+    pipeline_result = state.get("pipeline_result")
+    explanation = state.get("explanation")
+
+    if not itinerary_dict:
+        return {
+            "final_itinerary": None,
+            "explanation": explanation,
+            "final_text": "未能生成结构化草案，请补充目的地、天数和预算后重试。",
+        }
+
+    itinerary = ItineraryV1(**itinerary_dict)
+
+    try:
+        _, _, _, _, eb = _get_pipeline()
+    except Exception:
+        eb = None
+    _postprocess_with_pipeline(itinerary, pipeline_result, eb)
+
+    elapsed = (time.perf_counter() - t0) * 1000
     return {
         "final_itinerary": itinerary.model_dump(mode="json"),
         "explanation": explanation,
         "final_text": None,
+        "perf": {**state.get("perf", {}), "postprocess_ms": elapsed},
     }
 
 
+# ===================================================================
+# Conditional routing
+# ===================================================================
+
+def _should_continue_after_extract(state: TravelDraftState) -> str:
+    """Route to early_exit if P0 fields are missing, otherwise continue."""
+    if state.get("missing_p0"):
+        return "early_exit_node"
+    return "recall_node"
+
+
+# ===================================================================
+# Graph assembly
+# ===================================================================
+
 builder = StateGraph(TravelDraftState, input=TravelDraftInput)
-builder.add_node("generate_travel_draft", generate_travel_draft)
-builder.add_edge(START, "generate_travel_draft")
-builder.add_edge("generate_travel_draft", END)
+
+builder.add_node("extract_node", extract_node)
+builder.add_node("early_exit_node", early_exit_node)
+builder.add_node("recall_node", recall_node)
+builder.add_node("llm_draft_node", llm_draft_node)
+builder.add_node("postprocess_node", postprocess_node)
+
+builder.add_edge(START, "extract_node")
+builder.add_conditional_edges("extract_node", _should_continue_after_extract, {
+    "early_exit_node": "early_exit_node",
+    "recall_node": "recall_node",
+})
+builder.add_edge("early_exit_node", END)
+builder.add_edge("recall_node", "llm_draft_node")
+builder.add_edge("llm_draft_node", "postprocess_node")
+builder.add_edge("postprocess_node", END)
 
 travel_draft_graph = builder.compile()

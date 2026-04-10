@@ -6,74 +6,72 @@ from app.domain.travel.clarification_rules import (
     CLARIFICATION_STAGE_NAME,
     CLARIFICATION_MSG_HARD_AND_SOFT,
     CLARIFICATION_MSG_HARD_ONLY,
-    CONSTRAINT_PATTERNS,
     FIELD_LABELS,
+    GUIDED_FIELD_HINTS,
     HARD_REQUIRED_FIELDS,
     SOFT_RECOMMENDED_FIELDS,
     SSE_EVENT_STAGE_PROGRESS,
     SSE_EVENT_STAGE_START,
 )
+from app.domain.travel.draft_builder import (
+    extract_budget,
+    extract_days,
+    extract_destination,
+    extract_traveler_type,
+)
 
-# 旅行澄清服务
+_VALUE_KEYS = ("destination", "duration", "budget", "travelers")
+
+
 class TravelClarificationService:
-    """Handle clarification gate and in-memory pending clarification state."""
+    """Value-based clarification gate with in-memory pending state.
+
+    Tracks actual extracted *values* so that detection and extraction are
+    always consistent -- if a value can't be extracted, it is not considered
+    present, preventing premature itinerary generation.
+    """
 
     def __init__(self) -> None:
-        # thread_id -> pending clarification context
-        # 说明：当前实现是“进程内内存态”，服务重启后不会保留。
         self._pending: Dict[str, Dict[str, Any]] = {}
 
     def has_pending(self, thread_id: str) -> bool:
-        # 判断指定会话是否仍处于“等待补充约束”的阶段。
         return thread_id in self._pending
 
     def clear_pending(self, thread_id: str) -> None:
-        # reset 场景：显式清理会话的澄清中间态。
         self._pending.pop(thread_id, None)
 
     def start_new(self, thread_id: str, query: str) -> Dict[str, Any]:
-        # 第一次进入会话时做约束抽取与缺失判断。
-        constraints = self._extract_constraint_presence(query)
-        missing_hard = self._missing_fields(constraints, HARD_REQUIRED_FIELDS)
-        missing_soft = self._missing_fields(constraints, SOFT_RECOMMENDED_FIELDS)
+        values = self._extract_values(query)
+        missing_hard = self._missing_hard_fields(values)
+        missing_soft = self._missing_soft_fields(values)
 
         if missing_hard:
-            # 仅在硬门槛缺失时记录 pending，后续由 resume 继续补充。
             self._pending[thread_id] = {
                 "initial_query": query,
-                "constraints": constraints,
+                "values": values,
                 "followups": [],
             }
 
-        # 返回是否需要澄清以及缺失的硬门槛和软门槛。
         return {
             "need_clarification": bool(missing_hard),
             "missing_hard": missing_hard,
             "missing_soft": missing_soft,
         }
 
-    # 续答阶段：把本轮补充信息和历史已识别约束做“并集”。
     def continue_pending(self, thread_id: str, query: str) -> Dict[str, Any]:
-        # 获取历史约束和本轮补充的约束。
         pending = self._pending.get(thread_id)
-        # 如果历史约束和本轮补充的约束为空，则返回False。
         if not pending:
             return {"has_pending": False}
 
-        # 提取本轮补充的约束。
-        delta = self._extract_constraint_presence(query)
-        # 合并历史约束和本轮补充的约束。
-        merged = self._merge_constraint_presence(pending["constraints"], delta)
-        # 计算缺失的硬门槛和软门槛。
-        missing_hard = self._missing_fields(merged, HARD_REQUIRED_FIELDS)
-        missing_soft = self._missing_fields(merged, SOFT_RECOMMENDED_FIELDS)
+        delta = self._extract_values(query)
+        merged = self._merge_values(pending["values"], delta)
+        missing_hard = self._missing_hard_fields(merged)
+        missing_soft = self._missing_soft_fields(merged)
 
-        # 更新历史约束和本轮补充的约束。
-        pending["constraints"] = merged
+        pending["values"] = merged
         pending["followups"].append(query)
 
         if missing_hard:
-            # 仍缺硬门槛：继续要求澄清。
             return {
                 "has_pending": True,
                 "need_clarification": True,
@@ -81,11 +79,7 @@ class TravelClarificationService:
                 "missing_soft": missing_soft,
             }
 
-        # 硬门槛补齐后：合并初始 query + 补充信息，交还给主规划流程。
-        combined_query = pending["initial_query"]
-        if pending["followups"]:
-            combined_query = f"{combined_query}\n补充信息：{'；'.join(pending['followups'])}"
-        # 澄清结束，清理 pending 状态，避免后续重复进入澄清分支。
+        combined_query = self._build_combined_query(merged)
         self._pending.pop(thread_id, None)
         return {
             "has_pending": True,
@@ -93,8 +87,84 @@ class TravelClarificationService:
             "combined_query": combined_query,
         }
 
+    def get_constraint_context(self, thread_id: str) -> tuple[str, str]:
+        """Return (known_text, missing_text) for LLM guided prompt."""
+        pending = self._pending.get(thread_id)
+        if not pending:
+            return ("\u6682\u65e0", "\u76ee\u7684\u5730\u3001\u5929\u6570\u3001\u9884\u7b97")
+
+        values = pending["values"]
+
+        known_parts: list[str] = []
+        if values.get("destination"):
+            known_parts.append(f"\u76ee\u7684\u5730: {values['destination']}")
+        if values.get("duration") is not None:
+            known_parts.append(f"\u5929\u6570: {values['duration']}\u5929")
+        if values.get("budget") is not None:
+            known_parts.append(f"\u9884\u7b97: {int(values['budget'])}\u5143")
+        if values.get("travelers"):
+            known_parts.append(f"\u51fa\u884c\u4eba\u7fa4: {values['travelers']}")
+
+        missing_parts: list[str] = []
+        for field in HARD_REQUIRED_FIELDS:
+            if values.get(field) is None:
+                missing_parts.append(GUIDED_FIELD_HINTS.get(field, FIELD_LABELS[field]))
+
+        known_text = "\u3001".join(known_parts) if known_parts else "\u6682\u65e0"
+        missing_text = "\u3001".join(missing_parts) if missing_parts else "\u65e0"
+        return (known_text, missing_text)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_values(text: str) -> Dict[str, Any]:
+        """Extract actual constraint values using the same functions as QP."""
+        return {
+            "destination": extract_destination(text),
+            "duration": extract_days(text),
+            "budget": extract_budget(text),
+            "travelers": extract_traveler_type(text),
+        }
+
+    @staticmethod
+    def _merge_values(base: Dict[str, Any], delta: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge values: latest non-None wins (allows user to change mind)."""
+        result = dict(base)
+        for key in _VALUE_KEYS:
+            v = delta.get(key)
+            if v is not None:
+                result[key] = v
+        return result
+
+    @staticmethod
+    def _missing_hard_fields(values: Dict[str, Any]) -> List[str]:
+        return [f for f in HARD_REQUIRED_FIELDS if values.get(f) is None]
+
+    @staticmethod
+    def _missing_soft_fields(values: Dict[str, Any]) -> List[str]:
+        return [f for f in SOFT_RECOMMENDED_FIELDS if values.get(f) is None]
+
+    @staticmethod
+    def _build_combined_query(values: Dict[str, Any]) -> str:
+        """Construct a clean, structured query from extracted values."""
+        parts: list[str] = []
+        if values.get("destination"):
+            parts.append(f"\u53bb{values['destination']}")
+        if values.get("duration") is not None:
+            parts.append(f"\u73a9{values['duration']}\u5929")
+        if values.get("budget") is not None:
+            parts.append(f"\u9884\u7b97{int(values['budget'])}\u5143")
+        if values.get("travelers"):
+            parts.append(f"{values['travelers']}\u51fa\u884c")
+        return "\uff0c".join(parts) if parts else ""
+
+    # ------------------------------------------------------------------
+    # Legacy helpers (still used by /travel/resume template path)
+    # ------------------------------------------------------------------
+
     def build_clarification_payload(self, missing_hard: List[str], missing_soft: List[str]) -> Dict[str, Any]:
-        """Build structured clarification payload for SSE envelope."""
         clarification_text = self._build_clarification_message(missing_hard, missing_soft)
         return {
             "stage": CLARIFICATION_STAGE_NAME,
@@ -104,13 +174,10 @@ class TravelClarificationService:
         }
 
     def build_clarification_stream(self, thread_id: str, missing_hard: List[str], missing_soft: List[str]):
-        # 将澄清结果包装成 SSE 事件流，供前端实时显示。
         payload = self.build_clarification_payload(missing_hard=missing_hard, missing_soft=missing_soft)
         clarification_text = payload["message"]
 
         async def _stream():
-            # Structured events for new clients.
-            # 1. 触发澄清阶段开始事件。
             yield self._sse_line(
                 {
                     "event": SSE_EVENT_STAGE_START,
@@ -118,7 +185,6 @@ class TravelClarificationService:
                     "conversation_id": thread_id,
                 }
             )
-            # 2. 触发澄清阶段进度事件。
             yield self._sse_line(
                 {
                     "event": SSE_EVENT_STAGE_PROGRESS,
@@ -129,35 +195,14 @@ class TravelClarificationService:
                     "message": payload["message"],
                 }
             )
-            # Text fallback for old clients.
-            # 3. 触发澄清阶段完成事件。
             yield self._sse_line(clarification_text)
 
         return _stream()
 
-    def _extract_constraint_presence(self, text: str) -> Dict[str, bool]:
-        """Heuristic extraction from externalized rule definitions."""
-        # 基于规则库做“有/无”识别（不是实体抽取，不输出具体值）。
-        normalized = (text or "").strip()
-        result: Dict[str, bool] = {}
-        for field, patterns in CONSTRAINT_PATTERNS.items():
-            result[field] = any(re.search(pattern, normalized, re.IGNORECASE) for pattern in patterns)
-        return result
-
-    def _merge_constraint_presence(self, base: Dict[str, bool], delta: Dict[str, bool]) -> Dict[str, bool]:
-        # 只要历史或本轮任一命中，该字段就记为 True。
-        return {key: bool(base.get(key)) or bool(delta.get(key)) for key in FIELD_LABELS.keys()}
-
-    @staticmethod
-    def _missing_fields(constraints: Dict[str, bool], keys: Tuple[str, ...]) -> List[str]:
-        # 返回给定字段集合中仍未满足的字段列表。
-        return [key for key in keys if not constraints.get(key, False)]
-
     def _build_clarification_message(self, missing_hard: List[str], missing_soft: List[str]) -> str:
-        # 将缺失字段映射为自然语言提示，给前端直接展示。
-        hard_text = "、".join(FIELD_LABELS[key] for key in missing_hard)
+        hard_text = "\u3001".join(FIELD_LABELS[key] for key in missing_hard)
         if missing_soft:
-            soft_text = "、".join(FIELD_LABELS[key] for key in missing_soft)
+            soft_text = "\u3001".join(FIELD_LABELS[key] for key in missing_soft)
             return CLARIFICATION_MSG_HARD_AND_SOFT.format(
                 hard_text=hard_text,
                 soft_text=soft_text,
@@ -166,5 +211,4 @@ class TravelClarificationService:
 
     @staticmethod
     def _sse_line(payload: Any) -> str:
-        # SSE 标准格式：每个消息块以 data: 开头，以空行结束。
         return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"

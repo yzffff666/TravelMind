@@ -36,6 +36,7 @@ export interface TravelSseCallbacks {
   onFinalItinerary?: (envelope: TravelEventEnvelope<{
     itinerary: Record<string, unknown>
     explanation: string
+    perf?: Record<string, number>
   }>) => void
   onFinalText?: (envelope: TravelEventEnvelope<{ text: string }>) => void
   onError?: (envelope: TravelEventEnvelope<{ text: string }>) => void
@@ -51,6 +52,11 @@ export interface TravelSseCallbacks {
     explanation: string
   }>) => void
   onResetDone?: (envelope: TravelEventEnvelope<{ text: string }>) => void
+  onDayReady?: (envelope: TravelEventEnvelope<{ day: Record<string, unknown> }>) => void
+  onPipelineComplete?: (envelope: TravelEventEnvelope<{
+    candidate_count: number
+    recall_ms?: number
+  }>) => void
 }
 
 export interface TravelStreamOptions {
@@ -176,6 +182,16 @@ export class ApiService {
         return
       case 'reset_done':
         callbacks.onResetDone?.(envelope as TravelEventEnvelope<{ text: string }>)
+        return
+      case 'day_ready':
+        callbacks.onDayReady?.(
+          envelope as TravelEventEnvelope<{ day: Record<string, unknown> }>
+        )
+        return
+      case 'pipeline_complete':
+        callbacks.onPipelineComplete?.(
+          envelope as TravelEventEnvelope<{ candidate_count: number; recall_ms?: number }>
+        )
         return
       default:
         return

@@ -4,19 +4,33 @@ from app.models.conversation import Conversation, DialogueType
 from app.models.message import Message
 from app.models.travel_conversation_state import TravelConversationState
 from app.core.logger import get_logger
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 
 logger = get_logger(service="conversation")
 
 class ConversationService:
     @staticmethod
     async def _ensure_travel_state_table() -> None:
-        """确保旅行会话状态表存在（本地开发容错）。"""
+        """确保旅行会话状态表存在并包含所有列（本地开发容错）。"""
         async with engine.begin() as conn:
             await conn.run_sync(
                 TravelConversationState.__table__.create,
                 checkfirst=True,
             )
+            def _check_columns(sync_conn):
+                insp = inspect(sync_conn)
+                cols = {c["name"] for c in insp.get_columns("travel_conversation_states")}
+                if "chat_history_json" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE travel_conversation_states "
+                        "ADD COLUMN chat_history_json JSON NULL COMMENT '闲聊历史'"
+                    ))
+                if "chat_summary" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE travel_conversation_states "
+                        "ADD COLUMN chat_summary TEXT NULL COMMENT '远期对话压缩摘要'"
+                    ))
+            await conn.run_sync(_check_columns)
 
     @staticmethod
     def get_conversation_title(message: str, max_length: int = 20) -> str:
@@ -65,6 +79,8 @@ class ConversationService:
                 "current_revision_id": state.current_revision_id,
                 "trip_profile": state.trip_profile_json,
                 "current_itinerary": state.current_itinerary_json,
+                "chat_history": state.chat_history_json,
+                "chat_summary": state.chat_summary,
                 "last_user_query": state.last_user_query,
                 "created_at": state.created_at.isoformat() if state.created_at else None,
                 "updated_at": state.updated_at.isoformat() if state.updated_at else None,
@@ -180,6 +196,51 @@ class ConversationService:
                 "created_at": state.created_at.isoformat() if state.created_at else None,
                 "updated_at": state.updated_at.isoformat() if state.updated_at else None,
             }
+
+    @staticmethod
+    async def append_chat_history(
+        conversation_id: str,
+        user_msg: str,
+        assistant_msg: str,
+        max_turns: int = 20,
+    ) -> None:
+        """Append a user+assistant turn to the chat history JSON column."""
+        await ConversationService._ensure_travel_state_table()
+        async with AsyncSessionLocal() as db:
+            stmt = select(TravelConversationState).where(
+                TravelConversationState.conversation_id == conversation_id
+            )
+            result = await db.execute(stmt)
+            state = result.scalar_one_or_none()
+            if not state:
+                return
+            history: list = state.chat_history_json or []
+            history.append({"role": "user", "content": user_msg})
+            history.append({"role": "assistant", "content": assistant_msg})
+            if len(history) > max_turns * 2:
+                history = history[-(max_turns * 2):]
+            state.chat_history_json = history
+            await db.commit()
+
+    @staticmethod
+    async def update_chat_summary(
+        conversation_id: str,
+        summary: str,
+        trimmed_history: list[dict],
+    ) -> None:
+        """Atomically write compressed summary and replace history with recent window."""
+        await ConversationService._ensure_travel_state_table()
+        async with AsyncSessionLocal() as db:
+            stmt = select(TravelConversationState).where(
+                TravelConversationState.conversation_id == conversation_id
+            )
+            result = await db.execute(stmt)
+            state = result.scalar_one_or_none()
+            if not state:
+                return
+            state.chat_summary = summary
+            state.chat_history_json = trimmed_history
+            await db.commit()
 
     @staticmethod
     async def save_message(

@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import Home from '../views/Home.vue'
 import Login from '../views/Login.vue'
 import TravelPlanner from '../views/TravelPlanner.vue'
 
@@ -8,8 +7,8 @@ const router = createRouter({
   routes: [
     {
       path: '/',
-      name: 'home',
-      component: Home,
+      name: 'travel',
+      component: TravelPlanner,
       meta: { requiresAuth: true }
     },
     {
@@ -20,13 +19,11 @@ const router = createRouter({
     {
       path: '/register',
       name: 'register',
-      component: Login  // 使用同一个组件
+      component: Login
     },
     {
       path: '/travel',
-      name: 'travel',
-      component: TravelPlanner,
-      meta: { requiresAuth: true }
+      redirect: '/'
     }
   ]
 })

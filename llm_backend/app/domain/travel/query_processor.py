@@ -14,8 +14,8 @@ from app.domain.travel.draft_builder import (
 from app.domain.travel.qp_rules import QP_RULES
 
 # 意图类型
-IntentType = Literal["create", "edit", "qa", "reset"]
-IntentDetailType = Literal["first_create", "edit_day", "qa_evidence", "qa_local", "reset_all"]
+IntentType = Literal["create", "edit", "qa", "reset", "chat"]
+IntentDetailType = Literal["first_create", "edit_day", "qa_evidence", "qa_local", "reset_all", "general_chat"]
 
 @dataclass(slots=True)
 class QPConstraints:
@@ -107,6 +107,16 @@ class TravelQueryProcessor:
             return "qa", "qa_evidence"
         if QP_RULES.qa_question_pattern.search(query):
             return "qa", "qa_local"
+
+        constraints = self._extract_constraints(query)
+        has_any_travel_signal = (
+            bool(constraints.destination_city)
+            or constraints.days is not None
+            or constraints.budget is not None
+            or bool(constraints.traveler_type)
+        )
+        if not has_any_travel_signal:
+            return "chat", "general_chat"
         return "create", "first_create"
 
     @staticmethod

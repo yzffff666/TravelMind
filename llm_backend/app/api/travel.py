@@ -18,6 +18,7 @@ from app.domain.travel.query_processor import TravelQueryProcessor
 from app.lg_agent.travel_draft_graph import travel_draft_graph
 from app.lg_agent.utils import new_uuid
 from app.services.conversation_service import ConversationService
+from app.services.deepseek_service import DeepseekService
 from app.services.travel_clarification_service import TravelClarificationService
 
 router = APIRouter()
@@ -84,6 +85,147 @@ async def _stream_intent_text_response(
         ),
     )
     yield _build_sse_line(text)
+
+
+_chat_llm = DeepseekService()
+
+_CHAT_SYSTEM_PROMPT = (
+    "你是 TravelMind 旅行助手。你可以和用户自由聊天，回答各种问题。"
+    "当话题与旅行相关时，自然地引导用户提供目的地、天数和预算，"
+    "以便为他们生成行程规划。回答简洁友好，不超过 300 字。"
+)
+
+_SUMMARIZE_PROMPT = (
+    "请将以下对话历史压缩为一段简洁的摘要（不超过 150 字），"
+    "保留用户的关键偏好、已确认的约束和重要上下文信息。\n\n"
+)
+
+_GUIDED_SYSTEM_PROMPT = (
+    "你是 TravelMind 旅行顾问，正在通过自然对话帮助用户规划旅行。\n"
+    "当前已知信息：{known}\n"
+    "还需要了解：{missing}\n\n"
+    "规则：\n"
+    "1. 先对用户的选择表示认同和兴趣，展现你对目的地或旅行的了解\n"
+    "2. 每次只问一个问题，优先问最重要的缺失信息\n"
+    "3. 像专业旅行顾问和朋友一样聊天，不要用模板化语言\n"
+    "4. 给出实用建议帮助用户决策（如推荐天数范围、预算参考）\n"
+    "5. 回答不超过80字，简洁有温度\n"
+    "6. 用户的回复通常是在回应你上一个问题，请结合对话上下文理解意图\n"
+    "7. 如果用户回复模糊（如'少一点''差不多''看情况'），引导用户给出具体数值\n"
+    "8. 严格基于'当前已知信息'回应，不要遗忘已确认的目的地或天数\n"
+)
+
+RECENT_WINDOW = 6  # keep last 6 turns raw (12 messages)
+_AMBIGUOUS_BUDGET_PHRASES = ("少一点", "低一点", "便宜点", "省一点", "差不多", "看情况")
+
+
+def _needs_budget_clarification_hint(query: str, missing_text: str) -> bool:
+    """Return True when we should deterministically re-ask budget range.
+
+    This avoids LLM drift where budget-only missing state can accidentally
+    trigger a question about days/destination on vague replies.
+    """
+    budget_only_missing = (
+        "预算" in missing_text
+        and "几天" not in missing_text
+        and "哪里" not in missing_text
+        and "目的地" not in missing_text
+    )
+    if not budget_only_missing:
+        return False
+    q = (query or "").strip()
+    return any(phrase in q for phrase in _AMBIGUOUS_BUDGET_PHRASES)
+
+
+def _build_system_prompt(summary: str, itinerary: dict | None) -> str:
+    parts = [_CHAT_SYSTEM_PROMPT]
+    if summary:
+        parts.append(f"\n[之前的对话摘要] {summary}")
+    if itinerary:
+        profile = itinerary.get("trip_profile", {})
+        dest = profile.get("destination_city", "")
+        days_count = len(itinerary.get("days", []))
+        if dest:
+            parts.append(
+                f"\n[当前行程] 用户已有一个 {dest} {days_count}天 的行程规划，"
+                "回答时可以参考该行程。"
+            )
+    return "".join(parts)
+
+
+async def _compress_old_history(conversation_id: str, full_history: list[dict]) -> None:
+    old_part = full_history[:-(RECENT_WINDOW * 2)]
+    recent_part = full_history[-(RECENT_WINDOW * 2):]
+
+    old_text = "\n".join(f"{m['role']}: {m['content']}" for m in old_part)
+    try:
+        summary = await _chat_llm.generate([
+            {"role": "system", "content": _SUMMARIZE_PROMPT},
+            {"role": "user", "content": old_text},
+        ])
+    except Exception as e:
+        logger.warning(f"History compression failed, skipping: {e}")
+        return
+    await ConversationService.update_chat_summary(conversation_id, summary, recent_part)
+
+
+async def _generate_chat_response(query: str, conversation_id: str) -> str:
+    state = await ConversationService.get_travel_conversation_state(conversation_id)
+    history: list[dict] = (state.get("chat_history") or []) if state else []
+    summary: str = (state.get("chat_summary") or "") if state else ""
+    itinerary: dict | None = (state.get("current_itinerary") or None) if state else None
+
+    messages: list[dict] = [{"role": "system", "content": _build_system_prompt(summary, itinerary)}]
+    recent = history[-(RECENT_WINDOW * 2):] if len(history) > RECENT_WINDOW * 2 else history
+    messages.extend(recent)
+    messages.append({"role": "user", "content": query})
+
+    try:
+        reply = await _chat_llm.generate(messages)
+    except Exception as e:
+        logger.error(f"Chat LLM call failed: {e}", exc_info=True)
+        reply = "你好！我是 TravelMind 旅行助手，有什么我可以帮你的吗？"
+
+    await ConversationService.append_chat_history(conversation_id, query, reply)
+
+    updated_history = history + [
+        {"role": "user", "content": query},
+        {"role": "assistant", "content": reply},
+    ]
+    if len(updated_history) > RECENT_WINDOW * 2:
+        await _compress_old_history(conversation_id, updated_history)
+
+    return reply
+
+
+async def _generate_guided_response(
+    query: str,
+    conversation_id: str,
+    known_text: str,
+    missing_text: str,
+) -> str:
+    """Use LLM to generate a natural follow-up question for missing constraints."""
+    if _needs_budget_clarification_hint(query=query, missing_text=missing_text):
+        # Keep one-question rhythm and ask for concrete budget values.
+        return "可以的，那我们先定预算区间吧：比如3000、5000或8000元，你更倾向哪个？"
+
+    state = await ConversationService.get_travel_conversation_state(conversation_id)
+    history: list[dict] = (state.get("chat_history") or []) if state else []
+
+    system_prompt = _GUIDED_SYSTEM_PROMPT.format(known=known_text, missing=missing_text)
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    recent = history[-(RECENT_WINDOW * 2):] if len(history) > RECENT_WINDOW * 2 else history
+    messages.extend(recent)
+    messages.append({"role": "user", "content": query})
+
+    try:
+        reply = await _chat_llm.generate(messages)
+    except Exception as e:
+        logger.error(f"Guided LLM call failed: {e}", exc_info=True)
+        reply = f"收到！还需要了解一下：{missing_text}，方便告诉我吗？"
+
+    await ConversationService.append_chat_history(conversation_id, query, reply)
+    return reply
 
 
 # 流式澄清事件
@@ -157,6 +299,7 @@ async def _stream_minimal_itinerary(
         final_itinerary = result.get("final_itinerary")
         explanation = result.get("explanation")
         final_text = result.get("final_text")
+        perf = result.get("perf", {})
 
         if not final_itinerary:
             fallback_text = final_text or "未能生成结构化草案，请补充目的地、天数和预算后重试。"
@@ -172,8 +315,23 @@ async def _stream_minimal_itinerary(
             yield _build_sse_line(fallback_text)
             return
 
-        # --- tool_result(evidence_batch) → 前端填充证据标记 ---
+        # --- pipeline_complete → notify frontend recall phase is done ---
         evidence_items = final_itinerary.get("evidence", [])
+        candidate_count = len(evidence_items)
+        yield build_event_line(
+            "pipeline_complete",
+            build_event_envelope(
+                request_id=request_id,
+                conversation_id=conversation_id,
+                revision_id=final_itinerary.get("revision_id"),
+                payload={
+                    "candidate_count": candidate_count,
+                    "recall_ms": perf.get("recall_ms"),
+                },
+            ),
+        )
+
+        # --- tool_result(evidence_batch) → 前端填充证据标记 ---
         if evidence_items:
             yield build_event_line(
                 "tool_result",
@@ -186,6 +344,19 @@ async def _stream_minimal_itinerary(
                         "evidence_count": len(evidence_items),
                         "evidence": evidence_items,
                     },
+                ),
+            )
+
+        # --- day_ready → progressive day-by-day rendering ---
+        days = final_itinerary.get("days", [])
+        for day in days:
+            yield build_event_line(
+                "day_ready",
+                build_event_envelope(
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    revision_id=final_itinerary.get("revision_id"),
+                    payload={"day": day},
                 ),
             )
 
@@ -217,6 +388,7 @@ async def _stream_minimal_itinerary(
                 payload={
                     "itinerary": final_itinerary,
                     "explanation": explanation or "",
+                    "perf": perf,
                 },
             ),
         )
@@ -526,6 +698,7 @@ async def langgraph_query(
         }
 
         if intent == "reset":
+            clarification_service.clear_pending(thread_id)
             response = await _build_reset_response(
                 request_id=request_id,
                 conversation_id=thread_id,
@@ -536,6 +709,65 @@ async def langgraph_query(
             )
             response.headers["X-Conversation-ID"] = thread_id
             return response
+
+        # --- Guided conversation: follow-up to pending clarification ---
+        if clarification_service.has_pending(thread_id):
+            decision = clarification_service.continue_pending(
+                thread_id=thread_id, query=normalized_query,
+            )
+            if decision.get("need_clarification"):
+                logger.info(
+                    f"Guided follow-up for thread={thread_id}, "
+                    f"missing_hard={decision['missing_hard']}"
+                )
+                known_text, missing_text = clarification_service.get_constraint_context(thread_id)
+                guided_text = await _generate_guided_response(
+                    query, thread_id, known_text, missing_text,
+                )
+                response = StreamingResponse(
+                    _stream_intent_text_response(
+                        request_id=request_id,
+                        conversation_id=thread_id,
+                        intent="create",
+                        intent_detail="guided_clarification",
+                        text=guided_text,
+                    ),
+                    media_type="text/event-stream",
+                )
+                response.headers["X-Conversation-ID"] = thread_id
+                return response
+
+            if decision.get("has_pending"):
+                combined_query = decision["combined_query"]
+                combined_qp = query_processor.process(combined_query)
+                combined_recall = combined_qp["recall_query"]
+                logger.info(
+                    f"Guided conversation complete for thread={thread_id}, "
+                    "generating itinerary from combined constraints."
+                )
+
+                async def process_guided_complete():
+                    async for line in _stream_intent_routed_event(
+                        request_id=request_id,
+                        conversation_id=thread_id,
+                        intent="create",
+                        intent_detail="first_create",
+                    ):
+                        yield line
+                    async for line in _stream_minimal_itinerary(
+                        query_text=combined_recall,
+                        thread_config=thread_config,
+                        conversation_id=thread_id,
+                        request_id=request_id,
+                        user_id=user_id,
+                    ):
+                        yield line
+
+                response = StreamingResponse(
+                    process_guided_complete(), media_type="text/event-stream",
+                )
+                response.headers["X-Conversation-ID"] = thread_id
+                return response
 
         if intent in {"edit", "qa"}:
             response = await _build_edit_qa_response(
@@ -549,30 +781,40 @@ async def langgraph_query(
             response.headers["X-Conversation-ID"] = thread_id
             return response
 
-        # 每次 travel query 都先经过澄清门槛：硬门槛缺失则追问，补齐后再生成结构化草案。
-        decision = clarification_service.start_new(thread_id=thread_id, query=normalized_query)
-        if decision["need_clarification"]:
-            logger.info(
-                f"Clarification required for thread={thread_id}, "
-                f"missing_hard={decision['missing_hard']}, missing_soft={decision['missing_soft']}"
-            )
-            async def process_clarification():
-                async for line in _stream_intent_routed_event(
+        if intent == "chat":
+            chat_text = await _generate_chat_response(query, thread_id)
+            response = StreamingResponse(
+                _stream_intent_text_response(
                     request_id=request_id,
                     conversation_id=thread_id,
                     intent=intent,
                     intent_detail=intent_detail,
-                ):
-                    yield line
-                async for line in _stream_clarification_events(
+                    text=chat_text,
+                ),
+                media_type="text/event-stream",
+            )
+            response.headers["X-Conversation-ID"] = thread_id
+            return response
+
+        # --- Create intent: first clarification gate ---
+        decision = clarification_service.start_new(thread_id=thread_id, query=normalized_query)
+        if decision["need_clarification"]:
+            logger.info(
+                f"Guided clarification for thread={thread_id}, "
+                f"missing_hard={decision['missing_hard']}"
+            )
+            known_text, missing_text = clarification_service.get_constraint_context(thread_id)
+            guided_text = await _generate_guided_response(
+                query, thread_id, known_text, missing_text,
+            )
+            response = StreamingResponse(
+                _stream_intent_text_response(
                     request_id=request_id,
                     conversation_id=thread_id,
-                    missing_hard=decision["missing_hard"],
-                    missing_soft=decision["missing_soft"],
-                ):
-                    yield line
-            response = StreamingResponse(
-                process_clarification(),
+                    intent="create",
+                    intent_detail="guided_clarification",
+                    text=guided_text,
+                ),
                 media_type="text/event-stream",
             )
             response.headers["X-Conversation-ID"] = thread_id
@@ -597,7 +839,6 @@ async def langgraph_query(
             ):
                 yield line
 
-        # 统一 SSE 输出，前端通过 `data:` 增量消费。
         response = StreamingResponse(process_stream(), media_type="text/event-stream")
         response.headers["X-Conversation-ID"] = thread_id
         return response
@@ -648,18 +889,6 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 intent_detail=intent_detail,
                 user_id=request.user_id,
                 last_user_query=request.query,
-            )
-            response.headers["X-Conversation-ID"] = thread_id
-            return response
-
-        if intent in {"edit", "qa"}:
-            response = await _build_edit_qa_response(
-                request_id=request_id,
-                conversation_id=thread_id,
-                intent=intent,
-                intent_detail=intent_detail,
-                query_text=request.query,
-                user_id=request.user_id,
             )
             response.headers["X-Conversation-ID"] = thread_id
             return response
@@ -721,6 +950,18 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                     yield line
 
             response = StreamingResponse(process_resume_after_clarification(), media_type="text/event-stream")
+            response.headers["X-Conversation-ID"] = thread_id
+            return response
+
+        if intent in {"edit", "qa"}:
+            response = await _build_edit_qa_response(
+                request_id=request_id,
+                conversation_id=thread_id,
+                intent=intent,
+                intent_detail=intent_detail,
+                query_text=request.query,
+                user_id=request.user_id,
+            )
             response.headers["X-Conversation-ID"] = thread_id
             return response
 

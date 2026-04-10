@@ -6,8 +6,21 @@
 </template>
 
 <style>
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0a0a0a;
+}
+
 #app {
-  font-family: Arial, sans-serif;
+  height: 100%;
+  font-family: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -21,14 +34,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #1e1e1e;
+  background: #0a0a0a;
 }
 
 .loading-spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid #333;
-  border-top-color: #4b4bff;
+  width: 36px;
+  height: 36px;
+  border: 2px solid rgba(255,255,255,0.06);
+  border-top-color: #999;
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }

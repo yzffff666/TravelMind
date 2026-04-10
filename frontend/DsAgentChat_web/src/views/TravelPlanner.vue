@@ -21,19 +21,23 @@
     >
       <div class="chat-scroll" ref="chatScrollRef">
         <nav class="nav">
-          <button class="nav-back" @click="goHome">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <h1 class="brand-name">TravelMind</h1>
+          <div class="nav-spacer" />
+          <button class="user-menu-btn" @click="handleLogout" title="退出登录">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
             </svg>
           </button>
-          <h1 class="brand-name">TravelMind</h1>
         </nav>
 
         <!-- Chat Messages -->
         <div class="chat-messages">
-          <p v-if="!chatHistory.length && phase === 'idle'" class="chat-hint">
-            描述你的理想旅行，AI 为你打造专属行程规划
-          </p>
+          <div v-if="!chatHistory.length && phase === 'idle'" class="welcome">
+            <h2 class="welcome-title">想去哪里旅行？</h2>
+            <p class="welcome-sub">描述你的理想旅行，或者随便聊聊</p>
+          </div>
 
           <template v-for="msg in chatHistory" :key="msg.id">
             <!-- User bubble -->
@@ -44,7 +48,7 @@
             <div v-else class="msg msg-assistant slide-up">
               <DiffCard v-if="msg.type === 'diff' && msg.diffData" :diff="msg.diffData" />
               <p v-else class="msg-text" :class="{ 'msg-warn': msg.type === 'clarification', 'msg-error': msg.type === 'error' }">
-                {{ msg.text }}
+                {{ cleanMsg(msg.text) }}
               </p>
             </div>
           </template>
@@ -80,10 +84,22 @@
         @reset="resetPlanner"
       />
 
-      <!-- Loading state -->
+      <!-- Loading state with progressive rendering -->
       <div v-else-if="!itinerary && (phase === 'planning' || phase === 'editing')" class="loading-state">
-        <div class="ld-ring" />
-        <p class="ld-text">正在为你规划行程…</p>
+        <template v-if="partialDays.length > 0">
+          <p v-if="pipelineStatus" class="pipeline-status fade-in">{{ pipelineStatus }}</p>
+          <div class="itinerary-content">
+            <ItineraryTimeline
+              :days="partialDays"
+              :changedDays="[]"
+            />
+            <div class="ld-ring-inline" />
+          </div>
+        </template>
+        <template v-else>
+          <div class="ld-ring" />
+          <p class="ld-text">{{ pipelineStatus || '正在为你规划行程…' }}</p>
+        </template>
       </div>
 
       <!-- Itinerary content -->
@@ -142,7 +158,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ApiService } from '../services/api'
-import type { ItineraryResult, PlannerPhase, EditDiffData, ChatEntry } from '../types/itinerary'
+import type { ItineraryResult, ItineraryDay, PlannerPhase, EditDiffData, ChatEntry } from '../types/itinerary'
 
 import InputBar from '../components/chat/InputBar.vue'
 import PhaseIndicator from '../components/chat/PhaseIndicator.vue'
@@ -161,6 +177,8 @@ const phase = ref<PlannerPhase>('idle')
 const liveClarification = ref('')
 const errorText = ref('')
 const itinerary = ref<ItineraryResult | null>(null)
+const partialDays = ref<ItineraryDay[]>([])
+const pipelineStatus = ref('')
 const isStreaming = ref(false)
 const currentIntent = ref('')
 const editDiff = ref<EditDiffData | null>(null)
@@ -254,6 +272,8 @@ const resetPlanner = async () => {
   liveClarification.value = ''
   errorText.value = ''
   itinerary.value = null
+  partialDays.value = []
+  pipelineStatus.value = ''
   currentIntent.value = ''
   editDiff.value = null
   chatHistory.value = []
@@ -265,7 +285,14 @@ const resetPlanner = async () => {
   inputBarRef.value?.focus()
 }
 
-const goHome = () => router.push('/')
+const cleanMsg = (text: string) =>
+  text.replace(/（可选，不填也能先出草案）/g, '')
+
+const handleLogout = () => {
+  localStorage.removeItem('token')
+  localStorage.removeItem('user_id')
+  router.push('/login')
+}
 
 const retryLast = () => {
   if (lastQuery.value) {
@@ -291,7 +318,6 @@ const submitQuery = async (queryText: string) => {
   errorText.value = ''
   editDiff.value = null
   currentIntent.value = ''
-  phase.value = 'planning'
   isStreaming.value = true
 
   if (isNarrow.value && itinerary.value) {
@@ -310,15 +336,28 @@ const submitQuery = async (queryText: string) => {
           currentIntent.value = envelope.payload.intent || ''
           if (envelope.payload.intent === 'edit') {
             phase.value = 'editing'
+          } else {
+            phase.value = 'idle'
           }
         },
         onStageStart: (envelope) => {
           const stage = envelope.payload.stage
           if (stage === 'draft_plan') {
             phase.value = 'planning'
+            partialDays.value = []
+            pipelineStatus.value = ''
           } else {
             phase.value = 'clarifying'
           }
+        },
+        onPipelineComplete: (envelope) => {
+          const count = envelope.payload.candidate_count ?? 0
+          pipelineStatus.value = count > 0
+            ? `找到 ${count} 个推荐地点，正在生成行程...`
+            : '正在生成行程...'
+        },
+        onDayReady: (envelope) => {
+          partialDays.value.push(envelope.payload.day as ItineraryDay)
         },
         onStageProgress: (envelope) => {
           const stage = envelope.payload.stage
@@ -335,6 +374,8 @@ const submitQuery = async (queryText: string) => {
         onFinalItinerary: (envelope) => {
           phase.value = 'done'
           itinerary.value = envelope.payload.itinerary as ItineraryResult
+          partialDays.value = []
+          pipelineStatus.value = ''
           const explanation = envelope.payload.explanation || ''
           if (explanation) {
             addChatEntry('assistant', explanation)
@@ -398,6 +439,9 @@ const submitQuery = async (queryText: string) => {
     addChatEntry('assistant', errorText.value, 'error')
   } finally {
     isStreaming.value = false
+    if (currentIntent.value === 'chat' || (currentIntent.value === 'create' && !itinerary.value)) {
+      phase.value = 'idle'
+    }
   }
 }
 </script>
@@ -410,31 +454,31 @@ const submitQuery = async (queryText: string) => {
 <style scoped>
 /* ==================== Design Tokens ==================== */
 .page {
-  --bg-deep: #08080d;
-  --bg: #0e0e15;
-  --bg-card: #141420;
-  --bg-card-hover: #1a1a28;
-  --border: #1c1c2a;
-  --border-hover: #2c2c3e;
+  --bg-deep: #0a0a0a;
+  --bg: #111111;
+  --bg-card: #1a1a1a;
+  --bg-card-hover: #222222;
+  --border: rgba(255,255,255,0.06);
+  --border-hover: rgba(255,255,255,0.12);
 
-  --accent: #0ea5e9;
-  --accent-soft: rgba(14, 165, 233, 0.12);
+  --accent: #6366f1;
+  --accent-soft: rgba(99,102,241,0.10);
   --accent-warm: #f59e0b;
-  --accent-warm-soft: rgba(245, 158, 11, 0.10);
+  --accent-warm-soft: rgba(245,158,11,0.08);
   --success: #22c55e;
-  --success-soft: rgba(34, 197, 94, 0.10);
+  --success-soft: rgba(34,197,94,0.08);
   --warn: #f59e0b;
-  --warn-soft: rgba(245, 158, 11, 0.10);
+  --warn-soft: rgba(245,158,11,0.08);
   --error: #ef4444;
-  --error-soft: rgba(239, 68, 68, 0.10);
+  --error-soft: rgba(239,68,68,0.08);
 
-  --text: #e8e8f0;
-  --text-sec: #8b8b9e;
-  --text-muted: #50506a;
+  --text: #f0f0f0;
+  --text-sec: #999999;
+  --text-muted: #555555;
 
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 16px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
 
   display: flex;
   flex-direction: column;
@@ -442,6 +486,8 @@ const submitQuery = async (queryText: string) => {
   background: var(--bg-deep);
   color: var(--text);
   font-family: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.7;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -456,7 +502,7 @@ const submitQuery = async (queryText: string) => {
 
 .tab-btn {
   flex: 1;
-  padding: 10px 0;
+  padding: 12px 0;
   font-size: 13px;
   font-weight: 500;
   font-family: inherit;
@@ -465,12 +511,12 @@ const submitQuery = async (queryText: string) => {
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s;
 }
 
 .tab-btn.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--text);
+  border-bottom-color: var(--text);
 }
 
 .tab-btn:hover:not(.active) {
@@ -484,18 +530,7 @@ const submitQuery = async (queryText: string) => {
   overflow: hidden;
 }
 
-/* Desktop: side by side */
 @media (min-width: 768px) {
-  .page {
-    flex-direction: column;
-  }
-
-  .page > .chat-panel,
-  .page > .itinerary-panel {
-    flex: 1;
-  }
-
-  /* Use a wrapper-like approach via page being a grid on desktop */
   .page {
     display: grid;
     grid-template-columns: 2fr 3fr;
@@ -505,7 +540,6 @@ const submitQuery = async (queryText: string) => {
   .chat-panel {
     grid-column: 1;
     grid-row: 1;
-    border-right: 1px solid var(--border);
   }
 
   .itinerary-panel {
@@ -513,23 +547,19 @@ const submitQuery = async (queryText: string) => {
     grid-row: 1;
   }
 
-  /* InputBar spans full width */
   .page > :deep(.input-bar) {
     grid-column: 1 / -1;
     grid-row: 2;
   }
 }
 
-/* Mobile: stacked with tabs */
 @media (max-width: 767px) {
   .page {
     display: flex;
     flex-direction: column;
   }
 
-  .tab-bar {
-    flex-shrink: 0;
-  }
+  .tab-bar { flex-shrink: 0; }
 
   .chat-panel,
   .itinerary-panel {
@@ -549,46 +579,72 @@ const submitQuery = async (queryText: string) => {
 .chat-scroll {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 24px 28px;
   display: flex;
   flex-direction: column;
 }
 
+/* ---- Nav Header ---- */
+
 .nav {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  padding: 4px 0 28px;
   flex-shrink: 0;
 }
 
-.nav-back {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 8px;
-  color: var(--text-muted);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: inherit;
-}
-
-.nav-back:hover {
-  color: var(--text-sec);
-  border-color: var(--border-hover);
-}
+.nav-spacer { flex: 1; }
 
 .brand-name {
   margin: 0;
-  font-size: 20px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.user-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-sec);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.user-menu-btn:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+  background: rgba(255,255,255,0.04);
+}
+
+/* ---- Welcome State ---- */
+
+.welcome {
+  margin: auto 0;
+  text-align: center;
+  padding: 40px 20px;
+  animation: fadeIn 0.6s ease-out both;
+}
+
+.welcome-title {
+  margin: 0 0 12px;
+  font-size: 26px;
   font-weight: 300;
-  letter-spacing: -0.03em;
-  background: linear-gradient(135deg, #e0f2fe 0%, #0ea5e9 55%, #0284c7 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.welcome-sub {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  font-weight: 400;
 }
 
 /* ---- Chat Messages ---- */
@@ -597,20 +653,11 @@ const submitQuery = async (queryText: string) => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.chat-hint {
-  margin: auto 0;
-  text-align: center;
-  font-size: 13px;
-  color: var(--text-muted);
-  line-height: 1.6;
-  padding: 40px 10px;
+  gap: 16px;
 }
 
 .msg {
-  max-width: 92%;
+  max-width: 85%;
   animation: slideUp 0.3s ease-out both;
 }
 
@@ -619,11 +666,11 @@ const submitQuery = async (queryText: string) => {
 }
 
 .msg-user .msg-text {
-  background: var(--accent);
-  color: #fff;
-  border-radius: var(--r-md) var(--r-md) 4px var(--r-md);
-  padding: 10px 14px;
-  font-size: 13px;
+  background: rgba(255,255,255,0.08);
+  color: var(--text);
+  border-radius: 20px 20px 4px 20px;
+  padding: 12px 18px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -632,13 +679,13 @@ const submitQuery = async (queryText: string) => {
 }
 
 .msg-assistant > .msg-text {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md) var(--r-md) var(--r-md) 4px;
-  padding: 10px 14px;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 4px 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-sec);
 }
 
 .msg-text {
@@ -649,19 +696,17 @@ const submitQuery = async (queryText: string) => {
 
 .msg-warn {
   color: #fde68a !important;
-  border-color: rgba(245, 158, 11, 0.2) !important;
 }
 
 .msg-error {
   color: #fca5a5 !important;
-  border-color: rgba(239, 68, 68, 0.2) !important;
 }
 
 /* ==================== Itinerary Panel ==================== */
 
 .itinerary-panel {
   overflow-y: auto;
-  padding: 36px 36px 36px 44px;
+  padding: 40px 40px 40px 48px;
   scroll-behavior: smooth;
   background: var(--bg-deep);
 }
@@ -678,21 +723,38 @@ const submitQuery = async (queryText: string) => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  gap: 20px;
+  gap: 24px;
 }
 
 .ld-ring {
-  width: 40px;
-  height: 40px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
+  border: 2px solid rgba(255,255,255,0.06);
+  border-top-color: var(--text-sec);
   animation: spin 1s linear infinite;
 }
 
 .ld-text {
   margin: 0;
   font-size: 14px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.ld-ring-inline {
+  width: 24px;
+  height: 24px;
+  margin: 16px 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.06);
+  border-top-color: var(--text-sec);
+  animation: spin 1s linear infinite;
+}
+
+.pipeline-status {
+  margin: 0 0 16px;
+  font-size: 13px;
   color: var(--text-sec);
   font-weight: 400;
 }
@@ -704,16 +766,16 @@ const submitQuery = async (queryText: string) => {
 .coverage-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 16px;
-  padding: 10px 14px;
+  gap: 12px;
+  margin-top: 20px;
+  padding: 12px 16px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
 }
 
 .coverage-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-sec);
   white-space: nowrap;
@@ -721,15 +783,15 @@ const submitQuery = async (queryText: string) => {
 
 .coverage-track {
   flex: 1;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--border);
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.06);
   overflow: hidden;
 }
 
 .coverage-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: 2px;
   background: var(--success);
   transition: width 0.6s ease-out;
 }
@@ -744,14 +806,14 @@ const submitQuery = async (queryText: string) => {
 
 /* ---- Assumptions ---- */
 
-.assumptions { padding: 0; margin-top: 16px; }
+.assumptions { padding: 0; margin-top: 20px; }
 
 .asm-item {
-  margin: 0 0 4px;
-  font-size: 11px;
+  margin: 0 0 6px;
+  font-size: 12px;
   color: var(--text-muted);
-  line-height: 1.5;
-  padding-left: 12px;
+  line-height: 1.6;
+  padding-left: 14px;
   position: relative;
 }
 
@@ -759,7 +821,7 @@ const submitQuery = async (queryText: string) => {
   content: '';
   position: absolute;
   left: 0;
-  top: 7px;
+  top: 8px;
   width: 4px;
   height: 4px;
   border-radius: 50%;
@@ -777,7 +839,7 @@ const submitQuery = async (queryText: string) => {
 }
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(12px); }
+  from { opacity: 0; transform: translateY(10px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
@@ -785,7 +847,8 @@ const submitQuery = async (queryText: string) => {
 
 @media (max-width: 767px) {
   .itinerary-panel { padding: 20px 16px; }
-  .chat-scroll { padding: 16px; }
-  .brand-name { font-size: 18px; }
+  .chat-scroll { padding: 20px 16px; }
+  .brand-name { font-size: 16px; }
+  .welcome-title { font-size: 22px; }
 }
 </style>

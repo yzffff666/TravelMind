@@ -14,6 +14,7 @@ Mock strategy:
 import asyncio
 import json
 import re
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 _MOCK_LLM_RESPONSE = json.dumps({
@@ -42,11 +43,24 @@ _MOCK_LLM_RESPONSE = json.dumps({
 
 
 def _make_mock_llm():
-    """Create a mock LLM that returns a fixed JSON itinerary."""
+    """Create a mock LLM that returns a fixed JSON itinerary.
+
+    Supports both ``ainvoke`` (legacy) and ``astream`` (new multi-node).
+    """
     mock_response = MagicMock()
     mock_response.content = _MOCK_LLM_RESPONSE
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    async def _mock_astream(messages, **kwargs):
+        chunk_size = 80
+        text = _MOCK_LLM_RESPONSE
+        for i in range(0, len(text), chunk_size):
+            chunk = MagicMock()
+            chunk.content = text[i:i + chunk_size]
+            yield chunk
+
+    mock_llm.astream = _mock_astream
     return mock_llm
 
 
@@ -64,6 +78,14 @@ def _reset_pipeline_singletons():
     tdg._pipeline_eb = None
     from app.services.providers.orchestrator import clear_recall_cache
     clear_recall_cache()
+
+
+def _invoke_graph(query: str) -> dict:
+    """Run the full travel_draft_graph with mocked LLM and mock providers."""
+    with patch("app.services.providers.factory._get_key", return_value=None), \
+         patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
+        from app.lg_agent.travel_draft_graph import travel_draft_graph
+        return _run(travel_draft_graph.ainvoke({"query": query}))
 
 
 class TestJsonRepair:
@@ -160,42 +182,181 @@ class TestFormatCandidates:
         assert _format_candidates_for_prompt(pr) == ""
 
 
+# ===================================================================
+# Node-level tests
+# ===================================================================
+
+class TestExtractNode:
+    """Verify extract_node parses constraints correctly."""
+
+    def test_extract_known_city(self):
+        from app.lg_agent.travel_draft_graph import extract_node
+        result = _run(extract_node({"query": "上海 4天 预算6000 情侣"}))
+        assert result["destination"] == "上海"
+        assert result["days_count"] == 4
+        assert result["total_budget"] == 6000
+        assert result["missing_p0"] == []
+        assert "extract_ms" in result["perf"]
+
+    def test_extract_missing_p0(self):
+        from app.lg_agent.travel_draft_graph import extract_node
+        result = _run(extract_node({"query": "想去海边玩几天"}))
+        assert len(result["missing_p0"]) > 0
+
+    def test_extract_preferences(self):
+        from app.lg_agent.travel_draft_graph import extract_node
+        result = _run(extract_node({"query": "上海 3天 预算5000 文化 美食"}))
+        assert "文化" in result["preferences"]
+        assert "美食" in result["preferences"]
+
+    def test_extract_traveler_default_assumption(self):
+        from app.lg_agent.travel_draft_graph import extract_node
+        result = _run(extract_node({"query": "上海 3天 预算5000"}))
+        assert result["traveler_type"] is None
+        assert any("旅行者" in a or "通用" in a for a in result["assumptions"])
+
+
+class TestRecallNode:
+    """Verify recall_node runs the pipeline."""
+
+    def setup_method(self):
+        _reset_pipeline_singletons()
+
+    def test_recall_produces_pipeline_result(self):
+        from app.lg_agent.travel_draft_graph import recall_node
+        state = {
+            "query": "上海 4天 预算6000 文化",
+            "missing_p0": [],
+            "perf": {},
+        }
+        with patch("app.services.providers.factory._get_key", return_value=None):
+            result = _run(recall_node(state))
+        assert result["pipeline_result"] is not None
+        assert "recall_ms" in result["perf"]
+
+    def test_recall_failure_graceful(self):
+        from app.lg_agent.travel_draft_graph import recall_node, _get_pipeline
+        state = {"query": "上海 3天 预算5000", "missing_p0": [], "perf": {}}
+        with patch("app.services.providers.factory._get_key", return_value=None):
+            qp, recall_svc, *_ = _get_pipeline()
+
+            async def broken_recall(*args, **kwargs):
+                raise ConnectionError("Network down")
+
+            with patch.object(recall_svc, "recall_from_qp", side_effect=broken_recall):
+                result = _run(recall_node(state))
+        assert result["pipeline_result"] is None
+        assert result["recall_degraded"] is True
+
+
+class TestLlmDraftNode:
+    """Verify llm_draft_node generates itinerary from state."""
+
+    def test_produces_itinerary(self):
+        from app.lg_agent.travel_draft_graph import llm_draft_node
+        state = {
+            "query": "上海 4天 预算6000 文化",
+            "destination": "上海",
+            "days_count": 4,
+            "total_budget": 6000.0,
+            "traveler_type": None,
+            "preferences": ["文化"],
+            "pace": None,
+            "assumptions": [],
+            "pipeline_result": None,
+            "perf": {},
+        }
+        with patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
+            result = _run(llm_draft_node(state))
+        assert result["itinerary"] is not None
+        assert result["explanation"] is not None
+        assert "llm_ms" in result["perf"]
+
+    def test_llm_failure_template_fallback(self):
+        from app.lg_agent.travel_draft_graph import llm_draft_node
+        state = {
+            "query": "上海 3天 预算5000",
+            "destination": "上海",
+            "days_count": 3,
+            "total_budget": 5000.0,
+            "traveler_type": None,
+            "preferences": [],
+            "pace": None,
+            "assumptions": [],
+            "pipeline_result": None,
+            "perf": {},
+        }
+
+        broken_llm = MagicMock()
+        async def boom(*a, **kw):
+            raise RuntimeError("LLM down")
+        broken_llm.astream = boom
+
+        with patch("app.lg_agent.travel_draft_graph._get_llm", return_value=broken_llm):
+            result = _run(llm_draft_node(state))
+        assert result["itinerary"] is not None
+        assert any("降级" in a for a in result["assumptions"])
+
+    def test_ttft_recorded(self):
+        from app.lg_agent.travel_draft_graph import llm_draft_node
+        state = {
+            "query": "上海 3天 预算5000",
+            "destination": "上海",
+            "days_count": 3,
+            "total_budget": 5000.0,
+            "traveler_type": None,
+            "preferences": [],
+            "pace": None,
+            "assumptions": [],
+            "pipeline_result": None,
+            "perf": {},
+        }
+        with patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
+            result = _run(llm_draft_node(state))
+        assert result["perf"]["llm_ttft_ms"] is not None
+        assert result["perf"]["llm_ttft_ms"] >= 0
+
+
+# ===================================================================
+# Full-graph integration tests (output contract must match old single-node)
+# ===================================================================
+
 class TestDraftPipelineDataFlow:
     """Verify pipeline runs inside draft node and produces valid output."""
 
     def setup_method(self):
         _reset_pipeline_singletons()
 
-    def _invoke(self, query: str) -> dict:
-        """Run generate_travel_draft with mocked LLM and mock providers."""
-        with patch("app.services.providers.factory._get_key", return_value=None), \
-             patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
-            from app.lg_agent.travel_draft_graph import generate_travel_draft
-            state = {"query": query}
-            return _run(generate_travel_draft(state))
-
     def test_known_city_produces_itinerary(self):
-        result = self._invoke("上海 4天 预算6000 情侣 文化 美食")
+        result = _invoke_graph("上海 4天 预算6000 情侣 文化 美食")
         assert result["final_itinerary"] is not None
         assert result["explanation"] is not None
         assert result["final_text"] is None
 
     def test_beijing_pipeline(self):
-        result = self._invoke("北京 3天 预算5000 亲子")
+        result = _invoke_graph("北京 3天 预算5000 亲子")
         assert result["final_itinerary"] is not None
         itinerary = result["final_itinerary"]
         assert itinerary["trip_profile"]["destination_city"] == "北京"
 
     def test_unknown_city_still_produces_itinerary(self):
         """Pipeline degrades for unknown cities but LLM still generates."""
-        result = self._invoke("巴黎 3天 预算10000")
+        result = _invoke_graph("巴黎 3天 预算10000")
         assert result["final_itinerary"] is not None
 
     def test_missing_p0_returns_final_text(self):
         """P0 missing -> no pipeline, no LLM, just final_text."""
-        result = self._invoke("想去海边玩几天")
+        result = _invoke_graph("想去海边玩几天")
         assert result["final_itinerary"] is None
         assert result["final_text"] is not None
+
+    def test_perf_metrics_present(self):
+        result = _invoke_graph("上海 3天 预算5000")
+        perf = result.get("perf", {})
+        assert "extract_ms" in perf
+        assert "recall_ms" in perf
+        assert "llm_ms" in perf
+        assert "postprocess_ms" in perf
 
 
 class TestPipelineIsActuallyCalled:
@@ -210,7 +371,7 @@ class TestPipelineIsActuallyCalled:
 
         with patch("app.services.providers.factory._get_key", return_value=None), \
              patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
-            from app.lg_agent.travel_draft_graph import _get_pipeline, generate_travel_draft
+            from app.lg_agent.travel_draft_graph import _get_pipeline, travel_draft_graph
             qp, recall_svc, scorer, flt, eb = _get_pipeline()
 
             original_recall = recall_svc.recall_from_qp
@@ -220,8 +381,7 @@ class TestPipelineIsActuallyCalled:
                 return await original_recall(qp_output, **kwargs)
 
             with patch.object(recall_svc, "recall_from_qp", side_effect=spy_recall):
-                state = {"query": "上海 4天 预算6000 文化"}
-                _run(generate_travel_draft(state))
+                _run(travel_draft_graph.ainvoke({"query": "上海 4天 预算6000 文化"}))
 
         assert len(call_log) == 1, "recall_from_qp should be called exactly once"
         assert call_log[0]["constraints"]["destination_city"] == "上海"
@@ -231,9 +391,8 @@ class TestPipelineIsActuallyCalled:
         with patch("app.services.providers.factory._get_key", return_value=None), \
              patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()), \
              patch("app.lg_agent.travel_draft_graph.logger") as mock_logger:
-            from app.lg_agent.travel_draft_graph import generate_travel_draft
-            state = {"query": "上海 3天 预算5000"}
-            _run(generate_travel_draft(state))
+            from app.lg_agent.travel_draft_graph import travel_draft_graph
+            _run(travel_draft_graph.ainvoke({"query": "上海 3天 预算5000"}))
 
         info_calls = [str(c) for c in mock_logger.info.call_args_list]
         pipeline_log = [c for c in info_calls if "Pipeline completed" in c]
@@ -251,21 +410,22 @@ class TestPromptInjection:
     def test_candidates_injected_into_prompt(self):
         """LLM should receive a prompt containing candidate names."""
         captured_messages = []
-        mock_response = MagicMock()
-        mock_response.content = _MOCK_LLM_RESPONSE
+
         mock_llm = MagicMock()
 
-        async def capture_ainvoke(messages, **kwargs):
+        async def capture_astream(messages, **kwargs):
             captured_messages.extend(messages)
-            return mock_response
+            for i in range(0, len(_MOCK_LLM_RESPONSE), 80):
+                chunk = MagicMock()
+                chunk.content = _MOCK_LLM_RESPONSE[i:i + 80]
+                yield chunk
 
-        mock_llm.ainvoke = AsyncMock(side_effect=capture_ainvoke)
+        mock_llm.astream = capture_astream
 
         with patch("app.services.providers.factory._get_key", return_value=None), \
              patch("app.lg_agent.travel_draft_graph._get_llm", return_value=mock_llm):
-            from app.lg_agent.travel_draft_graph import generate_travel_draft
-            state = {"query": "上海 4天 预算6000 文化 美食"}
-            _run(generate_travel_draft(state))
+            from app.lg_agent.travel_draft_graph import travel_draft_graph
+            _run(travel_draft_graph.ainvoke({"query": "上海 4天 预算6000 文化 美食"}))
 
         assert len(captured_messages) == 2
         user_msg = captured_messages[1]["content"]
@@ -275,21 +435,22 @@ class TestPromptInjection:
     def test_no_candidates_no_injection(self):
         """When pipeline returns no candidates, prompt should not have candidate section."""
         captured_messages = []
-        mock_response = MagicMock()
-        mock_response.content = _MOCK_LLM_RESPONSE
+
         mock_llm = MagicMock()
 
-        async def capture_ainvoke(messages, **kwargs):
+        async def capture_astream(messages, **kwargs):
             captured_messages.extend(messages)
-            return mock_response
+            for i in range(0, len(_MOCK_LLM_RESPONSE), 80):
+                chunk = MagicMock()
+                chunk.content = _MOCK_LLM_RESPONSE[i:i + 80]
+                yield chunk
 
-        mock_llm.ainvoke = AsyncMock(side_effect=capture_ainvoke)
+        mock_llm.astream = capture_astream
 
         with patch("app.services.providers.factory._get_key", return_value=None), \
              patch("app.lg_agent.travel_draft_graph._get_llm", return_value=mock_llm):
-            from app.lg_agent.travel_draft_graph import generate_travel_draft
-            state = {"query": "巴黎 3天 预算10000"}
-            _run(generate_travel_draft(state))
+            from app.lg_agent.travel_draft_graph import travel_draft_graph
+            _run(travel_draft_graph.ainvoke({"query": "巴黎 3天 预算10000"}))
 
         user_msg = captured_messages[1]["content"]
         assert "推荐地点" not in user_msg
@@ -297,21 +458,22 @@ class TestPromptInjection:
     def test_system_prompt_mentions_recommendations(self):
         """System prompt should mention using recommended places."""
         captured_messages = []
-        mock_response = MagicMock()
-        mock_response.content = _MOCK_LLM_RESPONSE
+
         mock_llm = MagicMock()
 
-        async def capture_ainvoke(messages, **kwargs):
+        async def capture_astream(messages, **kwargs):
             captured_messages.extend(messages)
-            return mock_response
+            for i in range(0, len(_MOCK_LLM_RESPONSE), 80):
+                chunk = MagicMock()
+                chunk.content = _MOCK_LLM_RESPONSE[i:i + 80]
+                yield chunk
 
-        mock_llm.ainvoke = AsyncMock(side_effect=capture_ainvoke)
+        mock_llm.astream = capture_astream
 
         with patch("app.services.providers.factory._get_key", return_value=None), \
              patch("app.lg_agent.travel_draft_graph._get_llm", return_value=mock_llm):
-            from app.lg_agent.travel_draft_graph import generate_travel_draft
-            state = {"query": "上海 3天 预算5000"}
-            _run(generate_travel_draft(state))
+            from app.lg_agent.travel_draft_graph import travel_draft_graph
+            _run(travel_draft_graph.ainvoke({"query": "上海 3天 预算5000"}))
 
         system_msg = captured_messages[0]["content"]
         assert "推荐地点列表" in system_msg
@@ -323,16 +485,9 @@ class TestPostprocessing:
     def setup_method(self):
         _reset_pipeline_singletons()
 
-    def _invoke(self, query: str) -> dict:
-        with patch("app.services.providers.factory._get_key", return_value=None), \
-             patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
-            from app.lg_agent.travel_draft_graph import generate_travel_draft
-            state = {"query": query}
-            return _run(generate_travel_draft(state))
-
     def test_evidence_attached_to_itinerary(self):
         """Pipeline evidence items should be written to itinerary.evidence."""
-        result = self._invoke("上海 4天 预算6000 文化 美食")
+        result = _invoke_graph("上海 4天 预算6000 文化 美食")
         it = result["final_itinerary"]
         assert "evidence" in it
         assert len(it["evidence"]) > 0
@@ -342,7 +497,7 @@ class TestPostprocessing:
 
     def test_evidence_refs_linked_to_slots(self):
         """Slots whose place matches an evidence title should have evidence_refs."""
-        result = self._invoke("上海 4天 预算6000 文化")
+        result = _invoke_graph("上海 4天 预算6000 文化")
         it = result["final_itinerary"]
         evidence_titles = {ev["title"] for ev in it.get("evidence", []) if ev.get("title")}
 
@@ -358,7 +513,7 @@ class TestPostprocessing:
 
     def test_coverage_score_computed(self):
         """validation.coverage_score should be set after post-processing."""
-        result = self._invoke("上海 4天 预算6000 文化")
+        result = _invoke_graph("上海 4天 预算6000 文化")
         it = result["final_itinerary"]
         validation = it.get("validation", {})
         coverage = validation.get("coverage_score")
@@ -367,14 +522,14 @@ class TestPostprocessing:
 
     def test_pipeline_assumptions_merged(self):
         """Pipeline assumptions should appear in validation.assumptions."""
-        result = self._invoke("上海 4天 预算6000 文化")
+        result = _invoke_graph("上海 4天 预算6000 文化")
         it = result["final_itinerary"]
         assumptions = it.get("validation", {}).get("assumptions", [])
         assert isinstance(assumptions, list)
 
     def test_no_duplicate_assumptions(self):
         """Assumptions list should not contain duplicates."""
-        result = self._invoke("上海 4天 预算6000 文化")
+        result = _invoke_graph("上海 4天 预算6000 文化")
         it = result["final_itinerary"]
         assumptions = it.get("validation", {}).get("assumptions", [])
         assert len(assumptions) == len(set(assumptions))
@@ -552,9 +707,8 @@ class TestPipelineFailureGraceful:
 
         with patch("app.lg_agent.travel_draft_graph._get_pipeline", side_effect=boom), \
              patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
-            from app.lg_agent.travel_draft_graph import generate_travel_draft
-            state = {"query": "上海 3天 预算5000"}
-            result = _run(generate_travel_draft(state))
+            from app.lg_agent.travel_draft_graph import travel_draft_graph
+            result = _run(travel_draft_graph.ainvoke({"query": "上海 3天 预算5000"}))
 
         assert result["final_itinerary"] is not None
         assert result["final_text"] is None
@@ -563,15 +717,14 @@ class TestPipelineFailureGraceful:
         """If recall raises mid-pipeline, LLM should still generate."""
         with patch("app.services.providers.factory._get_key", return_value=None), \
              patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
-            from app.lg_agent.travel_draft_graph import _get_pipeline, generate_travel_draft
+            from app.lg_agent.travel_draft_graph import _get_pipeline, travel_draft_graph
             qp, recall_svc, scorer, flt, eb = _get_pipeline()
 
             async def broken_recall(*args, **kwargs):
                 raise ConnectionError("Network down")
 
             with patch.object(recall_svc, "recall_from_qp", side_effect=broken_recall):
-                state = {"query": "上海 3天 预算5000"}
-                result = _run(generate_travel_draft(state))
+                result = _run(travel_draft_graph.ainvoke({"query": "上海 3天 预算5000"}))
 
         assert result["final_itinerary"] is not None
 
@@ -702,7 +855,7 @@ class TestSSEEventSequence:
         assert first_data["payload"]["stage"] == "draft_plan"
 
     def test_event_order_is_correct(self):
-        """Full sequence: stage_start → tool_result → stage_progress → final_itinerary."""
+        """Full sequence: stage_start → pipeline_complete → tool_result → day_ready → stage_progress → final_itinerary."""
         chunks = asyncio.get_event_loop().run_until_complete(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=True))
         )
@@ -710,14 +863,18 @@ class TestSSEEventSequence:
         event_types = [e[0] for e in events]
 
         assert event_types[0] == "stage_start"
+        assert "pipeline_complete" in event_types
         assert "tool_result" in event_types
+        assert "day_ready" in event_types
         assert "stage_progress" in event_types
         assert "final_itinerary" in event_types
 
+        pc_idx = event_types.index("pipeline_complete")
         tr_idx = event_types.index("tool_result")
+        dr_idx = event_types.index("day_ready")
         sp_idx = event_types.index("stage_progress")
         fi_idx = event_types.index("final_itinerary")
-        assert 0 < tr_idx < sp_idx < fi_idx
+        assert 0 < pc_idx < tr_idx < dr_idx < sp_idx < fi_idx
 
     def test_tool_result_evidence_payload(self):
         """tool_result should contain evidence_count and evidence list."""
@@ -750,7 +907,7 @@ class TestSSEEventSequence:
         assert isinstance(payload["conflicts"], list)
 
     def test_no_evidence_skips_tool_result(self):
-        """When no evidence exists, tool_result event should be omitted."""
+        """When no evidence exists, tool_result event should be omitted but pipeline_complete emitted."""
         chunks = asyncio.get_event_loop().run_until_complete(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=False))
         )
@@ -759,6 +916,7 @@ class TestSSEEventSequence:
 
         assert "tool_result" not in event_types
         assert event_types[0] == "stage_start"
+        assert "pipeline_complete" in event_types
         assert "final_itinerary" in event_types
 
     def test_no_itinerary_has_stage_start_then_final_text(self):
@@ -803,6 +961,49 @@ class TestSSEEventSequence:
 
         assert event_types[0] == "stage_start"
         assert "error" in event_types
+
+    def test_pipeline_complete_event(self):
+        """pipeline_complete should be emitted with candidate_count."""
+        chunks = asyncio.get_event_loop().run_until_complete(
+            _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=True))
+        )
+        events = _parse_sse_events(chunks)
+        pc_events = [(t, d) for t, d in events if t == "pipeline_complete"]
+
+        assert len(pc_events) == 1
+        payload = pc_events[0][1]["payload"]
+        assert payload["candidate_count"] == 1
+
+    def test_day_ready_events(self):
+        """day_ready should be emitted for each day in the itinerary."""
+        chunks = asyncio.get_event_loop().run_until_complete(
+            _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=True))
+        )
+        events = _parse_sse_events(chunks)
+        dr_events = [(t, d) for t, d in events if t == "day_ready"]
+
+        assert len(dr_events) == 1  # mock graph has 1 day
+        day = dr_events[0][1]["payload"]["day"]
+        assert day["day_index"] == 1
+        assert len(day["slots"]) > 0
+
+    def test_event_sequence_with_progressive(self):
+        """Verify progressive event order: stage_start → pipeline_complete → ... → day_ready → ... → final_itinerary."""
+        chunks = asyncio.get_event_loop().run_until_complete(
+            _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=True))
+        )
+        events = _parse_sse_events(chunks)
+        event_types = [e[0] for e in events]
+
+        # First event must be stage_start
+        assert event_types[0] == "stage_start"
+        # pipeline_complete before day_ready
+        assert event_types.index("pipeline_complete") < event_types.index("day_ready")
+        # day_ready before final_itinerary
+        assert event_types.index("day_ready") < event_types.index("final_itinerary")
+        # final_itinerary is last structured event (before text fallback)
+        assert event_types.index("final_itinerary") == len(event_types) - 1 or \
+               all(e is None for e in event_types[event_types.index("final_itinerary") + 1:])
 
     def test_final_itinerary_envelope_has_revision_id(self):
         """final_itinerary event envelope should contain revision_id."""
