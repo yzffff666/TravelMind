@@ -1,156 +1,223 @@
-# TravelMind - 基于大语言模型构建的旅行规划智能体
+# TravelMind — AI 旅行规划系统
 
-一个基于 FastAPI 和 Vue 3 构建的前后端分离旅行规划智能体项目，支持多轮对话生成、编辑与重置行程。系统面向自由行场景，围绕“可对话、可解释、可编辑”的目标，逐步落地 Agent + 检索增强 + 证据归因的工程化链路。
+基于 LangGraph 多节点状态图引擎的智能旅行规划系统，支持多轮对话式行程生成、编辑与优化。
 
-**源码仓库**：[https://github.com/yzffff666/TravelMind](https://github.com/yzffff666/TravelMind)  
-本地首次推送或同步时，可在安装 Git 后于仓库根目录执行：`.\scripts\push-to-github.ps1`（详见脚本内说明）。
+前后端分离架构，围绕"可对话、可解释、可编辑"的目标，落地 Agent + 检索增强 + 证据归因 + 渐进式交互的工程化链路。
 
-## 功能特性
+**源码仓库**：[https://github.com/yzffff666/TravelMind](https://github.com/yzffff666/TravelMind)
 
-### 1. 对话式行程规划能力
-- **支持多轮对话生成/优化行程（create/edit/qa/reset）**
-- **支持结构化行程输出（itinerary v1：days + slots）**
-- **支持缺失关键约束时澄清追问（目的地/天数/预算）**
+---
 
-### 2. 流式与状态能力
-- **支持 SSE 流式事件输出（阶段状态、终态结果、错误兜底）**
-- **支持会话级 itinerary 状态持久化（conversation state）**
-- **支持 reset 会话重置并清理澄清中间态**
+## 系统架构
 
-### 3. 可扩展能力链路（M2 基线）
-- QP baseline（意图识别 + 约束抽取 + recall_query）
-- Provider 抽象（Search/Map/Weather/Review）
-- 后续扩展：Recall / Ranking / Rule Filter / Evidence Builder
+```
+┌─────────────────────────────────────────────────────────┐
+│                  Vue 3 + TypeScript                      │
+│          SSE 渐进渲染 · 逐天呈现 · 编辑 Diff             │
+└────────────────────────┬────────────────────────────────┘
+                         │ HTTP / SSE
+┌────────────────────────▼────────────────────────────────┐
+│                 FastAPI + Uvicorn                         │
+│                                                          │
+│  意图路由(QP) → 多轮对话 → 行程草案生成 → 编辑/问答/重置   │
+└────────────────────────┬────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────┐
+│              LangGraph 4-Node StateGraph                 │
+│                                                          │
+│  extract_node ─┬→ recall_node → llm_draft_node → postprocess_node → END
+│                │                                         │
+│                └→ early_exit_node → END (P0 缺失早退)     │
+└──────┬──────────────┬──────────────┬────────────────────┘
+       │              │              │
+  ┌────▼────┐   ┌────▼─────┐   ┌───▼────┐
+  │Provider │   │ DeepSeek │   │ MySQL  │
+  │并行检索  │   │ astream  │   │会话状态 │
+  │Amap/Serp│   │ 流式生成  │   │        │
+  └────┬────┘   └──────────┘   └────────┘
+       │
+  ┌────▼────┐
+  │  Redis  │
+  │语义缓存  │
+  └─────────┘
+```
+
+---
+
+## 核心功能
+
+### 多轮对话与意图路由
+
+- 意图识别（create / edit / qa / reset / chat）+ 约束提取
+- 缺失硬约束（目的地/天数/预算）时自动澄清追问
+- 会话状态 MySQL 持久化，支持 resume 续答与 reset 重置
+- LLM 引导式对话，上下文感知的多轮交互
+
+### 检索与证据流水线
+
+- QP → 并行召回 → 可解释排序 → 规则过滤 → 证据组织
+- Provider 抽象层（高德 Amap / SerpAPI / Mock），asyncio.gather 并行调用
+- Evidence Builder 组织证据链（provider / url / fetched_at / attribution）
+
+### 行程生成与编辑
+
+- itinerary v1 结构化行程契约（trip_profile / days / slots / budget / evidence）
+- P0/P1 分级降级策略（P0 缺失回澄清，P1 降级写 assumptions）
+- Edit Day N 局部重规划，patch_engine 支持 slot 替换/删除/插入
+- revision/diff 记录改动历史
+
+### 渐进式交互
+
+- LLM astream 流式生成 + SSE 渐进协议
+- pipeline_complete → day_ready × N → final_itinerary 逐步推送
+- 前端骨架屏 → 进度提示 → 逐天渲染，用户无需空等
+
+### 性能优化
+
+- LangGraph 单节点 → 4 节点重构 + 条件边路由
+- Provider 串行 → asyncio.gather 并行（检索提升 75%）
+- LLM ainvoke → astream 流式（用户感知首屏提升 87%）
+- 缺字段条件边早退（<2ms vs 原 75s，提升 99.99%）
+- 9 项性能回归测试 + 节点级 perf 指标自动采集
+
+---
+
+## 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| 前端 | Vue 3 · TypeScript · Pinia · Axios · SSE |
+| 后端 | FastAPI · Uvicorn · Python 3.10+ |
+| 工作流 | LangGraph（4 节点状态图 + 条件边） |
+| LLM | DeepSeek Chat API（astream 流式） |
+| Embedding | Ollama / bge-m3 |
+| 数据库 | MySQL（SQLAlchemy 异步 ORM） |
+| 缓存 | Redis（语义缓存） |
+| 检索 | 高德 Amap API · SerpAPI |
+
+---
 
 ## 快速启动
 
-### 1. 安装依赖
+### 1. 安装后端依赖
 
 ```bash
-# 创建虚拟环境
+cd llm_backend
 python -m venv .venv
 
-# 激活虚拟环境
 # Windows
 .venv\Scripts\activate
 # Linux/Mac
 source .venv/bin/activate
 
-# 安装依赖
 pip install -r requirements.txt
 ```
 
 ### 2. 配置环境变量
 
-复制 `env.example` 文件到 `llm_backend/.env` 文件中，并根据实际情况修改配置：
+复制 `env.example` 到 `llm_backend/.env`，修改以下配置：
 
 ```env
-# LLM 服务配置
-CHAT_SERVICE=OLLAMA  # 或 DEEPSEEK
-REASON_SERVICE=OLLAMA  # 或 DEEPSEEK
-
-# Ollama 配置
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_CHAT_MODEL=deepseek-coder:6.7b
-OLLAMA_REASON_MODEL=deepseek-coder:6.7b
-
-# DeepSeek 配置（如果使用）
+# LLM
 DEEPSEEK_API_KEY=your-api-key
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 DEEPSEEK_MODEL=deepseek-chat
+
+# Ollama (Embedding)
+OLLAMA_BASE_URL=http://localhost:11434
+
+# MySQL
+DATABASE_URL=mysql+aiomysql://user:pass@localhost:3306/travelmind
+
+# Redis
+REDIS_URL=redis://localhost:6379/0
 ```
 
-### 3. 安装 MySQL 并在 `.env` 中配置数据库连接
+### 3. 安装前端依赖
 
-用于用户、会话、消息、行程状态等持久化。
+```bash
+cd frontend/DsAgentChat_web
+npm install
+```
 
 ### 4. 启动服务
 
 ```bash
-# 进入后端目录
+# 后端（默认端口 9000）
 cd llm_backend
-
-# 启动服务（默认端口 9000）
 python run.py
 
-# 如果需要修改 IP 和端口，编辑 run.py 中的配置：
-uvicorn.run(
-    "main:app",
-    host="0.0.0.0",  # 修改监听地址
-    port=8000,       # 修改端口号
-    access_log=False,
-    log_level="error",
-    reload=True
-)
+# 前端（开发模式）
+cd frontend/DsAgentChat_web
+npm run dev
 ```
 
-服务启动后可以访问：
-- API 文档：http://localhost:8000/docs
-- 前端界面：http://localhost:8000
+---
 
-## 技术栈
+## 项目结构
 
-- 后端：
-  - FastAPI
-  - SQLAlchemy
-  - MySQL
-  - LangGraph
-  - Ollama / DeepSeek
+```
+TravelMind-main/
+├── llm_backend/                    # 后端
+│   ├── app/
+│   │   ├── api/travel.py           # 旅行 API + SSE 推送
+│   │   ├── lg_agent/               # LangGraph 工作流
+│   │   │   └── travel_draft_graph.py  # 4 节点状态图
+│   │   ├── services/               # 业务服务
+│   │   │   ├── conversation_service.py
+│   │   │   ├── travel_clarification_service.py
+│   │   │   ├── recall_service.py
+│   │   │   ├── ranking_scorer.py
+│   │   │   ├── constraint_filter.py
+│   │   │   ├── evidence_builder.py
+│   │   │   └── providers/          # 检索 Provider
+│   │   │       ├── orchestrator.py    # 并行编排
+│   │   │       ├── amap.py
+│   │   │       └── serp.py
+│   │   ├── domain/travel/          # 领域规则
+│   │   │   └── patch_engine.py        # Edit Day N
+│   │   └── schemas/
+│   │       └── itinerary_v1.py        # 行程契约
+│   └── tests/                      # 测试
+│       ├── test_performance_regression.py  # 性能回归 (9 tests)
+│       └── test_e2e_performance.py         # E2E 性能测试
+├── frontend/DsAgentChat_web/       # 前端
+│   └── src/
+│       ├── views/TravelPlanner.vue    # 主工作台
+│       └── services/api.ts            # SSE 事件处理
+├── docs/                           # 文档
+│   ├── performance-analysis-report.md  # 性能优化分析报告
+│   ├── design.md                       # 工程设计文档
+│   ├── task.md                         # 任务拆解
+│   └── requirement.md                  # 产品需求
+└── README.md
+```
 
-- 前端：
-  - Vue 3
-  - Element Plus
-  - TypeScript
+---
 
-## 注意事项
+## 测试
 
-1. 生产环境部署时：
-   - 修改 `.env` 中的 `SECRET_KEY`
-   - 配置正确的 CORS 设置
-   - 使用 HTTPS
-   - 关闭 `reload=True`
+```bash
+cd llm_backend
 
-2. 开发环境：
-   - 可以启用 `reload=True` 实现热重载
-   - 可以设置 `log_level="debug"` 查看更多日志
+# 性能回归测试（9 项，全 mock）
+py -X utf8 -m pytest tests/test_performance_regression.py -v
 
-## 旅行数据与证据服务说明
+# 全量测试
+py -X utf8 -m pytest -v
+```
 
-本项目当前聚焦“旅行建议 + 可解释证据”，不包含交易闭环（下单/支付）。
+---
 
-### 核心数据对象
+## 文档
 
-1. **Itinerary v1** - 结构化行程
-   - itinerary_id / revision_id / schema_version
-   - trip_profile（目的地、约束）
-   - days（按天）/ slots（按时段活动）
-   - budget_summary / validation（assumptions、risks）
+| 文档 | 说明 |
+|------|------|
+| [性能优化分析报告](docs/performance-analysis-report.md) | STAR 结构，含实测数据、选型决策、行业对标 |
+| [工程设计文档](docs/design.md) | 架构设计、流程定义、Schema 契约 |
+| [任务拆解](docs/task.md) | 里程碑与任务分解 |
+| [产品需求](docs/requirement.md) | 产品目标与功能范围 |
 
-2. **Conversation State** - 会话行程状态
-   - conversation_id
-   - current_revision_id
-   - current_itinerary_json
-   - trip_profile_json
-   - last_user_query
-
-3. **Evidence（规划中的证据对象）**
-   - provider / title / url / fetched_at / attribution
-
-### 主要流程
-
-1. 用户输入旅行需求（目的地/天数/预算/偏好）
-2. QP 识别意图与约束
-3. 若缺失硬约束，进入澄清分支
-4. 生成结构化行程并写回会话状态
-5. 用户可继续 edit/qa/reset 进行多轮共创
-
-## 项目文档索引
-
-- 源码仓库：<https://github.com/yzffff666/TravelMind>
-- 产品需求：`requirement.md`
-- 工程设计：`design.md`
-- 任务拆解：`task.md`
-- 学习路线：`study.md`
+---
 
 ## License
 
