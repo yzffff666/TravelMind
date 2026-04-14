@@ -132,7 +132,8 @@ class AmapSearchProvider(SearchProvider):
             params["city"] = city
             params["citylimit"] = "true"
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        # Ignore host-level proxy env vars to avoid accidental blackhole proxies.
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
             resp = await client.get(f"{_BASE}/text", params=params)
             resp.raise_for_status()
             data = resp.json()
@@ -196,7 +197,8 @@ class AmapMapProvider(MapProvider):
             "output": "json",
         }
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        # Ignore host-level proxy env vars to avoid accidental blackhole proxies.
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
             resp = await client.get(f"{_BASE}/text", params=params)
             resp.raise_for_status()
             data = resp.json()

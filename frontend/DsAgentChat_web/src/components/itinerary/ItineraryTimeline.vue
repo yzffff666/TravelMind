@@ -25,7 +25,16 @@
             <span v-if="si < day.slots.length - 1" class="tl-line" />
           </div>
 
-          <div class="pc">
+          <div class="pc" :class="{ 'pc-with-img': slot.image_url }">
+            <img
+              v-if="slot.image_url"
+              :src="slot.image_url"
+              :alt="slot.place || slot.activity"
+              class="pc-img"
+              loading="lazy"
+              @error="($event.target as HTMLImageElement).style.display = 'none'"
+            />
+            <div class="pc-body">
             <span class="pc-slot">{{ slot.slot }}</span>
             <h4 class="pc-activity">{{ slot.activity }}</h4>
 
@@ -60,6 +69,7 @@
                 已验证
               </span>
             </div>
+            </div><!-- /.pc-body -->
           </div>
         </div>
       </div>
@@ -176,6 +186,31 @@ const slotCost = (slot: ItinerarySlot): number | null => {
   border-radius: var(--r-md);
   padding: 16px 20px;
   transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  overflow: hidden;
+}
+
+.pc-with-img {
+  display: flex;
+  gap: 14px;
+  padding: 0;
+}
+
+.pc-with-img .pc-body {
+  padding: 16px 20px 16px 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.pc:not(.pc-with-img) .pc-body {
+  /* no extra styling needed when no image */
+}
+
+.pc-img {
+  width: 100px;
+  min-height: 100%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border-radius: var(--r-md) 0 0 var(--r-md);
 }
 
 .pc:hover {

@@ -16,11 +16,18 @@ export interface AlternativeItem {
   reason?: string | null
 }
 
+export interface Location {
+  lat: number
+  lng: number
+}
+
 export interface ItinerarySlot {
   slot: string
   activity: string
   place?: string | null
   transit?: string | null
+  location?: Location | null
+  image_url?: string | null
   cost_breakdown?: CostBreakdown | null
   risk?: RiskItem | null
   alternatives?: AlternativeItem[]

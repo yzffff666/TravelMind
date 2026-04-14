@@ -68,7 +68,8 @@ class SerpApiSearchProvider(SearchProvider):
             "gl": "cn",
         }
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        # Ignore host-level proxy env vars to avoid accidental blackhole proxies.
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
             resp = await client.get(_SERPAPI_BASE, params=params)
             resp.raise_for_status()
             data = resp.json()
@@ -146,7 +147,8 @@ class SerpApiMapProvider(MapProvider):
             "ll": "",  # let Google infer from city name
         }
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        # Ignore host-level proxy env vars to avoid accidental blackhole proxies.
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
             resp = await client.get(_SERPAPI_BASE, params=params)
             resp.raise_for_status()
             data = resp.json()

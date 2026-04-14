@@ -105,12 +105,18 @@ class AlternativeItem(BaseModel):
 
 
 # 这是用来定义行程的时段。
+class Location(BaseModel):
+    lat: float
+    lng: float
+
+
 class ItinerarySlot(BaseModel):
     slot: str = Field(..., min_length=1)
     activity: str = Field(..., min_length=1)
-    # M1 keeps these as free-text to minimize migration risk.
     place: Optional[str] = None
     transit: Optional[str] = None
+    location: Optional[Location] = None
+    image_url: Optional[str] = None
     cost_breakdown: Optional[CostBreakdown] = None
     risk: Optional[RiskItem] = None
     alternatives: List[AlternativeItem] = Field(default_factory=list)

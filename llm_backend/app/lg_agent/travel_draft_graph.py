@@ -99,10 +99,50 @@ def _format_candidates_for_prompt(pipeline_result: PipelineResult | None) -> str
     )
 
 
+def _build_candidate_geo_index(
+    pipeline_result: PipelineResult,
+) -> dict[str, dict]:
+    """Build a name→{lat, lng, image_url} lookup from pipeline candidates."""
+    index: dict[str, dict] = {}
+    for sc in pipeline_result.candidates:
+        c = sc.candidate
+        title = (c.title or "").strip()
+        if not title:
+            continue
+        lat = c.extra.get("lat")
+        lng = c.extra.get("lng")
+        photos = c.extra.get("photos") or []
+        image_url = c.extra.get("thumbnail") or (photos[0] if photos else None)
+        entry: dict = {}
+        if lat is not None and lng is not None:
+            entry["lat"] = float(lat)
+            entry["lng"] = float(lng)
+        if image_url:
+            entry["image_url"] = str(image_url)
+        if entry:
+            index[title.lower()] = entry
+    return index
+
+
+def _fuzzy_geo_lookup(geo_index: dict[str, dict], poi_name: str) -> dict | None:
+    """Try exact match first, then substring match against geo index keys."""
+    key = (poi_name or "").strip().lower()
+    if not key:
+        return None
+    exact = geo_index.get(key)
+    if exact:
+        return exact
+    for candidate_key, entry in geo_index.items():
+        if candidate_key in key or key in candidate_key:
+            return entry
+    return None
+
+
 def _postprocess_with_pipeline(
     itinerary: ItineraryV1,
     pipeline_result: PipelineResult | None,
     evidence_builder: EvidenceBuilder | None,
+    recall_geo_index: dict | None = None,
 ) -> None:
     """Attach pipeline evidence to itinerary, link refs per slot, compute coverage.
 
@@ -114,11 +154,25 @@ def _postprocess_with_pipeline(
 
     itinerary.evidence = list(pipeline_result.evidence)
 
+    geo_index = _build_candidate_geo_index(pipeline_result)
+    if recall_geo_index:
+        for k, v in recall_geo_index.items():
+            if k not in geo_index:
+                geo_index[k] = v
+
     for day in itinerary.days:
         for slot in day.slots:
             poi_name = slot.place or slot.activity
             refs = evidence_builder.link_slot(pipeline_result.evidence, poi_name)
             slot.evidence_refs = refs
+
+            geo = _fuzzy_geo_lookup(geo_index, poi_name)
+            if geo:
+                if "lat" in geo and "lng" in geo and slot.location is None:
+                    from app.schemas.itinerary_v1 import Location
+                    slot.location = Location(lat=geo["lat"], lng=geo["lng"])
+                if "image_url" in geo and slot.image_url is None:
+                    slot.image_url = geo["image_url"]
 
     existing = set(itinerary.validation.assumptions)
     for a in pipeline_result.assumptions:
@@ -159,6 +213,7 @@ class TravelDraftState(TravelDraftInput):
     # -- recall_node outputs --
     pipeline_result: Any  # PipelineResult or None (not serialisable as TypedDict)
     recall_degraded: bool
+    recall_geo_index: dict  # full name→{lat,lng,image_url} from ALL recalled candidates
 
     # -- llm_draft_node outputs --
     raw_llm_content: str | None
@@ -392,10 +447,30 @@ async def recall_node(state: TravelDraftState) -> dict:
 
     pipeline_result: PipelineResult | None = None
     recall_degraded = False
+    recall_geo_index: dict = {}
     try:
         qp, recall_svc, scorer, flt, eb = _get_pipeline()
         qp_output = qp.process(state["query"])
         recall_result = await recall_svc.recall_from_qp(qp_output)
+
+        for rc in recall_result.candidates:
+            c = rc.candidate if hasattr(rc, "candidate") else rc
+            title = (c.title or "").strip().lower()
+            if not title:
+                continue
+            lat = c.extra.get("lat")
+            lng = c.extra.get("lng")
+            photos = c.extra.get("photos") or []
+            image_url = c.extra.get("thumbnail") or (photos[0] if photos else None)
+            entry: dict = {}
+            if lat is not None and lng is not None:
+                entry["lat"] = float(lat)
+                entry["lng"] = float(lng)
+            if image_url:
+                entry["image_url"] = str(image_url)
+            if entry:
+                recall_geo_index[title] = entry
+
         ranked = scorer.rank_from_qp(recall_result.candidates, qp_output, top_k=15)
         filter_result = flt.apply_from_qp(ranked, qp_output)
         pipeline_result = eb.build(filter_result, recall_result)
@@ -408,7 +483,8 @@ async def recall_node(state: TravelDraftState) -> dict:
             f"accepted={len(filter_result.accepted)}, "
             f"evidence={len(pipeline_result.evidence)}, "
             f"coverage={pipeline_result.coverage:.2f}, "
-            f"degraded={pipeline_result.degraded}"
+            f"degraded={pipeline_result.degraded}, "
+            f"geo_entries={len(recall_geo_index)}"
         )
         if pipeline_result.assumptions:
             logger.info(f"Pipeline assumptions: {pipeline_result.assumptions}")
@@ -420,6 +496,7 @@ async def recall_node(state: TravelDraftState) -> dict:
     return {
         "pipeline_result": pipeline_result,
         "recall_degraded": recall_degraded,
+        "recall_geo_index": recall_geo_index,
         "perf": {**state.get("perf", {}), "recall_ms": elapsed},
     }
 
@@ -536,7 +613,8 @@ async def postprocess_node(state: TravelDraftState) -> dict:
         _, _, _, _, eb = _get_pipeline()
     except Exception:
         eb = None
-    _postprocess_with_pipeline(itinerary, pipeline_result, eb)
+    recall_geo = state.get("recall_geo_index") or {}
+    _postprocess_with_pipeline(itinerary, pipeline_result, eb, recall_geo)
 
     elapsed = (time.perf_counter() - t0) * 1000
     return {

@@ -12,6 +12,11 @@
         :class="{ active: activeTab === 'itinerary' }"
         @click="activeTab = 'itinerary'"
       >行程</button>
+      <button
+        class="tab-btn"
+        :class="{ active: activeTab === 'map' }"
+        @click="activeTab = 'map'"
+      >地图</button>
     </div>
 
     <!-- ========== Chat Panel (Left) ========== -->
@@ -74,7 +79,7 @@
       ref="itineraryScrollRef"
     >
       <!-- Empty state -->
-      <EmptyState v-if="!itinerary && phase === 'idle'" />
+      <EmptyState v-if="!itinerary && phase === 'idle'" @suggest="submitQuery" />
 
       <!-- Error state with retry -->
       <ErrorState
@@ -143,6 +148,21 @@
       </div>
     </main>
 
+    <!-- ========== Map Panel (Right on desktop, tab on mobile) ========== -->
+    <section
+      class="map-section"
+      v-show="showMap"
+    >
+      <MapPanel
+        ref="mapPanelRef"
+        :days="mapDays"
+        :activeDayIndex="activeDayIndex"
+        :activeSlotIndex="activeSlotIndex"
+        @selectDay="onMapSelectDay"
+        @selectSlot="onMapSelectSlot"
+      />
+    </section>
+
     <!-- ========== Input Bar (Bottom, always visible) ========== -->
     <InputBar
       ref="inputBarRef"
@@ -168,6 +188,7 @@ import ErrorState from '../components/itinerary/ErrorState.vue'
 import TripOverview from '../components/itinerary/TripOverview.vue'
 import BudgetCard from '../components/itinerary/BudgetCard.vue'
 import ItineraryTimeline from '../components/itinerary/ItineraryTimeline.vue'
+import MapPanel from '../components/itinerary/MapPanel.vue'
 
 // ---------- State ----------
 
@@ -188,12 +209,38 @@ const changedDays = ref<number[]>([])
 let msgSeq = 0
 let changedDaysTimer: ReturnType<typeof setTimeout> | null = null
 
-const activeTab = ref<'chat' | 'itinerary'>('chat')
+const activeTab = ref<'chat' | 'itinerary' | 'map'>('chat')
 const isNarrow = ref(false)
 const chatScrollRef = ref<HTMLElement | null>(null)
 const itineraryScrollRef = ref<HTMLElement | null>(null)
 const inputBarRef = ref<InstanceType<typeof InputBar> | null>(null)
 const timelineRef = ref<InstanceType<typeof ItineraryTimeline> | null>(null)
+const mapPanelRef = ref<InstanceType<typeof MapPanel> | null>(null)
+const activeDayIndex = ref(1)
+const activeSlotIndex = ref<number | undefined>(undefined)
+
+const mapDays = computed(() => itinerary.value?.days ?? partialDays.value)
+const hasMapData = computed(() => mapDays.value.some(d =>
+  d.slots.some(s => s.location != null)
+))
+const showMap = computed(() => {
+  if (isNarrow.value) return activeTab.value === 'map'
+  return (
+    hasMapData.value ||
+    itinerary.value != null ||
+    phase.value === 'planning' ||
+    phase.value === 'editing'
+  )
+})
+
+function onMapSelectDay(dayIndex: number) {
+  activeDayIndex.value = dayIndex
+  activeSlotIndex.value = undefined
+}
+
+function onMapSelectSlot(_dayIndex: number, slotIndex: number) {
+  activeSlotIndex.value = slotIndex
+}
 
 // ---------- Responsive ----------
 
@@ -376,6 +423,8 @@ const submitQuery = async (queryText: string) => {
           itinerary.value = envelope.payload.itinerary as ItineraryResult
           partialDays.value = []
           pipelineStatus.value = ''
+          activeDayIndex.value = 1
+          activeSlotIndex.value = undefined
           const explanation = envelope.payload.explanation || ''
           if (explanation) {
             addChatEntry('assistant', explanation)
@@ -530,6 +579,11 @@ const submitQuery = async (queryText: string) => {
   overflow: hidden;
 }
 
+.map-section {
+  overflow: hidden;
+  border-radius: 12px;
+}
+
 @media (min-width: 768px) {
   .page {
     display: grid;
@@ -545,11 +599,53 @@ const submitQuery = async (queryText: string) => {
   .itinerary-panel {
     grid-column: 2;
     grid-row: 1;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .map-section {
+    grid-column: 2;
+    grid-row: 1;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* When map is visible, itinerary panel shares the right column */
+  .itinerary-panel + .map-section,
+  .map-section {
+    display: none;
+  }
+
+  .page:has(.map-section[style*="display: none"]) .itinerary-panel {
+    grid-row: 1;
+  }
+
+  /* Three-area layout: chat | map+itinerary */
+  .page:has(.map-section:not([style*="display: none"])) {
+    grid-template-columns: 5fr 7fr;
+    grid-template-rows: 2fr 3fr auto;
+  }
+
+  .page:has(.map-section:not([style*="display: none"])) .chat-panel {
+    grid-column: 1;
+    grid-row: 1 / 3;
+  }
+
+  .page:has(.map-section:not([style*="display: none"])) .map-section {
+    display: block;
+    grid-column: 2;
+    grid-row: 1;
+    padding: 8px 8px 0 0;
+  }
+
+  .page:has(.map-section:not([style*="display: none"])) .itinerary-panel {
+    grid-column: 2;
+    grid-row: 2;
   }
 
   .page > :deep(.input-bar) {
     grid-column: 1 / -1;
-    grid-row: 2;
+    grid-row: -1;
   }
 }
 
@@ -562,9 +658,14 @@ const submitQuery = async (queryText: string) => {
   .tab-bar { flex-shrink: 0; }
 
   .chat-panel,
-  .itinerary-panel {
+  .itinerary-panel,
+  .map-section {
     flex: 1;
     min-height: 0;
+  }
+
+  .map-section {
+    padding: 8px;
   }
 }
 
