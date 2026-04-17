@@ -22,7 +22,7 @@ from app.services.providers.serp_providers import (
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 FAKE_GOOGLE_RESPONSE = {

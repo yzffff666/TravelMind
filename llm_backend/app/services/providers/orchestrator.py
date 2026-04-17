@@ -21,7 +21,8 @@ from app.services.providers.registry import ProviderRegistry
 
 logger = logging.getLogger(__name__)
 
-_RECALL_CACHE_TTL = 3600
+from app.core.config import settings as _settings
+_RECALL_CACHE_TTL = _settings.REDIS_CACHE_EXPIRE
 _recall_cache: dict[str, tuple[float, "OrchestratorResult"]] = {}
 
 

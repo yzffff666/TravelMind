@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
+from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.middleware import LoggingMiddleware
 from app.api import api_router
@@ -36,10 +37,11 @@ app.add_middleware(LoggingMiddleware)
 # CORS设置 跨域资源共享
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 在生产环境中要设置具体的域名
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Conversation-ID"],
 )
 
 # 1. 用户注册、登录路由通过 api_router 路由挂载到 /api 前缀

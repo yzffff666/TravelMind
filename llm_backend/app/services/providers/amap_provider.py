@@ -50,8 +50,16 @@ def _parse_poi(poi: dict[str, Any], source: str) -> ProviderCandidate:
     location = poi.get("location", "")
     lat, lng = None, None
     if location and "," in location:
-        parts = location.split(",")
-        lng, lat = float(parts[0]), float(parts[1])
+        try:
+            parts = location.split(",")
+            lng_raw, lat_raw = float(parts[0]), float(parts[1])
+            # 基本地理范围校验（中国境内坐标）
+            if -180 <= lng_raw <= 180 and -90 <= lat_raw <= 90:
+                lng, lat = lng_raw, lat_raw
+            else:
+                logger.warning("Out-of-range coordinates for POI '%s': lng=%s lat=%s", title, lng_raw, lat_raw)
+        except (ValueError, IndexError):
+            logger.warning("Failed to parse location string '%s' for POI '%s'", location, title)
 
     rating_str = poi.get("biz_ext", {}).get("rating") or poi.get("biz_ext", {}).get("overall_rating", "")
     rating = 0.0

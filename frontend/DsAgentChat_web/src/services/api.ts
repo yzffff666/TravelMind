@@ -301,7 +301,7 @@ export class ApiService {
         'Authorization': `Bearer ${localStorage.getItem('token')}`
       },
       body: JSON.stringify({
-        user_id: localStorage.getItem('user_id')
+        user_id: parseInt(localStorage.getItem('user_id') || '0', 10)
       })
     })
 

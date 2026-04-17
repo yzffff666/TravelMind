@@ -7,13 +7,14 @@ import mimetypes
 import shutil
 import uuid
 
-import graphrag.api as api
-from graphrag.config.load_config import load_config
-from graphrag.config.enums import IndexingMethod
-from graphrag.logger.rich_progress import RichProgressLogger
-from graphrag.index.typing.pipeline_run_result import PipelineRunResult
-
 from app.core.config import settings
+
+if settings.ENABLE_GRAPHRAG_EXT:
+    import graphrag.api as api
+    from graphrag.config.load_config import load_config
+    from graphrag.config.enums import IndexingMethod
+    from graphrag.logger.rich_progress import RichProgressLogger
+    from graphrag.index.typing.pipeline_run_result import PipelineRunResult
 from app.core.logger import get_logger
 
 logger = get_logger(service="indexing")

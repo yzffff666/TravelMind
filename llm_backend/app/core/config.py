@@ -1,6 +1,7 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from enum import Enum
 from pathlib import Path
+from typing import List
 
 # 获取项目根目录
 ROOT_DIR = Path(__file__).parent.parent.parent
@@ -53,6 +54,9 @@ class Settings(BaseSettings):
     NEO4J_PASSWORD: str = "password"
     NEO4J_DATABASE: str = "neo4j"
     
+    # CORS — dev default allows Vite dev server; set in .env for production
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000"]
+
     # JWT settings
     SECRET_KEY: str = "your-secret-key"  # 在生产环境中使用安全的密钥
     ALGORITHM: str = "HS256"
@@ -71,6 +75,11 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "bge-m3"  # ollama embedding模型
     EMBEDDING_THRESHOLD: float = 0.90  # 语义相似度阈值
     
+    # Optional feature flags (default OFF)
+    ENABLE_GRAPHRAG_EXT: bool = False
+    ENABLE_DEEPAGENTS: bool = False
+    ENABLE_DEEPSEARCH: bool = False
+
     # GraphRAG settings
     GRAPHRAG_PROJECT_DIR: str = "llm_backend/app/graphrag"  # GraphRAG项目目录
     GRAPHRAG_DATA_DIR: str = "data"                         # 数据目录名称
@@ -94,9 +103,10 @@ class Settings(BaseSettings):
         """构建Neo4j连接URL"""
         return f"{self.NEO4J_URL}"
     
-    class Config:
-        env_file = str(ENV_FILE)  # 使用绝对路径
-        env_file_encoding = "utf-8"
-        case_sensitive = True
+    model_config = SettingsConfigDict(
+        env_file=str(ENV_FILE),
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+    )
 
 settings = Settings() 

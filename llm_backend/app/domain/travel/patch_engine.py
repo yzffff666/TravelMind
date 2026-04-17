@@ -49,6 +49,19 @@ class PatchResult:
 
 _DAY_PATTERN = re.compile(r"第\s*(\d+)\s*天")
 _SLOT_LABELS = ("上午", "下午", "晚上")
+
+# 将常见 slot 变体规范化到标准三档
+_SLOT_NORMALIZE: dict[str, str] = {
+    "上午": "上午", "早上": "上午", "早晨": "上午", "早": "上午", "morning": "上午",
+    "下午": "下午", "中午": "下午", "午后": "下午", "午间": "下午", "afternoon": "下午",
+    "晚上": "晚上", "夜晚": "晚上", "夜间": "晚上", "傍晚": "晚上", "夜": "晚上", "evening": "晚上",
+}
+
+def _normalize_slot(label: str | None) -> str | None:
+    if not label:
+        return None
+    return _SLOT_NORMALIZE.get(label, label)
+
 _DELETE_HINTS = ("删掉", "删除", "去掉", "不要", "取消")
 _ADD_HINTS = ("增加", "加上", "添加", "插入", "新增")
 _REPLACE_HINTS = ("换成", "替换", "改成", "改为", "变成")
@@ -202,9 +215,9 @@ def _extract_target_day(text: str, total_days: int) -> int | None:
 
 
 def _extract_target_slot(text: str) -> str | None:
-    for label in _SLOT_LABELS:
-        if label in text:
-            return label
+    for variant, canonical in _SLOT_NORMALIZE.items():
+        if variant in text:
+            return canonical
     return None
 
 
@@ -244,8 +257,9 @@ def _find_day(itinerary: dict, day_index: int) -> dict | None:
 
 
 def _find_slot(day: dict, slot_label: str) -> dict | None:
+    target = _normalize_slot(slot_label)
     for slot in day.get("slots", []):
-        if slot.get("slot") == slot_label:
+        if _normalize_slot(slot.get("slot")) == target:
             return slot
     return None
 

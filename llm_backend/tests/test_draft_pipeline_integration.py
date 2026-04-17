@@ -65,7 +65,7 @@ def _make_mock_llm():
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _reset_pipeline_singletons():
@@ -290,6 +290,7 @@ class TestLlmDraftNode:
         broken_llm = MagicMock()
         async def boom(*a, **kw):
             raise RuntimeError("LLM down")
+            yield  # makes this an async generator so `async for` can iterate it
         broken_llm.astream = boom
 
         with patch("app.lg_agent.travel_draft_graph._get_llm", return_value=broken_llm):
@@ -844,7 +845,7 @@ class TestSSEEventSequence:
 
     def test_stage_start_is_first_event(self):
         """stage_start(draft_plan) should be the very first SSE event."""
-        chunks = asyncio.get_event_loop().run_until_complete(
+        chunks = asyncio.run(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result())
         )
         events = _parse_sse_events(chunks)
@@ -856,7 +857,7 @@ class TestSSEEventSequence:
 
     def test_event_order_is_correct(self):
         """Full sequence: stage_start → pipeline_complete → tool_result → day_ready → stage_progress → final_itinerary."""
-        chunks = asyncio.get_event_loop().run_until_complete(
+        chunks = asyncio.run(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=True))
         )
         events = _parse_sse_events(chunks)
@@ -878,7 +879,7 @@ class TestSSEEventSequence:
 
     def test_tool_result_evidence_payload(self):
         """tool_result should contain evidence_count and evidence list."""
-        chunks = asyncio.get_event_loop().run_until_complete(
+        chunks = asyncio.run(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=True))
         )
         events = _parse_sse_events(chunks)
@@ -893,7 +894,7 @@ class TestSSEEventSequence:
 
     def test_stage_progress_validation_payload(self):
         """stage_progress(validation_summary) should contain coverage and assumptions."""
-        chunks = asyncio.get_event_loop().run_until_complete(
+        chunks = asyncio.run(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=True))
         )
         events = _parse_sse_events(chunks)
@@ -908,7 +909,7 @@ class TestSSEEventSequence:
 
     def test_no_evidence_skips_tool_result(self):
         """When no evidence exists, tool_result event should be omitted but pipeline_complete emitted."""
-        chunks = asyncio.get_event_loop().run_until_complete(
+        chunks = asyncio.run(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=False))
         )
         events = _parse_sse_events(chunks)
@@ -921,7 +922,7 @@ class TestSSEEventSequence:
 
     def test_no_itinerary_has_stage_start_then_final_text(self):
         """When P0 missing, events should be: stage_start → final_text."""
-        chunks = asyncio.get_event_loop().run_until_complete(
+        chunks = asyncio.run(
             _collect_sse_chunks("想去海边", _make_graph_result(with_itinerary=False))
         )
         events = _parse_sse_events(chunks)
@@ -955,7 +956,7 @@ class TestSSEEventSequence:
                     chunks.append(chunk)
             return chunks
 
-        chunks = asyncio.get_event_loop().run_until_complete(_collect_error())
+        chunks = asyncio.run(_collect_error())
         events = _parse_sse_events(chunks)
         event_types = [e[0] for e in events]
 
@@ -964,7 +965,7 @@ class TestSSEEventSequence:
 
     def test_pipeline_complete_event(self):
         """pipeline_complete should be emitted with candidate_count."""
-        chunks = asyncio.get_event_loop().run_until_complete(
+        chunks = asyncio.run(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=True))
         )
         events = _parse_sse_events(chunks)
@@ -976,7 +977,7 @@ class TestSSEEventSequence:
 
     def test_day_ready_events(self):
         """day_ready should be emitted for each day in the itinerary."""
-        chunks = asyncio.get_event_loop().run_until_complete(
+        chunks = asyncio.run(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=True))
         )
         events = _parse_sse_events(chunks)
@@ -989,7 +990,7 @@ class TestSSEEventSequence:
 
     def test_event_sequence_with_progressive(self):
         """Verify progressive event order: stage_start → pipeline_complete → ... → day_ready → ... → final_itinerary."""
-        chunks = asyncio.get_event_loop().run_until_complete(
+        chunks = asyncio.run(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result(with_evidence=True))
         )
         events = _parse_sse_events(chunks)
@@ -1007,7 +1008,7 @@ class TestSSEEventSequence:
 
     def test_final_itinerary_envelope_has_revision_id(self):
         """final_itinerary event envelope should contain revision_id."""
-        chunks = asyncio.get_event_loop().run_until_complete(
+        chunks = asyncio.run(
             _collect_sse_chunks("上海 3天 预算5000", _make_graph_result())
         )
         events = _parse_sse_events(chunks)

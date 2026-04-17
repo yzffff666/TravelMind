@@ -53,6 +53,7 @@ let AMapLib: any = null
 let markers: any[] = []
 let polyline: any = null
 let infoWindow: any = null
+let _mapLoading = false  // 防止并发 initMap
 
 const SLOT_COLORS: Record<string, string> = {
   '上午': '#3B82F6',
@@ -72,28 +73,28 @@ const activeDay = computed(() =>
 const slotsWithLocation = computed((): { slot: ItinerarySlot; idx: number; loc: Location }[] => {
   if (!activeDay.value) return []
   return activeDay.value.slots
-    .map((s, i) => ({ slot: s, idx: i, loc: s.location! }))
-    .filter(item => item.loc != null)
+    .filter((s) => s.location != null)
+    .map((s, i) => ({ slot: s, idx: i, loc: s.location as Location }))
 })
 
 async function initMap() {
+  if (_mapLoading || mapInstance) return  // 防并发
   const key = import.meta.env.VITE_AMAP_KEY
   if (!key) {
-    mapError.value = '请配置 VITE_AMAP_KEY'
+    mapError.value = '请配置 VITE_AMAP_KEY（高德地图 Web API Key）'
     return
   }
 
+  _mapLoading = true
   try {
     const securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE
     if (securityCode) {
       ;(window as any)._AMapSecurityConfig = { securityJsCode: securityCode }
     }
 
-    AMapLib = await AMapLoader.load({
-      key,
-      version: '2.0',
-    })
+    AMapLib = await AMapLoader.load({ key, version: '2.0' })
 
+    // 异步加载期间组件可能已卸载
     if (!mapContainer.value) return
 
     mapInstance = new AMapLib.Map(mapContainer.value, {
@@ -109,6 +110,8 @@ async function initMap() {
     renderMarkers()
   } catch (e: any) {
     mapError.value = `地图加载失败: ${e.message || e}`
+  } finally {
+    _mapLoading = false
   }
 }
 
@@ -217,17 +220,22 @@ watch(() => props.activeSlotIndex, (val) => {
   if (val != null) highlightSlot(val)
 })
 
-watch(() => props.days, () => {
-  renderMarkers()
-}, { deep: true })
+// 监听天数变化和每天 slots 坐标变化（用 length + 首个坐标做浅比较，避免 deep watch 遍历整棵树）
+watch(
+  () => props.days.map(d => `${d.day_index}:${d.slots.filter(s => s.location).length}`).join(','),
+  () => { renderMarkers() }
+)
 
 onMounted(() => {
   initMap()
 })
 
 onBeforeUnmount(() => {
+  clearMap()
   mapInstance?.destroy()
   mapInstance = null
+  AMapLib = null
+  infoWindow = null
 })
 
 defineExpose({ highlightSlot })

@@ -58,7 +58,7 @@ def _make_mock_llm():
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _reset_pipeline_singletons():

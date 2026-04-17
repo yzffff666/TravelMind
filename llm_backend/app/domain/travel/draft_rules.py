@@ -32,13 +32,14 @@ class DraftConfig:
 
 # 行程草案配置实例
 DRAFT_CONFIG: Final[DraftConfig] = DraftConfig(
-    # 天数模式
-    days_pattern=re.compile(r"(\d+)\s*天"),
-    # 预算模式
-    budget_pattern=re.compile(r"预算\s*([0-9]+(?:\.[0-9]+)?)"),
-    # 目的地模式
+    # 天数模式（中文 + 英文）
+    days_pattern=re.compile(r"(\d+)\s*(?:天|days?)"),
+    # 预算模式（中文 + 英文）
+    budget_pattern=re.compile(r"(?:预算|budget)\s*([0-9]+(?:\.[0-9]+)?)"),
+    # 目的地模式（中文 + 英文）
     destination_patterns=(
         re.compile(r"(?:去|到|在)\s*([A-Za-z\u4e00-\u9fa5]{2,20})"),
+        re.compile(r"(?:travel\s+to|trip\s+to|visit)\s+([A-Za-z\u4e00-\u9fa5]{2,20})", re.IGNORECASE),
         re.compile(r"(?:改成|换成|改去|改到|换去|换到)\s*([A-Za-z\u4e00-\u9fa5]{2,20})"),
         re.compile(r"([A-Za-z\u4e00-\u9fa5]{2,20})\s*\d+\s*天"),
     ),

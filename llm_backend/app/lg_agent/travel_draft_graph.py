@@ -99,6 +99,16 @@ def _format_candidates_for_prompt(pipeline_result: PipelineResult | None) -> str
     )
 
 
+def _safe_coord(val: Any) -> float | None:
+    """安全转换坐标值为 float，转换失败返回 None。"""
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
 def _build_candidate_geo_index(
     pipeline_result: PipelineResult,
 ) -> dict[str, dict]:
@@ -114,9 +124,10 @@ def _build_candidate_geo_index(
         photos = c.extra.get("photos") or []
         image_url = c.extra.get("thumbnail") or (photos[0] if photos else None)
         entry: dict = {}
-        if lat is not None and lng is not None:
-            entry["lat"] = float(lat)
-            entry["lng"] = float(lng)
+        lat_f, lng_f = _safe_coord(lat), _safe_coord(lng)
+        if lat_f is not None and lng_f is not None:
+            entry["lat"] = lat_f
+            entry["lng"] = lng_f
         if image_url:
             entry["image_url"] = str(image_url)
         if entry:
@@ -135,6 +146,29 @@ def _fuzzy_geo_lookup(geo_index: dict[str, dict], poi_name: str) -> dict | None:
     for candidate_key, entry in geo_index.items():
         if candidate_key in key or key in candidate_key:
             return entry
+    return None
+
+
+# 主要城市中心坐标兜底（当 provider 无法提供具体地点坐标时使用）
+_CITY_CENTERS: dict[str, tuple[float, float]] = {
+    "北京": (39.9042, 116.4074), "上海": (31.2304, 121.4737),
+    "广州": (23.1291, 113.2644), "深圳": (22.5431, 114.0579),
+    "成都": (30.5728, 104.0668), "杭州": (30.2741, 120.1551),
+    "西安": (34.3416, 108.9398), "重庆": (29.5630, 106.5516),
+    "南京": (32.0603, 118.7969), "武汉": (30.5928, 114.3055),
+    "苏州": (31.2989, 120.5853), "厦门": (24.4798, 118.0894),
+    "青岛": (36.0671, 120.3826), "大理": (25.6065, 100.2679),
+    "丽江": (26.8721, 100.2300), "三亚": (18.2528, 109.5119),
+    "桂林": (25.2736, 110.2907), "黄山": (29.7147, 118.3378),
+    "张家界": (29.1170, 110.4799), "九寨沟": (33.2600, 103.9170),
+}
+
+
+def _city_center_fallback(destination: str) -> tuple[float, float] | None:
+    """返回城市中心坐标，用于地图无实际坐标时的兜底显示。"""
+    for city, coords in _CITY_CENTERS.items():
+        if city in destination:
+            return coords
     return None
 
 
@@ -179,6 +213,16 @@ def _postprocess_with_pipeline(
         if a not in existing:
             itinerary.validation.assumptions.append(a)
             existing.add(a)
+
+    # 城市中心坐标兜底：slot 经过 geo 匹配仍无坐标时，用城市中心占位，前端地图不会空白
+    destination = itinerary.trip_profile.destination_city or ""
+    fallback = _city_center_fallback(destination)
+    if fallback:
+        from app.schemas.itinerary_v1 import Location
+        for day in itinerary.days:
+            for slot in day.slots:
+                if slot.location is None:
+                    slot.location = Location(lat=fallback[0], lng=fallback[1])
 
     tracker = CoverageTracker()
     report = tracker.compute(itinerary)
@@ -640,7 +684,7 @@ def _should_continue_after_extract(state: TravelDraftState) -> str:
 # Graph assembly
 # ===================================================================
 
-builder = StateGraph(TravelDraftState, input=TravelDraftInput)
+builder = StateGraph(TravelDraftState, input_schema=TravelDraftInput)
 
 builder.add_node("extract_node", extract_node)
 builder.add_node("early_exit_node", early_exit_node)
