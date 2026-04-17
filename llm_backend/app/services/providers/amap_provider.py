@@ -13,6 +13,7 @@ Free tier: 5000 calls/day for individual developers.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -41,6 +42,35 @@ _TRAVEL_TYPES = "|".join([
     "110400",  # 博物馆
     "110000",  # 旅游景点
 ])
+
+_MAX_KEYWORDS_LEN = 96
+_MAX_CITY_LEN = 24
+
+
+def _sanitize_keywords(raw: str, *, max_len: int = _MAX_KEYWORDS_LEN) -> str:
+    """Best-effort keyword sanitization to avoid AMap INVALID_PARAMS."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    # Keep the first segment before our recall separator to avoid over-long noisy payload.
+    text = text.split("|", 1)[0]
+    text = re.sub(r"[|:：;；]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > max_len:
+        text = text[:max_len].rstrip()
+    return text
+
+
+def _sanitize_city(raw: str) -> str:
+    city = re.sub(r"\s+", " ", (raw or "").strip())
+    if not city:
+        return ""
+    # Exclude obviously invalid city values with long noise or separators.
+    if len(city) > _MAX_CITY_LEN:
+        return ""
+    if re.search(r"[|:：]", city):
+        return ""
+    return city
 
 
 def _parse_poi(poi: dict[str, Any], source: str) -> ProviderCandidate:
@@ -123,9 +153,12 @@ class AmapSearchProvider(SearchProvider):
         top_k: int = 10,
         context: ProviderCallContext | None = None,
     ) -> ProviderResponse:
+        keywords = _sanitize_keywords(query)
+        if not keywords:
+            return ProviderResponse(degraded=True)
         params: dict[str, Any] = {
             "key": self._key,
-            "keywords": query,
+            "keywords": keywords,
             "types": _TRAVEL_TYPES,
             "city": "",
             "citylimit": "false",
@@ -135,7 +168,7 @@ class AmapSearchProvider(SearchProvider):
             "output": "json",
         }
 
-        city = self._extract_city(query)
+        city = _sanitize_city(self._extract_city(query))
         if city:
             params["city"] = city
             params["citylimit"] = "true"
@@ -147,7 +180,13 @@ class AmapSearchProvider(SearchProvider):
             data = resp.json()
 
         if data.get("status") != "1":
-            logger.warning("Amap search error: %s", data.get("info", "unknown"))
+            logger.warning(
+                "Amap search error: info=%s infocode=%s city=%s keywords=%s",
+                data.get("info", "unknown"),
+                data.get("infocode", ""),
+                city,
+                keywords[:40],
+            )
             return ProviderResponse(degraded=True)
 
         pois = data.get("pois", [])
@@ -157,13 +196,19 @@ class AmapSearchProvider(SearchProvider):
     @staticmethod
     def _extract_city(query: str) -> str:
         """Try to extract a city name from the query string."""
+        # Prefer explicit constrained destination from recall_query.
+        explicit = re.search(r"目的地\s*[:：]\s*([^\|\s]+)", query)
+        if explicit:
+            return explicit.group(1).strip()
+
         for token in query.replace(",", " ").replace("，", " ").split():
             if len(token) >= 2 and any(
                 token.endswith(s) for s in ("市", "省", "区", "县")
             ):
                 return token
+        # Conservative fallback: only accept short pure CJK/ASCII alphabetic tokens.
         for token in query.replace(",", " ").replace("，", " ").split():
-            if len(token) >= 2:
+            if len(token) >= 2 and len(token) <= _MAX_CITY_LEN and re.fullmatch(r"[A-Za-z\u4e00-\u9fff]+", token):
                 return token
         return ""
 
@@ -192,7 +237,10 @@ class AmapMapProvider(MapProvider):
         top_k: int = 20,
         context: ProviderCallContext | None = None,
     ) -> ProviderResponse:
-        kw = "|".join(keywords) if keywords else "景点"
+        sanitized_keywords = [_sanitize_keywords(k, max_len=48) for k in keywords]
+        sanitized_keywords = [k for k in sanitized_keywords if k]
+        kw = "|".join(sanitized_keywords[:4]) if sanitized_keywords else "景点"
+        city = _sanitize_city(city)
         params: dict[str, Any] = {
             "key": self._key,
             "keywords": kw,
@@ -212,7 +260,13 @@ class AmapMapProvider(MapProvider):
             data = resp.json()
 
         if data.get("status") != "1":
-            logger.warning("Amap map error: %s", data.get("info", "unknown"))
+            logger.warning(
+                "Amap map error: info=%s infocode=%s city=%s keywords=%s",
+                data.get("info", "unknown"),
+                data.get("infocode", ""),
+                city,
+                kw[:40],
+            )
             return ProviderResponse(degraded=True)
 
         pois = data.get("pois", [])

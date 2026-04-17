@@ -1,14 +1,16 @@
 <template>
   <div class="map-panel">
     <div ref="mapContainer" class="map-container" />
-    <!-- 仅 SDK 未就绪时全屏遮罩；就绪后始终露出底图，避免「一片空白」的错觉 -->
     <div v-if="!mapReady" class="map-placeholder map-placeholder--fullscreen">
       <span class="map-loading-icon">🗺️</span>
       <span v-if="mapError">{{ mapError }}</span>
       <span v-else>地图加载中...</span>
     </div>
+    <div v-if="mapReady" class="map-engine-chip">
+      {{ mapEngine === 'leaflet' ? 'Overseas: OpenStreetMap' : 'China: Gaode Map' }}
+    </div>
     <div
-      v-else-if="slotsWithLocation.length === 0 && dayTabs.length > 0"
+      v-if="mapReady && slotsWithLocation.length === 0 && dayTabs.length > 0"
       class="map-hint"
     >
       <span class="map-hint-title">本日暂无坐标点</span>
@@ -47,13 +49,18 @@ const emit = defineEmits<{
 const mapContainer = ref<HTMLElement>()
 const mapReady = ref(false)
 const mapError = ref('')
+const mapEngine = ref<'amap' | 'leaflet'>('amap')
 
 let mapInstance: any = null
 let AMapLib: any = null
 let markers: any[] = []
 let polyline: any = null
 let infoWindow: any = null
-let _mapLoading = false  // 防止并发 initMap
+let leafletLib: any = null
+let leafletMarkers: any[] = []
+let leafletPolyline: any = null
+let leafletMarkerBySlot = new Map<number, any>()
+let _mapLoading = false
 
 const SLOT_COLORS: Record<string, string> = {
   '上午': '#3B82F6',
@@ -70,6 +77,13 @@ const activeDay = computed(() =>
   props.days.find(d => d.day_index === props.activeDayIndex) ?? props.days[0]
 )
 
+const allLocations = computed((): Location[] => {
+  return props.days
+    .flatMap(day => day.slots)
+    .filter((s) => s.location != null)
+    .map((s) => s.location as Location)
+})
+
 const slotsWithLocation = computed((): { slot: ItinerarySlot; idx: number; loc: Location }[] => {
   if (!activeDay.value) return []
   return activeDay.value.slots
@@ -77,8 +91,97 @@ const slotsWithLocation = computed((): { slot: ItinerarySlot; idx: number; loc: 
     .map((s, i) => ({ slot: s, idx: i, loc: s.location as Location }))
 })
 
-async function initMap() {
-  if (_mapLoading || mapInstance) return  // 防并发
+function isChinaPoint(lat: number, lng: number): boolean {
+  // Coarse China mainland-ish bounds:
+  // use lat>=18 to avoid Thailand/SEA points (e.g. Phuket ~7.9N) being misclassified as China.
+  return lng >= 73 && lng <= 136 && lat >= 18 && lat <= 54
+}
+
+const OVERSEAS_HINTS = [
+  '普吉', '泰国', 'phuket', 'thailand', 'bangkok',
+  '东京', '大阪', '京都', '首尔', '新加坡',
+  'tokyo', 'osaka', 'kyoto', 'seoul', 'singapore',
+  'paris', 'london', 'rome',
+]
+
+function hasOverseasTextHint(): boolean {
+  const text = props.days
+    .flatMap(day => day.slots)
+    .map(slot => `${slot.place || ''} ${slot.activity || ''}`.toLowerCase())
+    .join(' ')
+  return OVERSEAS_HINTS.some(h => text.includes(h.toLowerCase()))
+}
+
+function chooseEngine(): 'amap' | 'leaflet' {
+  if (allLocations.value.length === 0) return 'amap'
+  if (hasOverseasTextHint()) return 'leaflet'
+  const hasOverseas = allLocations.value.some(loc => !isChinaPoint(loc.lat, loc.lng))
+  return hasOverseas ? 'leaflet' : 'amap'
+}
+
+async function loadLeaflet(): Promise<any> {
+  if ((window as any).L) return (window as any).L
+
+  const existingCss = document.getElementById('leaflet-css')
+  if (!existingCss) {
+    const css = document.createElement('link')
+    css.id = 'leaflet-css'
+    css.rel = 'stylesheet'
+    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'
+    document.head.appendChild(css)
+  }
+
+  if (!(window as any).__leafletLoadingPromise) {
+    ;(window as any).__leafletLoadingPromise = new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script')
+      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
+      script.onload = () => resolve()
+      script.onerror = () => reject(new Error('Leaflet script load failed'))
+      document.head.appendChild(script)
+    })
+  }
+  await (window as any).__leafletLoadingPromise
+  return (window as any).L
+}
+
+function clearAmapLayers() {
+  if (markers.length) {
+    mapInstance?.remove(markers)
+    markers = []
+  }
+  if (polyline) {
+    mapInstance?.remove(polyline)
+    polyline = null
+  }
+  infoWindow?.close()
+}
+
+function clearLeafletLayers() {
+  leafletMarkers.forEach(m => m.remove())
+  leafletMarkers = []
+  leafletMarkerBySlot.clear()
+  if (leafletPolyline) {
+    leafletPolyline.remove()
+    leafletPolyline = null
+  }
+}
+
+function destroyMapInstance() {
+  if (!mapInstance) return
+  if (mapEngine.value === 'amap') {
+    clearAmapLayers()
+    mapInstance.destroy?.()
+    AMapLib = null
+    infoWindow = null
+  } else {
+    clearLeafletLayers()
+    mapInstance.remove?.()
+  }
+  mapInstance = null
+}
+
+async function initAmap() {
+  if (_mapLoading || mapInstance) return
   const key = import.meta.env.VITE_AMAP_KEY
   if (!key) {
     mapError.value = '请配置 VITE_AMAP_KEY（高德地图 Web API Key）'
@@ -105,31 +208,77 @@ async function initMap() {
 
     infoWindow = new AMapLib.InfoWindow({ offset: new AMapLib.Pixel(0, -30) })
     mapReady.value = true
+    mapError.value = ''
 
     await nextTick()
-    renderMarkers()
+    renderAmapMarkers()
   } catch (e: any) {
     mapError.value = `地图加载失败: ${e.message || e}`
+    mapReady.value = false
   } finally {
     _mapLoading = false
   }
 }
 
-function clearMap() {
-  if (markers.length) {
-    mapInstance?.remove(markers)
-    markers = []
+async function initLeaflet() {
+  if (_mapLoading || mapInstance) return
+  if (!mapContainer.value) return
+
+  _mapLoading = true
+  try {
+    leafletLib = await loadLeaflet()
+    if (!mapContainer.value) return
+
+    mapInstance = leafletLib.map(mapContainer.value, {
+      zoomControl: true,
+      attributionControl: true,
+    }).setView([39.9, 116.4], 5)
+
+    leafletLib.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+    }).addTo(mapInstance)
+
+    mapReady.value = true
+    mapError.value = ''
+    await nextTick()
+    renderLeafletMarkers()
+  } catch (e: any) {
+    mapError.value = `海外地图加载失败: ${e.message || e}`
+    mapReady.value = false
+  } finally {
+    _mapLoading = false
   }
-  if (polyline) {
-    mapInstance?.remove(polyline)
-    polyline = null
-  }
-  infoWindow?.close()
 }
 
-function renderMarkers() {
+async function ensureMapReady() {
+  const target = chooseEngine()
+  if (target !== mapEngine.value) {
+    destroyMapInstance()
+    mapReady.value = false
+    mapEngine.value = target
+  }
+  if (mapInstance) return
+  if (mapEngine.value === 'amap') {
+    await initAmap()
+  } else {
+    await initLeaflet()
+  }
+}
+
+async function refreshMap() {
+  try {
+    await ensureMapReady()
+    renderCurrentEngine()
+  } catch (e: any) {
+    mapError.value = `地图刷新失败: ${e?.message || e}`
+    mapReady.value = false
+  }
+}
+
+function renderAmapMarkers() {
   if (!mapInstance || !AMapLib) return
-  clearMap()
+  clearAmapLayers()
 
   const items = slotsWithLocation.value
   if (items.length === 0) return
@@ -195,47 +344,119 @@ function renderMarkers() {
   mapInstance.setFitView(markers, false, [60, 60, 60, 60])
 }
 
+function renderLeafletMarkers() {
+  if (!mapInstance || !leafletLib) return
+  clearLeafletLayers()
+
+  const items = slotsWithLocation.value
+  if (items.length === 0) return
+
+  const latLngs: [number, number][] = []
+
+  items.forEach(({ slot, idx, loc }, seqIdx) => {
+    const color = SLOT_COLORS[slot.slot] || DEFAULT_COLOR
+    const label = `${seqIdx + 1}`
+    const latLng: [number, number] = [loc.lat, loc.lng]
+    latLngs.push(latLng)
+
+    const icon = leafletLib.divIcon({
+      className: 'leaflet-number-icon',
+      html: `<span style="
+        background:${color};
+        color:#fff;
+        border-radius:50%;
+        width:24px;height:24px;
+        display:inline-flex;align-items:center;justify-content:center;
+        font-size:12px;font-weight:700;
+        box-shadow:0 2px 6px rgba(0,0,0,.3);
+      ">${label}</span>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    })
+
+    const marker = leafletLib.marker(latLng, { icon }).addTo(mapInstance)
+    const popup = `
+      <div style="padding:6px;max-width:220px;">
+        <strong>${slot.place || slot.activity}</strong>
+        <div style="color:#666;font-size:12px;margin-top:4px;">${slot.slot} · ${slot.activity}</div>
+        ${slot.transit ? `<div style="color:#999;font-size:11px;margin-top:2px;">Transit: ${slot.transit}</div>` : ''}
+      </div>
+    `
+    marker.bindPopup(popup)
+    marker.on('click', () => {
+      emit('selectSlot', props.activeDayIndex, idx)
+    })
+
+    leafletMarkerBySlot.set(idx, marker)
+    leafletMarkers.push(marker)
+  })
+
+  if (latLngs.length >= 2) {
+    leafletPolyline = leafletLib.polyline(latLngs, {
+      color: '#6366F1',
+      weight: 3,
+      opacity: 0.7,
+      dashArray: '8, 6',
+      lineJoin: 'round',
+    }).addTo(mapInstance)
+  }
+
+  const bounds = leafletLib.latLngBounds(latLngs)
+  mapInstance.fitBounds(bounds, { padding: [48, 48] })
+}
+
+function renderCurrentEngine() {
+  if (mapEngine.value === 'amap') {
+    renderAmapMarkers()
+    return
+  }
+  renderLeafletMarkers()
+}
+
 function highlightSlot(slotIdx: number) {
-  if (!infoWindow || !mapInstance) return
   const item = slotsWithLocation.value.find(s => s.idx === slotIdx)
   if (!item) return
-  const pos: [number, number] = [item.loc.lng, item.loc.lat]
-  mapInstance.setCenter(pos)
-  mapInstance.setZoom(15)
-  const content = `
-    <div style="padding:8px;max-width:200px;">
-      <strong>${item.slot.place || item.slot.activity}</strong>
-      <div style="color:#666;font-size:12px;margin-top:4px;">${item.slot.slot} · ${item.slot.activity}</div>
-    </div>
-  `
-  infoWindow.setContent(content)
-  infoWindow.open(mapInstance, pos)
+  if (mapEngine.value === 'amap') {
+    if (!infoWindow || !mapInstance) return
+    const pos: [number, number] = [item.loc.lng, item.loc.lat]
+    mapInstance.setCenter(pos)
+    mapInstance.setZoom(15)
+    const content = `
+      <div style="padding:8px;max-width:200px;">
+        <strong>${item.slot.place || item.slot.activity}</strong>
+        <div style="color:#666;font-size:12px;margin-top:4px;">${item.slot.slot} · ${item.slot.activity}</div>
+      </div>
+    `
+    infoWindow.setContent(content)
+    infoWindow.open(mapInstance, pos)
+    return
+  }
+  const marker = leafletMarkerBySlot.get(slotIdx)
+  if (!marker || !mapInstance) return
+  mapInstance.setView(marker.getLatLng(), 15, { animate: true })
+  marker.openPopup()
 }
 
 watch(() => props.activeDayIndex, () => {
-  renderMarkers()
+  refreshMap()
 })
 
 watch(() => props.activeSlotIndex, (val) => {
   if (val != null) highlightSlot(val)
 })
 
-// 监听天数变化和每天 slots 坐标变化（用 length + 首个坐标做浅比较，避免 deep watch 遍历整棵树）
 watch(
   () => props.days.map(d => `${d.day_index}:${d.slots.filter(s => s.location).length}`).join(','),
-  () => { renderMarkers() }
+  () => { refreshMap() }
 )
 
 onMounted(() => {
-  initMap()
+  refreshMap()
 })
 
 onBeforeUnmount(() => {
-  clearMap()
-  mapInstance?.destroy()
-  mapInstance = null
-  AMapLib = null
-  infoWindow = null
+  destroyMapInstance()
+  leafletLib = null
 })
 
 defineExpose({ highlightSlot })
@@ -255,6 +476,19 @@ defineExpose({ highlightSlot })
 .map-container {
   width: 100%;
   height: 100%;
+}
+
+.map-engine-chip {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 11;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
 }
 
 .map-placeholder--fullscreen {

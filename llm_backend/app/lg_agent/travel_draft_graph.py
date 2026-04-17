@@ -39,6 +39,7 @@ from app.schemas.itinerary_v1 import (
 from app.services.constraint_filter import ConstraintFilter
 from app.services.coverage_tracker import CoverageTracker
 from app.services.evidence_builder import EvidenceBuilder, PipelineResult
+from app.services.location_backfill_service import LocationBackfillService
 from app.services.ranking_scorer import RankingScorer
 from app.services.recall_service import RecallService
 
@@ -53,18 +54,25 @@ _pipeline_recall: RecallService | None = None
 _pipeline_scorer: RankingScorer | None = None
 _pipeline_filter: ConstraintFilter | None = None
 _pipeline_eb: EvidenceBuilder | None = None
+_pipeline_backfill: LocationBackfillService | None = None
 
 
 def _get_pipeline():
-    """Return (qp, recall, scorer, filter, evidence_builder) singletons."""
-    global _pipeline_qp, _pipeline_recall, _pipeline_scorer, _pipeline_filter, _pipeline_eb
+    """Return (qp, recall, scorer, filter, evidence_builder, backfill) singletons."""
+    global _pipeline_qp, _pipeline_recall, _pipeline_scorer, _pipeline_filter, _pipeline_eb, _pipeline_backfill
     if _pipeline_qp is None:
         _pipeline_qp = TravelQueryProcessor()
+    if _pipeline_recall is None:
         _pipeline_recall = RecallService(include_mock_fallback=True)
+    if _pipeline_scorer is None:
         _pipeline_scorer = RankingScorer()
+    if _pipeline_filter is None:
         _pipeline_filter = ConstraintFilter()
+    if _pipeline_eb is None:
         _pipeline_eb = EvidenceBuilder()
-    return _pipeline_qp, _pipeline_recall, _pipeline_scorer, _pipeline_filter, _pipeline_eb
+    if _pipeline_backfill is None:
+        _pipeline_backfill = LocationBackfillService()
+    return _pipeline_qp, _pipeline_recall, _pipeline_scorer, _pipeline_filter, _pipeline_eb, _pipeline_backfill
 
 
 _MAX_CANDIDATES_IN_PROMPT = 10
@@ -161,13 +169,26 @@ _CITY_CENTERS: dict[str, tuple[float, float]] = {
     "丽江": (26.8721, 100.2300), "三亚": (18.2528, 109.5119),
     "桂林": (25.2736, 110.2907), "黄山": (29.7147, 118.3378),
     "张家界": (29.1170, 110.4799), "九寨沟": (33.2600, 103.9170),
+    # overseas hot spots
+    "普吉": (7.8804, 98.3923), "普吉岛": (7.8804, 98.3923), "phuket": (7.8804, 98.3923),
+    "曼谷": (13.7563, 100.5018), "bangkok": (13.7563, 100.5018),
+    "东京": (35.6762, 139.6503), "tokyo": (35.6762, 139.6503),
+    "大阪": (34.6937, 135.5023), "osaka": (34.6937, 135.5023),
+    "京都": (35.0116, 135.7681), "kyoto": (35.0116, 135.7681),
+    "首尔": (37.5665, 126.9780), "seoul": (37.5665, 126.9780),
+    "新加坡": (1.3521, 103.8198), "singapore": (1.3521, 103.8198),
+    "巴黎": (48.8566, 2.3522), "paris": (48.8566, 2.3522),
+    "伦敦": (51.5072, -0.1276), "london": (51.5072, -0.1276),
+    "罗马": (41.9028, 12.4964), "rome": (41.9028, 12.4964),
 }
 
 
 def _city_center_fallback(destination: str) -> tuple[float, float] | None:
     """返回城市中心坐标，用于地图无实际坐标时的兜底显示。"""
+    dest_lower = (destination or "").strip().lower()
     for city, coords in _CITY_CENTERS.items():
-        if city in destination:
+        city_lower = city.lower()
+        if city in destination or (city_lower and city_lower in dest_lower):
             return coords
     return None
 
@@ -493,7 +514,7 @@ async def recall_node(state: TravelDraftState) -> dict:
     recall_degraded = False
     recall_geo_index: dict = {}
     try:
-        qp, recall_svc, scorer, flt, eb = _get_pipeline()
+        qp, recall_svc, scorer, flt, eb, _ = _get_pipeline()
         qp_output = qp.process(state["query"])
         recall_result = await recall_svc.recall_from_qp(qp_output)
 
@@ -654,11 +675,20 @@ async def postprocess_node(state: TravelDraftState) -> dict:
     itinerary = ItineraryV1(**itinerary_dict)
 
     try:
-        _, _, _, _, eb = _get_pipeline()
+        _, _, _, _, eb, backfill = _get_pipeline()
     except Exception:
         eb = None
+        backfill = None
     recall_geo = state.get("recall_geo_index") or {}
     _postprocess_with_pipeline(itinerary, pipeline_result, eb, recall_geo)
+
+    if backfill is not None:
+        report = await backfill.backfill_itinerary(itinerary)
+        existing = set(itinerary.validation.assumptions)
+        for assumption in report.assumptions:
+            if assumption not in existing:
+                itinerary.validation.assumptions.append(assumption)
+                existing.add(assumption)
 
     elapsed = (time.perf_counter() - t0) * 1000
     return {
@@ -684,7 +714,7 @@ def _should_continue_after_extract(state: TravelDraftState) -> str:
 # Graph assembly
 # ===================================================================
 
-builder = StateGraph(TravelDraftState, input_schema=TravelDraftInput)
+builder = StateGraph(TravelDraftState)
 
 builder.add_node("extract_node", extract_node)
 builder.add_node("early_exit_node", early_exit_node)

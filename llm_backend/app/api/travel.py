@@ -6,7 +6,9 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 
+from app.core.database import AsyncSessionLocal
 from app.core.logger import get_logger
 from app.domain.travel.patch_engine import apply_patch, parse_edit_ops
 from app.domain.travel.sse_envelope import (
@@ -17,6 +19,7 @@ from app.domain.travel.sse_envelope import (
 from app.domain.travel.query_processor import TravelQueryProcessor
 from app.lg_agent.travel_draft_graph import travel_draft_graph
 from app.lg_agent.utils import new_uuid
+from app.models.user import User
 from app.services.conversation_service import ConversationService
 from app.services.deepseek_service import DeepseekService
 from app.services.travel_clarification_service import TravelClarificationService
@@ -117,6 +120,14 @@ _GUIDED_SYSTEM_PROMPT = (
 
 RECENT_WINDOW = 6  # keep last 6 turns raw (12 messages)
 _AMBIGUOUS_BUDGET_PHRASES = ("少一点", "低一点", "便宜点", "省一点", "差不多", "看情况")
+
+async def _ensure_user_exists(user_id: int) -> None:
+    """Fail fast for invalid user_id to avoid FK 500 in conversation state upsert."""
+    async with AsyncSessionLocal() as db:
+        exists = await db.scalar(select(User.id).where(User.id == user_id))
+    if exists is None:
+        logger.warning(f"Invalid user_id in travel API request: {user_id}")
+        raise HTTPException(status_code=401, detail="用户不存在或登录已失效，请重新登录")
 
 
 def _needs_budget_clarification_hint(query: str, missing_text: str) -> bool:
@@ -647,6 +658,7 @@ async def langgraph_query(
     # 处理行程查询请求
     try:
         logger.info(f"Processing travel planning query for user {user_id} and conversation {conversation_id}")
+        await _ensure_user_exists(user_id)
 
         # 图片是可选输入：用于多模态增强（如景点/酒店截图），不是行程生成必填项。
         image_path = None
@@ -842,6 +854,8 @@ async def langgraph_query(
         response = StreamingResponse(process_stream(), media_type="text/event-stream")
         response.headers["X-Conversation-ID"] = thread_id
         return response
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"LangGraph query error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -855,6 +869,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
     # 处理行程恢复请求
     try:
         logger.info(f"Resuming travel planning query for user {request.user_id} with conversation {request.conversation_id}")
+        await _ensure_user_exists(request.user_id)
 
         # 创建线程ID
         thread_id = request.conversation_id
@@ -987,6 +1002,8 @@ async def langgraph_resume(request: LangGraphResumeRequest):
         response.headers["X-Conversation-ID"] = thread_id
         return response
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"LangGraph resume error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

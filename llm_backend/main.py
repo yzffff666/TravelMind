@@ -1,6 +1,7 @@
 # Windows: avoid "DLL load failed" when langchain_core imports uuid_utils (C extension).
 # Inject a stub that provides uuid7 via stdlib uuid so the app can start.
 import sys
+import os
 if sys.platform == "win32":
     import types
     import uuid
@@ -11,6 +12,33 @@ if sys.platform == "win32":
     sys.modules["uuid_utils.compat"] = _compat
     _pkg = types.ModuleType("uuid_utils")
     sys.modules["uuid_utils"] = _pkg
+
+
+def _sanitize_broken_proxy_env() -> None:
+    """Remove known-bad local proxy settings (e.g. 127.0.0.1:9)."""
+    proxy_keys = (
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+        "http_proxy", "https_proxy", "all_proxy",
+        "GIT_HTTP_PROXY", "GIT_HTTPS_PROXY",
+        "git_http_proxy", "git_https_proxy",
+    )
+    bad_tokens = ("127.0.0.1:9", "localhost:9")
+    removed: list[str] = []
+    for key in proxy_keys:
+        value = (os.environ.get(key) or "").strip()
+        if not value:
+            continue
+        v = value.lower()
+        if any(token in v for token in bad_tokens):
+            os.environ.pop(key, None)
+            removed.append(key)
+
+    if removed:
+        # Use stderr-safe print here because logger is not initialized yet.
+        print(f"[startup] removed broken proxy env: {', '.join(removed)}")
+
+
+_sanitize_broken_proxy_env()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

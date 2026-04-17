@@ -5,6 +5,7 @@ from app.schemas.user import UserCreate
 from app.core.hashing import get_password_hash, verify_password
 from datetime import datetime
 from typing import Optional
+import hashlib
 from app.core.logger import get_logger
 
 logger = get_logger(service="user_service")
@@ -43,8 +44,7 @@ class UserService:
 
     async def authenticate_user(self, email: str, password: str) -> Optional[User]:
         """
-        验证用户
-        password: 前端传来的 SHA256 哈希密码
+        验证用户（兼容明文密码与 SHA256 后密码两种前端实现）
         """
         query = select(User).where(User.email == email)
         result = await self.db.execute(query)
@@ -53,8 +53,18 @@ class UserService:
         if not user:
             logger.warning(f"User not found: {email}")
             return None
-            
-        if not verify_password(password, user.password_hash):
+
+        # Primary path: password is already SHA256 from frontend.
+        ok = verify_password(password, user.password_hash)
+        # Compatibility path: password is raw text; hash once and verify.
+        if not ok:
+            try:
+                sha_password = hashlib.sha256(password.encode("utf-8")).hexdigest()
+                ok = verify_password(sha_password, user.password_hash)
+            except Exception:  # noqa: BLE001
+                ok = False
+
+        if not ok:
             logger.warning(f"Invalid password for user: {email}")
             return None
             
