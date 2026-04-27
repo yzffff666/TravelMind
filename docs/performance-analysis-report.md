@@ -1,6 +1,6 @@
 # TravelMind 性能优化与技术选型综合分析报告
 
-> 版本：v5.0（+推荐引擎最佳实践 & 流水线智能执行策略） | 日期：2026-04-11 | 作者：TravelMind Dev Team
+> 版本：v5.1（联调复盘：证据覆盖、预算冲突、国内/海外地图稳定性） | 日期：2026-04-27 | 作者：TravelMind Dev Team
 
 ---
 
@@ -150,7 +150,7 @@ LLM 草案生成        ██████████████████�
 拆出 [extract_node]     ──→  顺手完成：P0 缺失提前退出
 拆出 [recall_node]      ──→  顺手完成：Provider 并行化
 拆出 [llm_draft_node]   ──→  顺手完成：流式生成 + max_tokens
-保留 [postprocess_node]  ──→  不变（原已足够快）
+强化 [postprocess_node]  ──→  证据链接、坐标回填、预算冲突校验、coverage 计算
 ```
 
 ### 2.4 方案选型与决策分析
@@ -367,6 +367,20 @@ event: final_itinerary            → 完整行程 + perf 指标
 | 性能回归测试 | `test_performance_regression.py` | 新建 | 222 行 |
 | E2E 性能测试脚本 | `test_e2e_performance.py` | 新建 | 134 行 |
 
+### 3.6 联调后增量修复（v5.1）
+
+本轮联调围绕“生成结果是否可用”而非单纯耗时展开，重点修复了 evidence、地图点位、预算冲突与海外地图渲染。
+
+| 方向 | 问题 | 修复 |
+|------|------|------|
+| 召回质量 | “亲子”偏好会召回亲子鉴定、旅行社等非旅行结果 | `recall_service.py` 增加偏好→POI 关键词扩展与非旅行候选过滤 |
+| 证据覆盖 | geo 匹配到地点但没有 `evidence_refs`，coverage 偏低 | `travel_draft_graph.py` 从 geo metadata 生成轻量 `EvidenceItem` 并挂到 slot |
+| 坐标回填 | LLM 生成的地点无坐标，地图点缺失 | `location_backfill_service.py` 对缺坐标 slot 做地图 POI 回填，并补 evidence |
+| 年份噪声 | `2026上海外灘悦榕莊` 等地点名影响 POI 匹配 | 坐标回填查询与 match normalize 去掉开头年份 |
+| 预算一致性 | “市中心住宿 + 低预算”未进入 conflicts | 后处理阶段增加规则校验，写入 `validation.conflicts` |
+| 海外地图空白 | 窄屏 tab 下 Leaflet 在隐藏容器初始化，切换后主体空白 | `MapPanel.vue` 在可见后 `invalidateSize()` 并重绘 |
+| 依赖缺失 | Windows 后端启动缺 `numpy` | `requirements.txt` 显式增加 `numpy>=1.26.0` |
+
 ---
 
 ## 4. Result — 实测效果
@@ -427,7 +441,26 @@ TestGraphConditionalRouting:    2/2 ✓
 
 > LLM 总生成时间由 DeepSeek 远程 API 决定，非本地可控。但流式输出 + 渐进渲染使用户感知等待从 ~75s 降至 ~8-15s。
 
-### 4.5 效果对比图
+### 4.5 v5.1 联调实测（Windows 环境）
+
+> 环境：Windows 本地后端 + Vue dev server，真实 DeepSeek / provider 路径，浏览器真实操作验证。
+
+| 用例 | 结果 | 关键指标 |
+|------|------|----------|
+| 上海 4 天，预算 6000，情侣，文化+美食 | 生成完整行程，行程页与高德地图可渲染 | 4 个 `day_ready`，最终覆盖率最高验证到 `1.0` |
+| 想去海边玩几天，轻松一点 | 正常进入澄清，不误生成行程 | 返回预算/天数追问 |
+| 北京 3 天，预算 1500，亲子，市中心+热门景点 | 完整生成并记录预算冲突 | coverage `0.7778`，`conflicts` 包含市中心住宿与低日均预算冲突 |
+| 普吉岛 5 天，预算 12000，情侣，海边+美食 | 海外地图切到 OpenStreetMap，底图、marker、路线可显示 | 修复前主体空白；修复后 `Overseas: OpenStreetMap` 正常显示 |
+
+**本轮联调结论**：
+
+- 国内地图链路不再是阻断项：上海/北京用例可生成点位并渲染地图。
+- 海外地图空白已定位并修复：根因是 Leaflet 在隐藏 tab 容器初始化导致尺寸错误。
+- coverage 从早期 `0.0~0.5` 提升到北京 `0.7778`、上海最高 `1.0`，主要收益来自 geo evidence 反挂与坐标回填。
+- 预算冲突从“隐性不一致”变为结构化 `validation.conflicts`，前端可直接展示。
+- 当前剩余问题转为质量与性能打磨：海外 POI 精度、fallback 坐标、backfill 时延。
+
+### 4.6 效果对比图
 
 ```
 端到端延迟 (秒)                                                       提升幅度
@@ -650,6 +683,18 @@ EMBEDDING_MODEL: str = "bge-m3"
 | 隐式依赖 | 1 | `langchain-openai` 未在 requirements.txt |
 | 版本风险 | 18+ | 宽松下界的 pip 包 |
 
+### 5.8 v5.1 新增质量与性能 Gap
+
+| Gap | 当前状态 | 影响 | 优先级 |
+|-----|----------|------|--------|
+| 海外 POI 精度 | 普吉岛部分地点仍可能 fallback 到城市中心，少数 POI 未匹配 | marker 可显示但位置不够准 | 高 |
+| 坐标回填时延 | `postprocess_ms` 在真实请求中接近 10s | 完整行程 E2E 被后处理拉长 | 高 |
+| Evidence URL 缺失 | 部分 map/search evidence 无 URL | 可追溯性降低，产生 assumption | 中 |
+| Provider 降级 | 海外场景可能出现 amap/mock 降级 | 数据质量不稳定 | 中 |
+| 召回噪声 | 上海/北京仍可能过滤到泛新闻、旅行社等噪声 | 影响候选质量与用户信任 | 中 |
+
+**优先处理建议**：先保证地图点位准确，再优化速度。海外地图已能显示，下一步应减少 fallback 坐标与跨区域误匹配，否则性能再快也会输出错误位置。
+
 ---
 
 ## 6. Next — 替代方案与迁移路径
@@ -669,12 +714,16 @@ EMBEDDING_MODEL: str = "bge-m3"
 | 1.7 | **L0 查询级缓存**：MD5(query+constraints) → 完整结果 | 6.5.2 | `travel_draft_graph.py` | 重复查询 <5ms |
 | 1.8 | **请求去重**：相同指纹 5s 内合并 | 6.5.5 | `travel.py` | 防重复提交 |
 | 1.9 | **变更字段检测**：extract_node 增加 diff 逻辑 | 6.5.3 | `travel_draft_graph.py` | 为局部复用铺路 |
+| 1.10 | **坐标回填并发与时延预算**：并发解析缺坐标 slot，按 day 优先级提前停止 | 5.8 | `location_backfill_service.py` | postprocess 约 10s → 3-5s |
+| 1.11 | **海外 POI 置信度校验**：按目的地 bbox / address / source 限制误匹配 | 5.8 | `location_backfill_service.py` | 降低海外错点和 fallback |
 
 **验证标准**：
 - 语义缓存 lookup：1000 条时 <10ms（当前 ~500ms）
 - 完全重复查询 <5ms（L0 命中）
 - LLM 偶发失败重试恢复率提升
 - 全量回归测试通过
+- 海外地图不空白，普吉岛 Day marker 在 OpenStreetMap 正常显示
+- 坐标回填不引入跨国家/跨城市误匹配
 
 ### Phase 2：轻量部署优化（预计 3 天）
 
@@ -1128,6 +1177,12 @@ cd llm_backend && py -X utf8 tests/test_e2e_performance.py
 • Embedding 硬绑定 → EmbeddingProvider 接口 + 多后端
 • 依赖版本宽松 → pip-compile lockfile
 • LangGraph 0.3.25 → 升级 0.3.x 最新
+
+v5.1 联调新增结论：
+• 地图阻断已解除：国内高德可用，海外 OpenStreetMap 空白已修复
+• coverage 明显改善：geo evidence 反挂后北京 0.7778、上海最高 1.0
+• 预算冲突可结构化暴露：市中心住宿 + 低预算进入 validation.conflicts
+• 下一步不是继续基础联调，而是做海外 POI 精度与 backfill 性能专项
 
 核心洞察（面试收尾金句）：
 • 降低 LLM 调用概率 > 优化 LLM 调用速度

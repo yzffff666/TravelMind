@@ -158,6 +158,7 @@
         :days="mapDays"
         :activeDayIndex="activeDayIndex"
         :activeSlotIndex="activeSlotIndex"
+        :visible="showMap"
         @selectDay="onMapSelectDay"
         @selectSlot="onMapSelectSlot"
       />

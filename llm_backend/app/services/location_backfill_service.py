@@ -5,9 +5,11 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
+from hashlib import md5
 
-from app.schemas.itinerary_v1 import ItineraryV1, Location
+from app.schemas.itinerary_v1 import EvidenceItem, ItineraryV1, Location
 from app.services.providers.base import MapProvider
 from app.services.providers.factory import build_registry
 
@@ -108,11 +110,12 @@ class LocationBackfillService:
             slot.location = Location(lat=resolved["lat"], lng=resolved["lng"])
             if resolved.get("image_url") and not slot.image_url:
                 slot.image_url = str(resolved["image_url"])
+            self._attach_evidence(itinerary, slot, place, resolved)
             report.filled += 1
 
         if report.filled:
             report.assumptions.append(
-                f"已对 {report.filled} 个缺失地点执行坐标回填，海外地点展示稳定性已提升。"
+                f"已对 {report.filled} 个缺失地点执行坐标回填，地图展示稳定性已提升。"
             )
         if report.unresolved:
             sample = "、".join(report.unresolved[:3])
@@ -207,9 +210,53 @@ class LocationBackfillService:
                     "lng": lng,
                     "image_url": candidate.extra.get("thumbnail") or (photos[0] if photos else None),
                     "provider": candidate.source,
+                    "title": candidate.title,
+                    "snippet": candidate.snippet,
+                    "address": candidate.extra.get("address"),
+                    "rating": candidate.extra.get("rating"),
+                    "cost_estimate": candidate.extra.get("cost_estimate"),
+                    "url": candidate.extra.get("url"),
+                    "candidate_id": candidate.candidate_id,
                 }
                 best_score = score
         return best
+
+    @staticmethod
+    def _attach_evidence(
+        itinerary: ItineraryV1,
+        slot,
+        place: str,
+        resolved: dict,
+    ) -> None:
+        provider = str(resolved.get("provider") or "map_backfill")
+        title = str(resolved.get("title") or place).strip()
+        candidate_id = str(
+            resolved.get("candidate_id")
+            or md5(f"{provider}:{title}".encode()).hexdigest()[:12]
+        )
+        evidence_id = f"ev-{candidate_id}"
+
+        if evidence_id not in {item.evidence_id for item in itinerary.evidence}:
+            snippet_parts = [
+                str(resolved.get("snippet") or "").strip(),
+                str(resolved.get("address") or "").strip(),
+            ]
+            snippet = " | ".join(part for part in snippet_parts if part) or None
+            itinerary.evidence.append(EvidenceItem(
+                evidence_id=evidence_id,
+                provider=provider,
+                source_type="map",
+                title=title or None,
+                url=resolved.get("url") or None,
+                snippet=snippet,
+                fetched_at=datetime.now(timezone.utc).isoformat(),
+                attribution="数据来源：地图 POI 回填",
+                confidence=0.7,
+                rating=float(resolved["rating"]) if resolved.get("rating") not in (None, "", 0) else None,
+                cost_estimate=float(resolved["cost_estimate"]) if resolved.get("cost_estimate") not in (None, "") else None,
+            ))
+        if evidence_id not in slot.evidence_refs:
+            slot.evidence_refs.append(evidence_id)
 
     def _build_variants(self, place: str, destination: str) -> list[str]:
         raw = (place or "").strip()
@@ -225,7 +272,10 @@ class LocationBackfillService:
         stripped = re.sub(r"[（(].*?[)）]", "", raw).strip()
         add(stripped)
 
-        simplified = stripped
+        temporal_prefix_stripped = re.sub(r"^(?:19|20)\d{2}\s*", "", stripped).strip()
+        add(temporal_prefix_stripped)
+
+        simplified = temporal_prefix_stripped
         for suffix in _TRIM_SUFFIXES:
             if simplified.endswith(suffix):
                 simplified = simplified[: -len(suffix)].strip()
@@ -259,6 +309,7 @@ class LocationBackfillService:
     def _normalize(value: str) -> str:
         value = value.lower().strip()
         value = re.sub(r"[（(].*?[)）]", "", value)
+        value = re.sub(r"^(?:19|20)\d{2}\s*", "", value)
         value = re.sub(r"附近餐厅|内餐厅|观景餐厅|购物中心|一日游行程", "", value)
         value = re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", value)
         return value

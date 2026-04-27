@@ -39,6 +39,7 @@ const props = defineProps<{
   days: ItineraryDay[]
   activeDayIndex: number
   activeSlotIndex?: number
+  visible?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -242,6 +243,7 @@ async function initLeaflet() {
     mapReady.value = true
     mapError.value = ''
     await nextTick()
+    mapInstance.invalidateSize?.()
     renderLeafletMarkers()
   } catch (e: any) {
     mapError.value = `海外地图加载失败: ${e.message || e}`
@@ -402,6 +404,7 @@ function renderLeafletMarkers() {
   }
 
   const bounds = leafletLib.latLngBounds(latLngs)
+  mapInstance.invalidateSize?.()
   mapInstance.fitBounds(bounds, { padding: [48, 48] })
 }
 
@@ -449,6 +452,13 @@ watch(
   () => props.days.map(d => `${d.day_index}:${d.slots.filter(s => s.location).length}`).join(','),
   () => { refreshMap() }
 )
+
+watch(() => props.visible, async (visible) => {
+  if (!visible) return
+  await nextTick()
+  mapInstance?.invalidateSize?.()
+  renderCurrentEngine()
+})
 
 onMounted(() => {
   refreshMap()

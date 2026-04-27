@@ -182,6 +182,45 @@ class TestFormatCandidates:
         assert _format_candidates_for_prompt(pr) == ""
 
 
+class TestBudgetValidation:
+    def test_central_hotel_budget_conflict_is_recorded(self):
+        from app.lg_agent.travel_draft_graph import _append_budget_validation
+        from app.schemas.itinerary_v1 import (
+            BudgetByCategory,
+            BudgetSummary,
+            ItineraryDay,
+            ItinerarySlot,
+            ItineraryV1,
+            TripProfile,
+        )
+
+        itinerary = ItineraryV1(
+            itinerary_id="it-1",
+            revision_id="rev-1",
+            trip_profile=TripProfile(destination_city="北京"),
+            days=[
+                ItineraryDay(
+                    day_index=1,
+                    slots=[ItinerarySlot(slot="上午", activity="参观故宫", place="故宫")],
+                )
+            ],
+            budget_summary=BudgetSummary(
+                total_estimate=1500,
+                by_category=BudgetByCategory(hotel=0),
+            ),
+        )
+
+        _append_budget_validation(
+            itinerary,
+            original_query="北京 3 天，预算 1500，亲子，想住市中心+热门景点",
+            requested_budget=1500,
+            requested_days=3,
+        )
+
+        assert any("市中心住宿" in c for c in itinerary.validation.conflicts)
+        assert any("缺少酒店费用" in c for c in itinerary.validation.conflicts)
+
+
 # ===================================================================
 # Node-level tests
 # ===================================================================
@@ -373,7 +412,7 @@ class TestPipelineIsActuallyCalled:
         with patch("app.services.providers.factory._get_key", return_value=None), \
              patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
             from app.lg_agent.travel_draft_graph import _get_pipeline, travel_draft_graph
-            qp, recall_svc, scorer, flt, eb = _get_pipeline()
+            qp, recall_svc, scorer, flt, eb, backfill = _get_pipeline()
 
             original_recall = recall_svc.recall_from_qp
 
@@ -660,6 +699,49 @@ class TestPostprocessUnit:
         assert itinerary.days[0].slots[0].evidence_refs == []
         assert itinerary.validation.coverage_score == 0.0
 
+    def test_geo_match_creates_evidence_ref(self):
+        """A matched geo candidate can create POI evidence even when evidence list is empty."""
+        from app.lg_agent.travel_draft_graph import _postprocess_with_pipeline
+        from app.schemas.itinerary_v1 import (
+            BudgetSummary,
+            ItineraryDay,
+            ItinerarySlot,
+            ItineraryV1,
+            TripProfile,
+        )
+        from app.services.evidence_builder import EvidenceBuilder, PipelineResult
+        from app.services.providers.base import ProviderCandidate
+        from app.services.ranking_scorer import ScoredCandidate
+
+        candidate = ProviderCandidate(
+            candidate_id="serp-gugong",
+            source="serp_map",
+            title="故宫博物院",
+            snippet="博物馆",
+            extra={"lat": 39.9163, "lng": 116.3972, "rating": 4.8, "address": "北京市东城区"},
+        )
+        pr = PipelineResult(
+            candidates=[ScoredCandidate(candidate=candidate, total_score=0.9)],
+            evidence=[],
+        )
+        itinerary = ItineraryV1(
+            itinerary_id="it-geo",
+            revision_id="rev-geo",
+            trip_profile=TripProfile(destination_city="北京"),
+            days=[ItineraryDay(
+                day_index=1,
+                slots=[ItinerarySlot(slot="下午", activity="游览故宫", place="故宫博物院")],
+            )],
+            budget_summary=BudgetSummary(total_estimate=1500),
+        )
+
+        _postprocess_with_pipeline(itinerary, pr, EvidenceBuilder())
+
+        assert itinerary.days[0].slots[0].evidence_refs == ["ev-serp-gugong"]
+        assert itinerary.days[0].slots[0].location is not None
+        assert itinerary.evidence[0].title == "故宫博物院"
+        assert itinerary.validation.coverage_score == 1.0
+
 
 class TestCandidateCapping:
     """Verify _MAX_CANDIDATES_IN_PROMPT caps injected candidates."""
@@ -719,7 +801,7 @@ class TestPipelineFailureGraceful:
         with patch("app.services.providers.factory._get_key", return_value=None), \
              patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
             from app.lg_agent.travel_draft_graph import _get_pipeline, travel_draft_graph
-            qp, recall_svc, scorer, flt, eb = _get_pipeline()
+            qp, recall_svc, scorer, flt, eb, backfill = _get_pipeline()
 
             async def broken_recall(*args, **kwargs):
                 raise ConnectionError("Network down")

@@ -14,7 +14,13 @@ from unittest.mock import patch
 
 from app.domain.travel.query_processor import TravelQueryProcessor
 from app.services.providers.call_policy import ProviderCallPolicy
-from app.services.recall_service import RecallResult, RecallService
+from app.services.providers.base import ProviderCandidate
+from app.services.recall_service import (
+    RecallResult,
+    RecallService,
+    _filter_non_travel_candidates,
+    _map_keywords,
+)
 
 
 def _run(coro):
@@ -121,6 +127,43 @@ class TestRecallSimple:
         ))
 
         assert len(result.candidates) > 0
+
+
+# ======================== Candidate hygiene ========================
+
+
+class TestRecallCandidateHygiene:
+    def test_preference_keywords_expand_to_poi_terms(self):
+        keywords = _map_keywords(["亲子", "文化"])
+        assert "亲子景点" in keywords
+        assert "儿童博物馆" in keywords
+        assert "文化景点" in keywords
+        assert "景点" in keywords
+
+    def test_filters_obvious_non_travel_candidates(self):
+        candidates = [
+            ProviderCandidate(
+                candidate_id="bad",
+                source="serp_map",
+                title="北京亲子鉴定中心",
+                snippet="珠宝评估师",
+            ),
+            ProviderCandidate(
+                candidate_id="good",
+                source="serp_map",
+                title="北京动物园",
+                snippet="适合亲子游玩的公园景点",
+            ),
+            ProviderCandidate(
+                candidate_id="agency",
+                source="serp_search",
+                title="北京亲子游优选旅行社",
+                snippet="带娃出行包车导游",
+            ),
+        ]
+        kept, assumptions = _filter_non_travel_candidates(candidates)
+        assert [c.title for c in kept] == ["北京动物园"]
+        assert assumptions
 
 
 # ======================== Edge cases ========================

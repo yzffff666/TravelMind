@@ -2,6 +2,8 @@ import json
 import re as _re
 import time
 import uuid
+from datetime import datetime, timezone
+from hashlib import md5
 from typing import Any, TypedDict
 
 from langchain_deepseek import ChatDeepSeek
@@ -29,6 +31,7 @@ from app.schemas.itinerary_v1 import (
     BudgetByCategory,
     BudgetSummary,
     CostBreakdown,
+    EvidenceItem,
     ItineraryDay,
     ItinerarySlot,
     ItineraryV1,
@@ -120,7 +123,7 @@ def _safe_coord(val: Any) -> float | None:
 def _build_candidate_geo_index(
     pipeline_result: PipelineResult,
 ) -> dict[str, dict]:
-    """Build a name→{lat, lng, image_url} lookup from pipeline candidates."""
+    """Build a name→candidate metadata lookup from pipeline candidates."""
     index: dict[str, dict] = {}
     for sc in pipeline_result.candidates:
         c = sc.candidate
@@ -138,6 +141,16 @@ def _build_candidate_geo_index(
             entry["lng"] = lng_f
         if image_url:
             entry["image_url"] = str(image_url)
+        entry.update({
+            "candidate_id": c.candidate_id,
+            "title": title,
+            "source": c.source,
+            "snippet": c.snippet,
+            "url": c.extra.get("url"),
+            "address": c.extra.get("address"),
+            "rating": c.extra.get("rating"),
+            "cost_estimate": c.extra.get("cost_estimate"),
+        })
         if entry:
             index[title.lower()] = entry
     return index
@@ -193,11 +206,61 @@ def _city_center_fallback(destination: str) -> tuple[float, float] | None:
     return None
 
 
+def _apply_city_center_fallback(itinerary: ItineraryV1) -> None:
+    """Fill remaining missing coordinates only after real POI backfill has run."""
+    destination = itinerary.trip_profile.destination_city or ""
+    fallback = _city_center_fallback(destination)
+    if not fallback:
+        return
+    from app.schemas.itinerary_v1 import Location
+    for day in itinerary.days:
+        for slot in day.slots:
+            if slot.location is None:
+                slot.location = Location(lat=fallback[0], lng=fallback[1])
+
+
+def _ensure_geo_evidence(
+    itinerary: ItineraryV1,
+    slot: ItinerarySlot,
+    geo: dict,
+) -> None:
+    """Attach a lightweight map/search evidence item when geo metadata matched a slot."""
+    if slot.evidence_refs:
+        return
+    title = str(geo.get("title") or slot.place or slot.activity or "").strip()
+    provider = str(geo.get("source") or "map_backfill")
+    candidate_id = str(geo.get("candidate_id") or md5(f"{provider}:{title}".encode()).hexdigest()[:12])
+    evidence_id = f"ev-{candidate_id}"
+
+    if evidence_id not in {item.evidence_id for item in itinerary.evidence}:
+        source_type = "map" if "map" in provider else "search"
+        snippet_parts = [str(geo.get("snippet") or "").strip(), str(geo.get("address") or "").strip()]
+        snippet = " | ".join(p for p in snippet_parts if p) or None
+        itinerary.evidence.append(EvidenceItem(
+            evidence_id=evidence_id,
+            provider=provider,
+            source_type=source_type,
+            title=title or None,
+            url=geo.get("url") or None,
+            snippet=snippet,
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            attribution="数据来源：地图 POI 回填" if source_type == "map" else "数据来源：搜索结果回填",
+            confidence=0.7 if source_type == "map" else 0.55,
+            rating=float(geo["rating"]) if geo.get("rating") not in (None, "", 0) else None,
+            cost_estimate=float(geo["cost_estimate"]) if geo.get("cost_estimate") not in (None, "") else None,
+        ))
+    slot.evidence_refs.append(evidence_id)
+
+
 def _postprocess_with_pipeline(
     itinerary: ItineraryV1,
     pipeline_result: PipelineResult | None,
     evidence_builder: EvidenceBuilder | None,
     recall_geo_index: dict | None = None,
+    *,
+    original_query: str = "",
+    requested_budget: float | None = None,
+    requested_days: int | None = None,
 ) -> None:
     """Attach pipeline evidence to itinerary, link refs per slot, compute coverage.
 
@@ -228,6 +291,7 @@ def _postprocess_with_pipeline(
                     slot.location = Location(lat=geo["lat"], lng=geo["lng"])
                 if "image_url" in geo and slot.image_url is None:
                     slot.image_url = geo["image_url"]
+                _ensure_geo_evidence(itinerary, slot, geo)
 
     existing = set(itinerary.validation.assumptions)
     for a in pipeline_result.assumptions:
@@ -235,15 +299,12 @@ def _postprocess_with_pipeline(
             itinerary.validation.assumptions.append(a)
             existing.add(a)
 
-    # 城市中心坐标兜底：slot 经过 geo 匹配仍无坐标时，用城市中心占位，前端地图不会空白
-    destination = itinerary.trip_profile.destination_city or ""
-    fallback = _city_center_fallback(destination)
-    if fallback:
-        from app.schemas.itinerary_v1 import Location
-        for day in itinerary.days:
-            for slot in day.slots:
-                if slot.location is None:
-                    slot.location = Location(lat=fallback[0], lng=fallback[1])
+    _append_budget_validation(
+        itinerary,
+        original_query=original_query,
+        requested_budget=requested_budget,
+        requested_days=requested_days,
+    )
 
     tracker = CoverageTracker()
     report = tracker.compute(itinerary)
@@ -254,6 +315,46 @@ def _postprocess_with_pipeline(
         f"coverage={report.coverage_score:.2f}, "
         f"meets_target={report.meets_target}"
     )
+
+
+def _append_budget_validation(
+    itinerary: ItineraryV1,
+    *,
+    original_query: str,
+    requested_budget: float | None,
+    requested_days: int | None,
+) -> None:
+    """Add budget conflict/assumption notes that should not be left to the LLM."""
+    query = original_query or ""
+    requested_budget = requested_budget or itinerary.budget_summary.total_estimate
+    requested_days = requested_days or len(itinerary.days) or 1
+    hotel_total = itinerary.budget_summary.by_category.hotel
+    asks_central_stay = (
+        ("市中心" in query or "核心区" in query)
+        and any(token in query for token in ("住", "住宿", "酒店"))
+    )
+
+    existing_conflicts = set(itinerary.validation.conflicts)
+    existing_assumptions = set(itinerary.validation.assumptions)
+
+    def add_conflict(text: str) -> None:
+        if text not in existing_conflicts:
+            itinerary.validation.conflicts.append(text)
+            existing_conflicts.add(text)
+
+    def add_assumption(text: str) -> None:
+        if text not in existing_assumptions:
+            itinerary.validation.assumptions.append(text)
+            existing_assumptions.add(text)
+
+    if asks_central_stay and (hotel_total is None or hotel_total <= 0):
+        add_conflict("用户要求市中心住宿，但预算明细缺少酒店费用，当前总预算可能被低估。")
+
+    if asks_central_stay and requested_budget / max(requested_days, 1) <= 600:
+        add_conflict("市中心住宿与当前低日均预算存在冲突，建议降低住宿区位要求或提高预算。")
+
+    if hotel_total is not None and hotel_total > requested_budget * 0.75:
+        add_assumption("酒店费用占总预算过高，餐饮、交通和门票预算可能不足。")
 
 
 # ---------------------------------------------------------------------------
@@ -534,6 +635,16 @@ async def recall_node(state: TravelDraftState) -> dict:
             if image_url:
                 entry["image_url"] = str(image_url)
             if entry:
+                entry.update({
+                    "candidate_id": c.candidate_id,
+                    "title": c.title,
+                    "source": c.source,
+                    "snippet": c.snippet,
+                    "url": c.extra.get("url"),
+                    "address": c.extra.get("address"),
+                    "rating": c.extra.get("rating"),
+                    "cost_estimate": c.extra.get("cost_estimate"),
+                })
                 recall_geo_index[title] = entry
 
         ranked = scorer.rank_from_qp(recall_result.candidates, qp_output, top_k=15)
@@ -680,7 +791,15 @@ async def postprocess_node(state: TravelDraftState) -> dict:
         eb = None
         backfill = None
     recall_geo = state.get("recall_geo_index") or {}
-    _postprocess_with_pipeline(itinerary, pipeline_result, eb, recall_geo)
+    _postprocess_with_pipeline(
+        itinerary,
+        pipeline_result,
+        eb,
+        recall_geo,
+        original_query=state.get("query", ""),
+        requested_budget=state.get("total_budget"),
+        requested_days=state.get("days_count"),
+    )
 
     if backfill is not None:
         report = await backfill.backfill_itinerary(itinerary)
@@ -689,6 +808,12 @@ async def postprocess_node(state: TravelDraftState) -> dict:
             if assumption not in existing:
                 itinerary.validation.assumptions.append(assumption)
                 existing.add(assumption)
+
+    _apply_city_center_fallback(itinerary)
+
+    tracker = CoverageTracker()
+    report = tracker.compute(itinerary)
+    itinerary.validation.coverage_score = report.coverage_score
 
     elapsed = (time.perf_counter() - t0) * 1000
     return {
