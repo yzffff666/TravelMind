@@ -67,6 +67,18 @@ _ADD_HINTS = ("增加", "加上", "添加", "插入", "新增")
 _REPLACE_HINTS = ("换成", "替换", "改成", "改为", "变成")
 _BUDGET_PATTERN = re.compile(r"预算[改调]?[成为到]?\s*(\d+)")
 _PREFERENCE_PATTERN = re.compile(r"偏好[改调]?[成为到]?\s*(.+?)(?:\s|$)")
+_PLACE_TRAILING_ACTIONS = (
+    "游玩",
+    "游览",
+    "参观",
+    "逛逛",
+    "逛",
+    "打卡",
+    "散步",
+    "用餐",
+    "吃饭",
+    "体验",
+)
 
 # 解析编辑操作
 def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
@@ -179,6 +191,7 @@ def apply_patch(
         "changed_days": sorted(changed_days),
         "diff_items": diff_items,
     }
+    _recompute_lightweight_coverage(itinerary)
 
     # 生成解释
     explanation_parts = []
@@ -236,6 +249,40 @@ def _extract_content_after_hints(text: str, hints: tuple[str, ...]) -> str:
     return ""
 
 
+def _infer_place_from_activity(activity: str) -> str | None:
+    place = (activity or "").strip(" ，,。")
+    place = re.sub(r"^(去|到|前往|游览|参观|逛|打卡|体验)", "", place).strip(" ，,。")
+    for suffix in _PLACE_TRAILING_ACTIONS:
+        if place.endswith(suffix) and len(place) > len(suffix):
+            place = place[: -len(suffix)].strip(" ，,。")
+            break
+    return place or None
+
+
+def _clear_slot_verification(slot: dict) -> None:
+    """After a manual replacement, old geo/evidence no longer verifies the new activity."""
+    slot.pop("transit", None)
+    slot.pop("location", None)
+    slot.pop("image_url", None)
+    slot.pop("cost_breakdown", None)
+    slot.pop("risk", None)
+    slot["alternatives"] = []
+    slot["evidence_refs"] = []
+
+
+def _recompute_lightweight_coverage(itinerary: dict) -> None:
+    slots = [
+        slot
+        for day in itinerary.get("days", [])
+        for slot in day.get("slots", [])
+    ]
+    if not slots:
+        return
+    covered = sum(1 for slot in slots if slot.get("evidence_refs"))
+    validation = itinerary.setdefault("validation", {})
+    validation["coverage_score"] = round(covered / len(slots), 4)
+
+
 def _fallback_replace(day: int | None, slot: str | None, text: str) -> PatchOp:
     clean = re.sub(r"第\s*\d+\s*天", "", text)
     for label in _SLOT_LABELS:
@@ -280,8 +327,8 @@ def _apply_replace(itinerary: dict, op: PatchOp, changed_days: set, diff_items: 
             old_activity = slot.get("activity", "")
             new_activity = op.payload.get("activity", old_activity)
             slot["activity"] = new_activity
-            if "place" in op.payload:
-                slot["place"] = op.payload["place"]
+            slot["place"] = op.payload.get("place") or _infer_place_from_activity(new_activity)
+            _clear_slot_verification(slot)
             diff_items.append(f"第{op.day_index}天{op.slot_label}：「{old_activity}」→「{new_activity}」")
         else:
             diff_items.append(f"未找到第{op.day_index}天的{op.slot_label}时段")
@@ -291,6 +338,8 @@ def _apply_replace(itinerary: dict, op: PatchOp, changed_days: set, diff_items: 
             old_activity = first_slot.get("activity", "")
             new_activity = op.payload.get("activity", old_activity)
             first_slot["activity"] = new_activity
+            first_slot["place"] = op.payload.get("place") or _infer_place_from_activity(new_activity)
+            _clear_slot_verification(first_slot)
             diff_items.append(f"第{op.day_index}天首个时段：「{old_activity}」→「{new_activity}」")
 
 

@@ -742,6 +742,50 @@ class TestPostprocessUnit:
         assert itinerary.evidence[0].title == "故宫博物院"
         assert itinerary.validation.coverage_score == 1.0
 
+    def test_geo_match_rejects_out_of_bounds_overseas_candidate(self):
+        """A same-name overseas POI should not inherit an obviously wrong cross-region coordinate."""
+        from app.lg_agent.travel_draft_graph import _postprocess_with_pipeline
+        from app.schemas.itinerary_v1 import (
+            BudgetSummary,
+            ItineraryDay,
+            ItinerarySlot,
+            ItineraryV1,
+            TripProfile,
+        )
+        from app.services.evidence_builder import EvidenceBuilder, PipelineResult
+        from app.services.providers.base import ProviderCandidate
+        from app.services.ranking_scorer import ScoredCandidate
+
+        candidate = ProviderCandidate(
+            candidate_id="karon-wrong",
+            source="serp_map",
+            title="卡伦海滩",
+            snippet="错误跨区域候选",
+            extra={"lat": 43.948993, "lng": 125.535557, "address": "中国吉林省长春市"},
+        )
+        pr = PipelineResult(
+            candidates=[ScoredCandidate(candidate=candidate, total_score=0.9)],
+            evidence=[],
+        )
+        itinerary = ItineraryV1(
+            itinerary_id="it-phuket",
+            revision_id="rev-phuket",
+            trip_profile=TripProfile(destination_city="普吉岛"),
+            days=[ItineraryDay(
+                day_index=1,
+                slots=[ItinerarySlot(slot="上午", activity="海滩散步", place="卡伦海滩")],
+            )],
+            budget_summary=BudgetSummary(total_estimate=12000),
+        )
+
+        _postprocess_with_pipeline(itinerary, pr, EvidenceBuilder())
+
+        slot = itinerary.days[0].slots[0]
+        assert slot.location is None
+        assert slot.evidence_refs == []
+        assert itinerary.evidence == []
+        assert itinerary.validation.coverage_score == 0.0
+
 
 class TestCandidateCapping:
     """Verify _MAX_CANDIDATES_IN_PROMPT caps injected candidates."""

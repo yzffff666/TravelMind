@@ -42,6 +42,14 @@ def test_qp_intent_edit():
         assert out["intent_detail"] == "edit_day"
 
 
+def test_qp_day_question_is_qa_not_edit():
+    processor = TravelQueryProcessor()
+    for query in ("第2天安排是什么？", "第1天几点出发?", "day 2 有什么安排？"):
+        out = processor.process(query)
+        assert out["intent"] == "qa"
+        assert out["intent_detail"] == "qa_local"
+
+
 def test_qp_intent_qa_evidence():
     processor = TravelQueryProcessor()
     for query in ("为什么推荐这个", "证据在哪", "来源链接"):

@@ -21,8 +21,11 @@ from app.lg_agent.travel_draft_graph import travel_draft_graph
 from app.lg_agent.utils import new_uuid
 from app.models.user import User
 from app.services.conversation_service import ConversationService
+from app.services.coverage_tracker import CoverageTracker
 from app.services.deepseek_service import DeepseekService
+from app.services.location_backfill_service import LocationBackfillService
 from app.services.travel_clarification_service import TravelClarificationService
+from app.schemas.itinerary_v1 import ItineraryV1
 
 router = APIRouter()
 logger = get_logger(service="travel_api")
@@ -30,6 +33,12 @@ logger = get_logger(service="travel_api")
 clarification_service = TravelClarificationService()
 # QP baseline：统一上游 query 与下游输入语义（T-M2-000a）。
 query_processor = TravelQueryProcessor()
+edit_backfill_service = LocationBackfillService(
+    max_slots_per_request=3,
+    max_variants_per_place=3,
+    provider_timeout_seconds=1.5,
+    total_budget_seconds=3.0,
+)
 
 # 构建SSE行
 def _build_sse_line(payload: object) -> str:
@@ -503,6 +512,22 @@ async def _stream_edit_result(
                 ),
             )
             return
+
+        try:
+            edited_model = ItineraryV1.model_validate(result.new_itinerary)
+            changed_days = result.change_summary.get("changed_days") or []
+            report = await edit_backfill_service.backfill_changed_days(edited_model, changed_days)
+            if report.assumptions:
+                existing = set(edited_model.validation.assumptions)
+                for assumption in report.assumptions:
+                    if assumption not in existing:
+                        edited_model.validation.assumptions.append(assumption)
+                        existing.add(assumption)
+            coverage = CoverageTracker().compute(edited_model)
+            edited_model.validation.coverage_score = coverage.coverage_score
+            result.new_itinerary = edited_model.model_dump(mode="json")
+        except Exception as enrich_err:  # noqa: BLE001
+            logger.warning(f"Edit backfill skipped: {enrich_err}")
 
         yield build_event_line(
             "edit_diff",

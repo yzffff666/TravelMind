@@ -42,6 +42,7 @@ from app.schemas.itinerary_v1 import (
 from app.services.constraint_filter import ConstraintFilter
 from app.services.coverage_tracker import CoverageTracker
 from app.services.evidence_builder import EvidenceBuilder, PipelineResult
+from app.services.geo_bounds import is_coord_within_destination
 from app.services.location_backfill_service import LocationBackfillService
 from app.services.ranking_scorer import RankingScorer
 from app.services.recall_service import RecallService
@@ -286,12 +287,19 @@ def _postprocess_with_pipeline(
 
             geo = _fuzzy_geo_lookup(geo_index, poi_name)
             if geo:
+                destination = itinerary.trip_profile.destination_city or ""
+                has_valid_geo = True
                 if "lat" in geo and "lng" in geo and slot.location is None:
-                    from app.schemas.itinerary_v1 import Location
-                    slot.location = Location(lat=geo["lat"], lng=geo["lng"])
+                    lat = float(geo["lat"])
+                    lng = float(geo["lng"])
+                    has_valid_geo = is_coord_within_destination(destination, lat, lng)
+                    if has_valid_geo:
+                        from app.schemas.itinerary_v1 import Location
+                        slot.location = Location(lat=lat, lng=lng)
                 if "image_url" in geo and slot.image_url is None:
                     slot.image_url = geo["image_url"]
-                _ensure_geo_evidence(itinerary, slot, geo)
+                if has_valid_geo:
+                    _ensure_geo_evidence(itinerary, slot, geo)
 
     existing = set(itinerary.validation.assumptions)
     for a in pipeline_result.assumptions:

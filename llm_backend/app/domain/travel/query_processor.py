@@ -89,10 +89,10 @@ class TravelQueryProcessor:
         if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.reset_hints):
             return "reset", "reset_all"
 
-        has_edit_signal = (
-            QP_RULES.edit_day_pattern.search(lower_q)
-            or any(self._contains_hint(query, lower_q, word) for word in QP_RULES.edit_hints)
-        )
+        has_edit_hint = any(self._contains_hint(query, lower_q, word) for word in QP_RULES.edit_hints)
+        has_day_ref = bool(QP_RULES.edit_day_pattern.search(lower_q))
+        is_question = bool(QP_RULES.qa_question_pattern.search(query))
+        has_edit_signal = has_edit_hint or (has_day_ref and not is_question)
         if has_edit_signal:
             constraints = self._extract_constraints(query)
             is_full_create = (
@@ -105,7 +105,7 @@ class TravelQueryProcessor:
 
         if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.evidence_qa_hints):
             return "qa", "qa_evidence"
-        if QP_RULES.qa_question_pattern.search(query):
+        if is_question:
             return "qa", "qa_local"
 
         constraints = self._extract_constraints(query)

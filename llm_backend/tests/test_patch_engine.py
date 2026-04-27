@@ -107,6 +107,13 @@ class TestParseEditOps:
 class TestApplyPatch:
     def test_replace_slot_success(self):
         it = _make_itinerary()
+        day1_original = next(d for d in it["days"] if d["day_index"] == 1)
+        am_original = next(s for s in day1_original["slots"] if s["slot"] == "上午")
+        am_original["location"] = {"lat": 31.2304, "lng": 121.4737}
+        am_original["image_url"] = "https://example.com/old.jpg"
+        am_original["evidence_refs"] = ["ev-old"]
+        am_original["cost_breakdown"] = {"transport": 10}
+        am_original["risk"] = {"level": "low", "text": "old"}
         ops = [PatchOp(op=PatchOpType.REPLACE_SLOT, day_index=1, slot_label="上午", payload={"activity": "去外滩"})]
         result = apply_patch(it, ops)
         assert result.success
@@ -115,6 +122,15 @@ class TestApplyPatch:
         day1 = next(d for d in result.new_itinerary["days"] if d["day_index"] == 1)
         am_slot = next(s for s in day1["slots"] if s["slot"] == "上午")
         assert am_slot["activity"] == "去外滩"
+        assert am_slot["place"] == "外滩"
+        assert "location" not in am_slot
+        assert "image_url" not in am_slot
+        assert "transit" not in am_slot
+        assert "cost_breakdown" not in am_slot
+        assert "risk" not in am_slot
+        assert am_slot["alternatives"] == []
+        assert am_slot["evidence_refs"] == []
+        assert result.new_itinerary["validation"]["coverage_score"] == 0.0
         assert 1 in result.change_summary["changed_days"]
         assert result.new_itinerary["base_revision_id"] == "rev-old-001"
 

@@ -1,6 +1,6 @@
 # TravelMind 性能优化与技术选型综合分析报告
 
-> 版本：v5.1（联调复盘：证据覆盖、预算冲突、国内/海外地图稳定性） | 日期：2026-04-27 | 作者：TravelMind Dev Team
+> 版本：v5.2（联调复盘：地图稳定性、中途修改、局部坐标回填） | 日期：2026-04-27 | 作者：TravelMind Dev Team
 
 ---
 
@@ -369,7 +369,7 @@ event: final_itinerary            → 完整行程 + perf 指标
 
 ### 3.6 联调后增量修复（v5.1）
 
-本轮联调围绕“生成结果是否可用”而非单纯耗时展开，重点修复了 evidence、地图点位、预算冲突与海外地图渲染。
+本轮联调围绕“生成结果是否可用”而非单纯耗时展开，重点修复了 evidence、地图点位、预算冲突、海外地图渲染与中途修改链路。
 
 | 方向 | 问题 | 修复 |
 |------|------|------|
@@ -379,6 +379,9 @@ event: final_itinerary            → 完整行程 + perf 指标
 | 年份噪声 | `2026上海外灘悦榕莊` 等地点名影响 POI 匹配 | 坐标回填查询与 match normalize 去掉开头年份 |
 | 预算一致性 | “市中心住宿 + 低预算”未进入 conflicts | 后处理阶段增加规则校验，写入 `validation.conflicts` |
 | 海外地图空白 | 窄屏 tab 下 Leaflet 在隐藏容器初始化，切换后主体空白 | `MapPanel.vue` 在可见后 `invalidateSize()` 并重绘 |
+| 中途修改误路由 | “第 2 天安排是什么？”被识别为 edit 而不是 QA | `query_processor.py` 对疑问句优先走 QA，避免误触 patch |
+| 编辑后脏数据 | 替换 slot 后旧坐标、旧 evidence、交通/费用继续挂在新活动上 | `patch_engine.py` 在 replace 后清理验证字段，并轻量重算 coverage |
+| 编辑后地图缺点 | 新替换地点缺坐标，前端地图只能显示旧点或空点 | `travel.py` 在 edit patch 后只对 changed day 缺坐标 slot 做局部 backfill，并重算 coverage |
 | 依赖缺失 | Windows 后端启动缺 `numpy` | `requirements.txt` 显式增加 `numpy>=1.26.0` |
 
 ---
@@ -451,6 +454,8 @@ TestGraphConditionalRouting:    2/2 ✓
 | 想去海边玩几天，轻松一点 | 正常进入澄清，不误生成行程 | 返回预算/天数追问 |
 | 北京 3 天，预算 1500，亲子，市中心+热门景点 | 完整生成并记录预算冲突 | coverage `0.7778`，`conflicts` 包含市中心住宿与低日均预算冲突 |
 | 普吉岛 5 天，预算 12000，情侣，海边+美食 | 海外地图切到 OpenStreetMap，底图、marker、路线可显示 | 修复前主体空白；修复后 `Overseas: OpenStreetMap` 正常显示 |
+| 上海行程中途修改：把第 2 天下安排换成东方明珠 | 返回 `edit_diff`，前端 diff card、滚动定位、高亮正常 | 旧 slot 的坐标/evidence/费用/风险清空，新 changed day 执行局部 backfill |
+| 第 2 天安排是什么？ | 正确走 QA 而非 edit | 返回 `final_text`，不修改 revision 和行程结构 |
 
 **本轮联调结论**：
 
@@ -458,7 +463,8 @@ TestGraphConditionalRouting:    2/2 ✓
 - 海外地图空白已定位并修复：根因是 Leaflet 在隐藏 tab 容器初始化导致尺寸错误。
 - coverage 从早期 `0.0~0.5` 提升到北京 `0.7778`、上海最高 `1.0`，主要收益来自 geo evidence 反挂与坐标回填。
 - 预算冲突从“隐性不一致”变为结构化 `validation.conflicts`，前端可直接展示。
-- 当前剩余问题转为质量与性能打磨：海外 POI 精度、fallback 坐标、backfill 时延。
+- 中途修改链路从“结构能改但验证数据可能脏”升级为“结构 patch + changed slot 局部回填 + coverage 重算”。
+- 当前剩余问题转为质量与性能打磨：海外 POI 精度、全量 backfill 并发、编辑链路更细粒度的 slot 级影响域。
 
 ### 4.6 效果对比图
 
@@ -688,12 +694,13 @@ EMBEDDING_MODEL: str = "bge-m3"
 | Gap | 当前状态 | 影响 | 优先级 |
 |-----|----------|------|--------|
 | 海外 POI 精度 | 普吉岛部分地点仍可能 fallback 到城市中心，少数 POI 未匹配 | marker 可显示但位置不够准 | 高 |
-| 坐标回填时延 | `postprocess_ms` 在真实请求中接近 10s | 完整行程 E2E 被后处理拉长 | 高 |
+| 坐标回填时延 | 创建行程的全量 backfill 仍可能接近 10s；编辑链路已改为 changed day 局部回填 | 完整行程 E2E 仍可能被后处理拉长；微调场景风险下降 | 高 |
+| 编辑影响域粒度 | 当前局部回填按 changed day 控制，还不是精确 slot 级 DAG refresh | 多 slot 同日修改可用，但未来复杂跨天/交通联动仍需影响域矩阵 | 中 |
 | Evidence URL 缺失 | 部分 map/search evidence 无 URL | 可追溯性降低，产生 assumption | 中 |
 | Provider 降级 | 海外场景可能出现 amap/mock 降级 | 数据质量不稳定 | 中 |
 | 召回噪声 | 上海/北京仍可能过滤到泛新闻、旅行社等噪声 | 影响候选质量与用户信任 | 中 |
 
-**优先处理建议**：先保证地图点位准确，再优化速度。海外地图已能显示，下一步应减少 fallback 坐标与跨区域误匹配，否则性能再快也会输出错误位置。
+**优先处理建议**：先保证地图点位准确，再优化速度。海外地图已能显示，编辑链路已有局部 backfill；下一步应把全量 backfill 做并发化，并将 edit 影响域从 day 级推进到 slot/route 级。
 
 ---
 
@@ -716,6 +723,7 @@ EMBEDDING_MODEL: str = "bge-m3"
 | 1.9 | **变更字段检测**：extract_node 增加 diff 逻辑 | 6.5.3 | `travel_draft_graph.py` | 为局部复用铺路 |
 | 1.10 | **坐标回填并发与时延预算**：并发解析缺坐标 slot，按 day 优先级提前停止 | 5.8 | `location_backfill_service.py` | postprocess 约 10s → 3-5s |
 | 1.11 | **海外 POI 置信度校验**：按目的地 bbox / address / source 限制误匹配 | 5.8 | `location_backfill_service.py` | 降低海外错点和 fallback |
+| 1.12 | **编辑局部回填深化**：从 changed day 升级到 changed slot + transit 影响域 | 5.8 / 6.5.3 | `patch_engine.py` / `travel.py` | 多轮微调稳定在秒级，并减少无关回填 |
 
 **验证标准**：
 - 语义缓存 lookup：1000 条时 <10ms（当前 ~500ms）
@@ -1178,11 +1186,12 @@ cd llm_backend && py -X utf8 tests/test_e2e_performance.py
 • 依赖版本宽松 → pip-compile lockfile
 • LangGraph 0.3.25 → 升级 0.3.x 最新
 
-v5.1 联调新增结论：
+v5.2 联调新增结论：
 • 地图阻断已解除：国内高德可用，海外 OpenStreetMap 空白已修复
 • coverage 明显改善：geo evidence 反挂后北京 0.7778、上海最高 1.0
 • 预算冲突可结构化暴露：市中心住宿 + 低预算进入 validation.conflicts
-• 下一步不是继续基础联调，而是做海外 POI 精度与 backfill 性能专项
+• 中途修改已补齐关键闭环：QA 不误判 edit，replace 清理旧验证数据，changed day 局部回填坐标/evidence
+• 下一步不是继续基础联调，而是做全量 backfill 并发、海外 POI 精度与 slot 级影响域专项
 
 核心洞察（面试收尾金句）：
 • 降低 LLM 调用概率 > 优化 LLM 调用速度

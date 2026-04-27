@@ -10,6 +10,7 @@ from difflib import SequenceMatcher
 from hashlib import md5
 
 from app.schemas.itinerary_v1 import EvidenceItem, ItineraryV1, Location
+from app.services.geo_bounds import is_coord_within_destination
 from app.services.providers.base import MapProvider
 from app.services.providers.factory import build_registry
 
@@ -80,17 +81,43 @@ class LocationBackfillService:
         self._min_match_score = min_match_score
 
     async def backfill_itinerary(self, itinerary: ItineraryV1) -> BackfillReport:
-        report = BackfillReport()
-        started = time.perf_counter()
-
         if not self._providers:
+            report = BackfillReport()
             report.assumptions.append("未配置真实地图数据源，缺失坐标无法回填。")
             return report
 
+        pending_slots = self._collect_pending_slots(itinerary)
+        return await self._backfill_slots(itinerary, pending_slots)
+
+    async def backfill_changed_days(
+        self,
+        itinerary: ItineraryV1,
+        changed_days: list[int],
+    ) -> BackfillReport:
+        if not self._providers:
+            report = BackfillReport()
+            report.assumptions.append("未配置真实地图数据源，缺失坐标无法回填。")
+            return report
+
+        changed = set(changed_days or [])
+        if not changed:
+            return BackfillReport()
+
+        pending_slots = [
+            slot
+            for day in itinerary.days
+            if day.day_index in changed
+            for slot in day.slots
+            if slot.location is None and (slot.place or slot.activity)
+        ][: self._max_slots_per_request]
+        return await self._backfill_slots(itinerary, pending_slots)
+
+    async def _backfill_slots(self, itinerary: ItineraryV1, pending_slots: list) -> BackfillReport:
+        report = BackfillReport()
+        started = time.perf_counter()
+
         destination_raw = itinerary.trip_profile.destination_city or ""
         destination = _DEST_ALIASES.get(destination_raw, destination_raw)
-
-        pending_slots = self._collect_pending_slots(itinerary)
 
         for slot in pending_slots:
             if time.perf_counter() - started >= self._total_budget_seconds:
@@ -161,14 +188,15 @@ class LocationBackfillService:
             if time.perf_counter() - started >= self._total_budget_seconds:
                 return None
 
-            cached = self._get_cache(variant)
+            cache_key = f"{destination.lower()}|{variant.lower()}"
+            cached = self._get_cache(cache_key)
             if cached is not None:
                 if cached:
                     return cached
                 continue
 
             resolved = await self._query_best_candidate(place, destination, variant)
-            self._set_cache(variant, resolved)
+            self._set_cache(cache_key, resolved)
             if resolved:
                 return resolved
         return None
@@ -199,8 +227,20 @@ class LocationBackfillService:
                 lng = self._to_float(candidate.extra.get("lng"))
                 if lat is None or lng is None:
                     continue
+                if not is_coord_within_destination(destination, lat, lng):
+                    logger.info(
+                        "Location backfill rejected out-of-bounds candidate %s for %s: %s,%s",
+                        candidate.title,
+                        destination,
+                        lat,
+                        lng,
+                    )
+                    continue
 
-                score = self._match_score(place, candidate.title or "", candidate.extra.get("address", ""))
+                score = max(
+                    self._match_score(place, candidate.title or "", candidate.extra.get("address", "")),
+                    self._match_score(variant, candidate.title or "", candidate.extra.get("address", "")),
+                )
                 if score < self._min_match_score or score <= best_score:
                     continue
 
