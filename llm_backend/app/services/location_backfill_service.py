@@ -71,6 +71,7 @@ class LocationBackfillService:
         provider_timeout_seconds: float = 2.5,
         total_budget_seconds: float = 8.0,
         min_match_score: float = 0.72,
+        max_concurrent_backfills: int = 4,
     ) -> None:
         registry = build_registry(include_mock_fallback=False)
         self._providers: list[MapProvider] = list(registry.map_providers)
@@ -79,6 +80,7 @@ class LocationBackfillService:
         self._provider_timeout_seconds = provider_timeout_seconds
         self._total_budget_seconds = total_budget_seconds
         self._min_match_score = min_match_score
+        self._max_concurrent_backfills = max(1, max_concurrent_backfills)
 
     async def backfill_itinerary(self, itinerary: ItineraryV1) -> BackfillReport:
         if not self._providers:
@@ -119,6 +121,7 @@ class LocationBackfillService:
         destination_raw = itinerary.trip_profile.destination_city or ""
         destination = _DEST_ALIASES.get(destination_raw, destination_raw)
 
+        jobs: list[tuple[object, str]] = []
         for slot in pending_slots:
             if time.perf_counter() - started >= self._total_budget_seconds:
                 report.assumptions.append("坐标回填已达到本次请求时延预算，剩余地点保留为空。")
@@ -128,8 +131,26 @@ class LocationBackfillService:
             if not place:
                 continue
             report.attempted += 1
+            jobs.append((slot, place))
 
-            resolved = await self._resolve_place(place, destination, started)
+        semaphore = asyncio.Semaphore(self._max_concurrent_backfills)
+
+        async def resolve_job(place: str) -> dict | None:
+            async with semaphore:
+                remaining = self._remaining_budget(started)
+                if remaining <= 0:
+                    return None
+                try:
+                    return await asyncio.wait_for(
+                        self._resolve_place(place, destination, started),
+                        timeout=remaining,
+                    )
+                except asyncio.TimeoutError:
+                    return None
+
+        results = await asyncio.gather(*(resolve_job(place) for _, place in jobs))
+
+        for (slot, place), resolved in zip(jobs, results):
             if not resolved:
                 report.unresolved.append(place)
                 continue
@@ -150,6 +171,9 @@ class LocationBackfillService:
                 f"仍有 {len(report.unresolved)} 个地点未匹配到可靠坐标，例如：{sample}。"
             )
         return report
+
+    def _remaining_budget(self, started: float) -> float:
+        return max(0.0, self._total_budget_seconds - (time.perf_counter() - started))
 
     def _collect_pending_slots(self, itinerary: ItineraryV1) -> list:
         """

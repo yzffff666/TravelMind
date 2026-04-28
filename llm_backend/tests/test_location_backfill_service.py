@@ -40,6 +40,30 @@ class FakeMapProvider:
         ])
 
 
+class SlowTrackingMapProvider:
+    name = "slow_tracking_map"
+
+    def __init__(self) -> None:
+        self.active = 0
+        self.max_active = 0
+
+    async def nearby_poi(self, *, city, keywords, top_k=20, context=None):
+        keyword = keywords[0] if keywords else ""
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        await asyncio.sleep(0.05)
+        self.active -= 1
+        return ProviderResponse(candidates=[
+            ProviderCandidate(
+                candidate_id=f"poi-{keyword}",
+                source=self.name,
+                title=keyword,
+                snippet=f"{city} {keyword}",
+                extra={"lat": 31.2, "lng": 121.4, "address": f"{city} {keyword}"},
+            )
+        ])
+
+
 def _service_with_fake_provider() -> LocationBackfillService:
     svc = LocationBackfillService.__new__(LocationBackfillService)
     svc._providers = [FakeMapProvider()]
@@ -48,6 +72,19 @@ def _service_with_fake_provider() -> LocationBackfillService:
     svc._provider_timeout_seconds = 1.0
     svc._total_budget_seconds = 5.0
     svc._min_match_score = 0.72
+    svc._max_concurrent_backfills = 4
+    return svc
+
+
+def _service_with_provider(provider, *, max_concurrent_backfills: int = 4) -> LocationBackfillService:
+    svc = LocationBackfillService.__new__(LocationBackfillService)
+    svc._providers = [provider]
+    svc._max_slots_per_request = 12
+    svc._max_variants_per_place = 2
+    svc._provider_timeout_seconds = 1.0
+    svc._total_budget_seconds = 5.0
+    svc._min_match_score = 0.72
+    svc._max_concurrent_backfills = max_concurrent_backfills
     return svc
 
 
@@ -125,3 +162,43 @@ def test_backfill_changed_days_only_updates_changed_slots():
     assert day1_slot.evidence_refs == []
     assert day2_slot.location is not None
     assert day2_slot.evidence_refs == ["ev-banyan-waitan"]
+
+
+def test_backfill_runs_with_bounded_concurrency():
+    _cache.clear()
+    provider = SlowTrackingMapProvider()
+    itinerary = ItineraryV1(
+        itinerary_id="it-concurrent",
+        revision_id="rev-concurrent",
+        trip_profile=TripProfile(destination_city="上海"),
+        days=[
+            ItineraryDay(
+                day_index=1,
+                slots=[
+                    ItinerarySlot(slot="上午", activity="游览", place="地点A"),
+                    ItinerarySlot(slot="下午", activity="游览", place="地点B"),
+                ],
+            ),
+            ItineraryDay(
+                day_index=2,
+                slots=[
+                    ItinerarySlot(slot="上午", activity="游览", place="地点C"),
+                    ItinerarySlot(slot="下午", activity="游览", place="地点D"),
+                ],
+            ),
+        ],
+        budget_summary=BudgetSummary(total_estimate=6000),
+    )
+
+    report = asyncio.run(
+        _service_with_provider(provider, max_concurrent_backfills=2).backfill_itinerary(itinerary)
+    )
+
+    assert provider.max_active == 2
+    assert report.attempted == 4
+    assert report.filled == 4
+    assert all(
+        slot.location is not None and slot.evidence_refs
+        for day in itinerary.days
+        for slot in day.slots
+    )
