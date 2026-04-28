@@ -128,7 +128,7 @@
                   </button>
                 </div>
                 <div class="right-buttons">
-                  <button class="tool-btn" @click="$refs.fileInput?.click()">
+                  <button class="tool-btn" @click="fileInput?.click()">
                     <div class="icon">📎</div>
                   </button>
                   <button 
@@ -242,7 +242,7 @@
                     </button>
                   </div>
                   <div class="right-buttons">
-                    <button class="tool-btn" @click="$refs.fileInput?.click()">
+                    <button class="tool-btn" @click="fileInput?.click()">
                       <div class="icon">📎</div>
                     </button>
                     <button 

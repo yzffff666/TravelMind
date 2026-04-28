@@ -216,7 +216,6 @@ const chatScrollRef = ref<HTMLElement | null>(null)
 const itineraryScrollRef = ref<HTMLElement | null>(null)
 const inputBarRef = ref<InstanceType<typeof InputBar> | null>(null)
 const timelineRef = ref<InstanceType<typeof ItineraryTimeline> | null>(null)
-const mapPanelRef = ref<InstanceType<typeof MapPanel> | null>(null)
 const activeDayIndex = ref(1)
 const activeSlotIndex = ref<number | undefined>(undefined)
 
@@ -405,7 +404,7 @@ const submitQuery = async (queryText: string) => {
             : '正在生成行程...'
         },
         onDayReady: (envelope) => {
-          partialDays.value.push(envelope.payload.day as ItineraryDay)
+          partialDays.value.push(envelope.payload.day as unknown as ItineraryDay)
         },
         onStageProgress: (envelope) => {
           const stage = envelope.payload.stage
@@ -421,7 +420,7 @@ const submitQuery = async (queryText: string) => {
         },
         onFinalItinerary: (envelope) => {
           phase.value = 'done'
-          itinerary.value = envelope.payload.itinerary as ItineraryResult
+          itinerary.value = envelope.payload.itinerary as unknown as ItineraryResult
           partialDays.value = []
           pipelineStatus.value = ''
           activeDayIndex.value = 1

@@ -2,6 +2,7 @@
 # Inject a stub that provides uuid7 via stdlib uuid so the app can start.
 import sys
 import os
+from datetime import datetime, timezone
 if sys.platform == "win32":
     import types
     import uuid
@@ -55,6 +56,7 @@ from app.api.chat import router as chat_router
 # logger 变量就被初始化为一个日志记录器实例。
 # 之后，便可以在当前文件中直接使用 logger.info()、logger.error() 等方法来记录日志，而不需要进行其他操作。
 logger = get_logger(service="main")
+APP_STARTED_AT = datetime.now(timezone.utc).isoformat()
 
 # 创建 FastAPI 应用实例
 app = FastAPI(title="TravelMind API")
@@ -80,7 +82,11 @@ app.include_router(chat_router)
 # 健康检查路由
 @app.get("/health")
 async def health_check():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "pid": os.getpid(),
+        "started_at": APP_STARTED_AT,
+    }
 
 # 最后挂载静态文件，并确保使用绝对路径
 STATIC_DIR = Path(__file__).parent / "static" / "dist"

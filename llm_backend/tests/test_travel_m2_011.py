@@ -19,7 +19,7 @@ from app.domain.travel.query_processor import TravelQueryProcessor
 
 def test_qp_intent_reset():
     processor = TravelQueryProcessor()
-    for query in ("重置", "重新开始", "清空行程", "从头开始"):
+    for query in ("重置", "重新开始", "清空行程", "从头开始", "reset", "restart"):
         out = processor.process(query)
         assert out["intent"] == "reset"
         assert out["intent_detail"] == "reset_all"

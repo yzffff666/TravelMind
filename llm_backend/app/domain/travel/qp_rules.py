@@ -38,7 +38,7 @@ QP_RULES = QPRules(
         "特种兵": "intensive",
     },
     edit_hints=("修改", "改", "调整", "换成", "替换", "删掉", "增加"),
-    reset_hints=("重置", "重新开始", "清空", "从头开始"),
+    reset_hints=("重置", "重新开始", "清空", "从头开始", "reset", "restart"),
     evidence_qa_hints=("为什么", "证据", "来源", "链接", "依据", "ref"),
     edit_day_pattern=re.compile(r"(第?\s*\d+\s*天|day\s*\d+)", re.IGNORECASE),
     qa_question_pattern=re.compile(r"[?？]|(几点|多久|开放|门票|交通|地址)"),
