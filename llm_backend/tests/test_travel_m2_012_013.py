@@ -13,6 +13,8 @@ import pytest
 
 from app.domain.travel.patch_engine import PatchOp, PatchOpType, apply_patch
 from app.domain.travel.sse_envelope import build_event_envelope, build_event_line
+from app.lg_agent.travel_draft_graph import _apply_city_center_fallback
+from app.schemas.itinerary_v1 import ItineraryV1
 
 
 def _make_itinerary() -> dict:
@@ -123,6 +125,23 @@ class TestEditDiffEvent:
                 break
         else:
             pytest.fail("No data line in final_itinerary event")
+
+    def test_city_center_fallback_keeps_edited_slot_mappable(self):
+        """When provider backfill is unavailable, edited slots still get destination fallback coordinates."""
+        it = _make_itinerary()
+        ops = [PatchOp(op=PatchOpType.REPLACE_SLOT, day_index=2, slot_label="下午", payload={"activity": "田子坊漫步"})]
+        result = apply_patch(it, ops)
+        edited = ItineraryV1.model_validate(result.new_itinerary)
+
+        day2 = next(d for d in edited.days if d.day_index == 2)
+        pm = next(s for s in day2.slots if s.slot == "下午")
+        assert pm.location is None
+
+        _apply_city_center_fallback(edited)
+
+        assert pm.location is not None
+        assert pm.location.lat == pytest.approx(31.2304)
+        assert pm.location.lng == pytest.approx(121.4737)
 
 
 # ---------- QA 回答（函数逻辑直接测试） ----------
