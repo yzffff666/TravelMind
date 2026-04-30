@@ -159,15 +159,16 @@ class SerpApiMapProvider(MapProvider):
             title = item.get("title", "")
             rating = item.get("rating", 0.0)
             coords = item.get("gps_coordinates", {})
+            type_value = item.get("type", "")
 
             candidates.append(
                 ProviderCandidate(
                     candidate_id=_candidate_id(title, city),
                     source=self.name,
                     title=title,
-                    snippet=item.get("description", item.get("type", "")),
+                    snippet=item.get("description", self._type_text(type_value)),
                     score=float(rating) / 5.0 if rating else 0.5,
-                    tags=self._type_to_tags(item.get("type", "")),
+                    tags=self._type_to_tags(type_value),
                     extra={
                         "address": item.get("address", ""),
                         "rating": rating,
@@ -184,15 +185,54 @@ class SerpApiMapProvider(MapProvider):
                 )
             )
 
+        # Exact POI queries often return a single place_results object instead
+        # of local_results; treat it as a valid map candidate.
+        place = data.get("place_results")
+        if not candidates and isinstance(place, dict):
+            title = place.get("title", "")
+            coords = place.get("gps_coordinates", {})
+            if title and coords:
+                rating = place.get("rating", 0.0)
+                type_value = place.get("type", "")
+                candidates.append(
+                    ProviderCandidate(
+                        candidate_id=_candidate_id(title, city),
+                        source=self.name,
+                        title=title,
+                        snippet=place.get("description", self._type_text(type_value)),
+                        score=float(rating) / 5.0 if rating else 0.5,
+                        tags=self._type_to_tags(type_value),
+                        extra={
+                            "address": place.get("address", ""),
+                            "rating": rating,
+                            "reviews_count": place.get("reviews", 0),
+                            "phone": place.get("phone", ""),
+                            "website": place.get("website", ""),
+                            "thumbnail": place.get("thumbnail") or place.get("serpapi_thumbnail", ""),
+                            "lat": coords.get("latitude"),
+                            "lng": coords.get("longitude"),
+                            "place_id": place.get("place_id", ""),
+                            "hours": place.get("hours", ""),
+                            "price": place.get("price", ""),
+                        },
+                    )
+                )
+
         if not candidates:
             return ProviderResponse(degraded=True)
 
         return ProviderResponse(candidates=candidates)
 
     @staticmethod
-    def _type_to_tags(type_str: str) -> list[str]:
+    def _type_text(type_value: object) -> str:
+        if isinstance(type_value, list):
+            return " ".join(str(item) for item in type_value)
+        return str(type_value or "")
+
+    @classmethod
+    def _type_to_tags(cls, type_value: object) -> list[str]:
         tags: list[str] = []
-        t = type_str.lower()
+        t = cls._type_text(type_value).lower()
         for kw, tag in [
             ("restaurant", "美食"), ("餐", "美食"), ("cafe", "咖啡"),
             ("hotel", "住宿"), ("酒店", "住宿"), ("hostel", "住宿"),
