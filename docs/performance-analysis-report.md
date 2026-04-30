@@ -1,6 +1,6 @@
 # TravelMind 性能优化与技术选型综合分析报告
 
-> 版本：v5.3（联调复盘：地图稳定性、中途修改、并发坐标回填） | 日期：2026-04-28 | 作者：TravelMind Dev Team
+> 版本：v5.4（真实 Provider 评测：海外 POI 精度、SerpAPI 解析、观测日志） | 日期：2026-04-29 | 作者：TravelMind Dev Team
 
 ---
 
@@ -385,6 +385,17 @@ event: final_itinerary            → 完整行程 + perf 指标
 | 全量回填偏串行 | 创建行程时缺坐标 slot 逐个查询，后处理可能拖慢最终结果 | `location_backfill_service.py` 增加有限并发回填，保留 provider timeout 与总时延预算 |
 | 依赖缺失 | Windows 后端启动缺 `numpy` | `requirements.txt` 显式增加 `numpy>=1.26.0` |
 
+### 3.7 真实 Provider 评测补充（v5.4）
+
+本轮从 mock/联调验证进一步推进到真实 Provider smoke，重点验证国内/海外 POI 坐标回填、跨区域误匹配和可观测性。
+
+| 方向 | 发现 | 修复 / 补强 |
+|------|------|-------------|
+| Provider 观测 | 仅能看到业务结果，难以定位是 Provider 慢、空结果还是回填失败 | 增加 `provider_call`、`location_backfill`、`itinerary_quality_summary` 三类结构化日志字段 |
+| 海外 POI 解析 | SerpAPI Google Maps 精确地点查询会返回 `place_results`，原实现只解析 `local_results`，导致有效坐标被当作空结果 | `serp_providers.py` 增加 `place_results` 解析，统一转为 `ProviderCandidate` |
+| 普吉岛别名 | “普吉老镇”中文查询无法稳定命中真实 POI | `location_backfill_service.py` 增加 `Old Phuket Town`、`Phuket Old Town` 别名 |
+| 评测资产 | 缺少固定海外样例和验收口径 | 新增真实 Provider 评测计划、海外 POI 精度回归样例、Provider 观测字段清单 |
+
 ---
 
 ## 4. Result — 实测效果
@@ -420,6 +431,17 @@ event: final_itinerary            → 完整行程 + perf 指标
 TestPerformanceBaseline:        6/6 ✓  (节点耗时 / perf 完整性 / TTFB / 早退)
 TestProviderParallelization:    1/1 ✓
 TestGraphConditionalRouting:    2/2 ✓
+```
+
+v5.4 增量回归：
+
+```
+======================== 22 passed in 7.65s ========================
+
+覆盖范围：
+- location backfill：年份噪声、海外 bbox、普吉老镇别名、changed days、有限并发
+- performance regression：节点耗时、perf 完整性、TTFB、条件路由、并行化
+- travel M2 edit/QA：edit_diff、final_itinerary、编辑后 fallback、QA 路由
 ```
 
 ### 4.3 架构优化效果
@@ -467,7 +489,25 @@ TestGraphConditionalRouting:    2/2 ✓
 - 中途修改链路从“结构能改但验证数据可能脏”升级为“结构 patch + changed slot 局部回填 + coverage 重算”。
 - 当前剩余问题转为质量与性能打磨：海外 POI 精度、全量 backfill 并发、编辑链路更细粒度的 slot 级影响域。
 
-### 4.6 效果对比图
+### 4.6 v5.4 真实 Provider smoke 结果
+
+> 评测方式：绕过 LLM 生成，直接构造 itinerary slots，调用真实 Map Provider + 坐标回填链路，验证 POI 是否能获得合理坐标与 evidence refs。
+
+| 样例 | 修复前 | 修复后 | 说明 |
+|------|--------|--------|------|
+| 上海：外滩 / 豫园 / 东方明珠 | 3/3 | 3/3 | 国内高德链路稳定 |
+| 北京：故宫 / 天坛 / 颐和园 | 3/3 | 3/3 | 国内 POI 坐标均可回填 |
+| 东京：浅草寺 / 涩谷 / 东京晴空塔 | 2/3 | 3/3 | `place_results` 解析后补齐涩谷 |
+| 大阪：环球影城 / 大阪城公园 / 道顿堀 | 0/3 | 3/3 | 精确地点查询从空结果恢复为有效坐标 |
+| 普吉岛：芭东海滩 / 普吉老镇 / 普吉国际机场 | 2/3 | 3/3 | 增加 Old Phuket Town / Phuket Old Town 别名 |
+
+**结论**：
+
+- 国内样例保持 6/6 可回填。
+- 海外前三组核心样例从 2/9 提升到 9/9。
+- 当前海外 POI 精度风险从“核心样例阻断”下降为“需要扩大城市与长尾地点覆盖”。
+
+### 4.7 效果对比图
 
 ```
 端到端延迟 (秒)                                                       提升幅度
@@ -694,14 +734,14 @@ EMBEDDING_MODEL: str = "bge-m3"
 
 | Gap | 当前状态 | 影响 | 优先级 |
 |-----|----------|------|--------|
-| 海外 POI 精度 | 普吉岛部分地点仍可能 fallback 到城市中心，少数 POI 未匹配 | marker 可显示但位置不够准 | 高 |
-| 坐标回填时延 | 创建行程的全量 backfill 已改为有限并发；仍需真实 provider 压测确认 P95 | 完整行程 E2E 后处理风险下降，但 provider 抖动仍会影响尾延迟 | 中 |
+| 海外 POI 精度 | 核心 smoke 已从 2/9 修复到 9/9；仍需扩展到巴黎、伦敦、新加坡、纽约等更多城市与长尾 POI | 核心演示链路不再阻断，长尾地点仍可能 fallback 或低置信度 | 中 |
+| 坐标回填时延 | 创建行程的全量 backfill 已改为有限并发，并已补 provider/backfill 结构化日志；仍需真实 provider P95 批量统计 | 完整行程 E2E 后处理风险下降，但 provider 抖动仍会影响尾延迟 | 中 |
 | 编辑影响域粒度 | 当前局部回填按 changed day 控制，还不是精确 slot 级 DAG refresh | 多 slot 同日修改可用，但未来复杂跨天/交通联动仍需影响域矩阵 | 中 |
 | Evidence URL 缺失 | 部分 map/search evidence 无 URL | 可追溯性降低，产生 assumption | 中 |
-| Provider 降级 | 海外场景可能出现 amap/mock 降级 | 数据质量不稳定 | 中 |
+| Provider 降级 | 已记录 `provider_call`、`location_backfill`、`itinerary_quality_summary`；下一步需做降级率汇总 | 数据质量可观测性提升，但尚未形成趋势报表 | 中 |
 | 召回噪声 | 上海/北京仍可能过滤到泛新闻、旅行社等噪声 | 影响候选质量与用户信任 | 中 |
 
-**优先处理建议**：全量 backfill 已完成有限并发，下一步应做真实 provider P95 压测，并继续减少海外 fallback 坐标与跨区域误匹配。
+**优先处理建议**：下一步应扩大真实 Provider 样例集，并基于新增结构化日志统计 P50/P95、fallback 触发率、bbox invalid 比例和 evidence/source 缺失率。
 
 ---
 
@@ -722,8 +762,8 @@ EMBEDDING_MODEL: str = "bge-m3"
 | 1.7 | **L0 查询级缓存**：MD5(query+constraints) → 完整结果 | 6.5.2 | `travel_draft_graph.py` | 重复查询 <5ms |
 | 1.8 | **请求去重**：相同指纹 5s 内合并 | 6.5.5 | `travel.py` | 防重复提交 |
 | 1.9 | **变更字段检测**：extract_node 增加 diff 逻辑 | 6.5.3 | `travel_draft_graph.py` | 为局部复用铺路 |
-| 1.10 | **坐标回填并发与时延预算**：并发解析缺坐标 slot，按 day 优先级提前停止 | 5.8 | `location_backfill_service.py` | 已实施，待真实 provider P95 验证 |
-| 1.11 | **海外 POI 置信度校验**：按目的地 bbox / address / source 限制误匹配 | 5.8 | `location_backfill_service.py` | 降低海外错点和 fallback |
+| 1.10 | **坐标回填并发与时延预算**：并发解析缺坐标 slot，按 day 优先级提前停止 | 5.8 | `location_backfill_service.py` | 已实施，已补结构化日志，待批量 P95 统计 |
+| 1.11 | **海外 POI 置信度校验**：按目的地 bbox / address / source 限制误匹配 | 5.8 | `location_backfill_service.py` / `serp_providers.py` | 核心 smoke 2/9→9/9，待扩展更多城市 |
 | 1.12 | **编辑局部回填深化**：从 changed day 升级到 changed slot + transit 影响域 | 5.8 / 6.5.3 | `patch_engine.py` / `travel.py` | 多轮微调稳定在秒级，并减少无关回填 |
 
 **验证标准**：
@@ -733,6 +773,7 @@ EMBEDDING_MODEL: str = "bge-m3"
 - 全量回归测试通过
 - 海外地图不空白，普吉岛 Day marker 在 OpenStreetMap 正常显示
 - 坐标回填不引入跨国家/跨城市误匹配
+- 真实 Provider smoke 核心样例达到 9/9，可通过日志定位降级原因
 
 ### Phase 2：轻量部署优化（预计 3 天）
 
@@ -1194,6 +1235,14 @@ v5.3 联调新增结论：
 • 中途修改已补齐关键闭环：QA 不误判 edit，replace 清理旧验证数据，changed day 局部回填坐标/evidence
 • 全量 backfill 已支持有限并发和总时延预算，后处理尾延迟风险下降
 • 下一步不是继续基础联调，而是做真实 provider P95 压测、海外 POI 精度与 slot 级影响域专项
+
+v5.4 真实 Provider 评测新增结论：
+• Provider 观测补齐：新增 provider_call / location_backfill / itinerary_quality_summary 结构化日志
+• SerpAPI 精确地点解析修复：支持 google_maps 返回 place_results，避免有效 POI 被误判为空
+• 海外 POI smoke：东京/大阪/普吉岛三组核心样例从 2/9 提升到 9/9
+• 国内 POI smoke：上海/北京核心样例 6/6 可回填，国内链路保持稳定
+• 回归测试：location backfill + performance + edit/QA 共 22 项通过
+• 下一步重点从“核心海外样例阻断”转为“扩展长尾城市、统计 P95/fallback 率、前端展示低置信度提示”
 
 核心洞察（面试收尾金句）：
 • 降低 LLM 调用概率 > 优化 LLM 调用速度
