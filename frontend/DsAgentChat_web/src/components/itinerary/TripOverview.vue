@@ -1,33 +1,39 @@
 <template>
-  <section class="trip-overview fade-in">
+  <GlassCard class="trip-overview fade-in">
     <div class="ov-header">
-      <svg class="ov-icon" width="20" height="20" viewBox="0 0 24 24" fill="none">
-        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="currentColor" stroke-width="1.5"/>
-        <circle cx="12" cy="9" r="2.5" stroke="currentColor" stroke-width="1.5"/>
-      </svg>
-      <h3 class="ov-city">{{ profile.destination_city }}</h3>
+      <div class="ov-icon-wrap" aria-hidden="true">
+        <svg class="ov-icon" width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="currentColor" stroke-width="1.5"/>
+          <circle cx="12" cy="9" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+      </div>
+      <div class="ov-title">
+        <span class="ov-kicker">Trip overview</span>
+        <h3 class="ov-city">{{ profile.destination_city }}</h3>
+      </div>
     </div>
     <div class="ov-tags">
-      <span
+      <StatusBadge
         v-if="profile.constraints?.traveler_type"
-        class="tag tag-accent"
-      >{{ profile.constraints.traveler_type }}</span>
-      <span class="tag">{{ dayCount }} 天</span>
-      <span
+        tone="info"
+      >{{ profile.constraints.traveler_type }}</StatusBadge>
+      <StatusBadge tone="success">{{ dayCount }} 天</StatusBadge>
+      <StatusBadge
         v-if="profile.constraints?.budget_range"
-        class="tag"
-      >{{ profile.constraints.budget_range }}</span>
+        tone="neutral"
+      >{{ profile.constraints.budget_range }}</StatusBadge>
       <span
         v-for="pref in (profile.constraints?.preferences || [])"
         :key="pref"
-        class="tag tag-warm"
+        class="pref-chip"
       >{{ pref }}</span>
     </div>
-  </section>
+  </GlassCard>
 </template>
 
 <script setup lang="ts">
 import type { TripProfile } from '../../types/itinerary'
+import { GlassCard, StatusBadge } from '../ui'
 
 defineProps<{
   profile: TripProfile
@@ -37,56 +43,72 @@ defineProps<{
 
 <style scoped>
 .trip-overview {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  padding: 18px;
+  padding: var(--tm-space-5);
   margin-bottom: 16px;
 }
 
 .ov-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: var(--tm-space-3);
+  margin-bottom: var(--tm-space-4);
 }
 
-.ov-icon { color: var(--accent); flex-shrink: 0; }
+.ov-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 1px solid var(--tm-color-border);
+  border-radius: var(--tm-radius-lg);
+  background: var(--tm-color-primary-soft);
+  color: var(--tm-color-cyan);
+}
+
+.ov-icon { flex-shrink: 0; }
+
+.ov-title {
+  min-width: 0;
+}
+
+.ov-kicker {
+  display: block;
+  margin-bottom: var(--tm-space-1);
+  color: var(--tm-color-text-muted);
+  font-size: var(--tm-font-size-xs);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
 
 .ov-city {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
+  color: var(--tm-color-text-primary);
+  font-size: var(--tm-font-size-xl);
+  font-weight: 800;
   letter-spacing: -0.01em;
+  line-height: var(--tm-line-height-tight);
 }
 
 .ov-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--tm-space-2);
 }
 
-.tag {
+.pref-chip {
   display: inline-flex;
-  padding: 3px 10px;
-  font-size: 11px;
-  font-weight: 500;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.05);
-  color: var(--text-sec);
-  border: 1px solid var(--border);
-}
-
-.tag-accent {
-  background: var(--accent-soft);
-  color: #7dd3fc;
-  border-color: rgba(14, 165, 233, 0.2);
-}
-
-.tag-warm {
-  background: var(--accent-warm-soft);
-  color: #fde68a;
-  border-color: rgba(245, 158, 11, 0.2);
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--tm-space-3);
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  border-radius: var(--tm-radius-pill);
+  background: rgba(251, 191, 36, 0.1);
+  color: var(--tm-color-warning);
+  font-size: var(--tm-font-size-xs);
+  font-weight: 700;
 }
 
 .fade-in { animation: fadeIn 0.4s ease-out both; }
