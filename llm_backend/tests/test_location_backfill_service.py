@@ -134,6 +134,15 @@ def test_backfill_rejects_cross_region_overseas_candidate():
     assert slot.evidence_refs == ["ev-karon-right"]
 
 
+def test_backfill_builds_phuket_old_town_aliases():
+    svc = _service_with_fake_provider()
+
+    variants = svc._build_variants("普吉老镇", "Phuket")
+
+    assert "Old Phuket Town" in variants
+    assert "Phuket Old Town" in variants
+
+
 def test_backfill_changed_days_only_updates_changed_slots():
     _cache.clear()
     itinerary = ItineraryV1(

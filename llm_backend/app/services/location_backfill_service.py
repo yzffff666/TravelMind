@@ -27,6 +27,7 @@ _PLACE_ALIASES = {
     "芭东海滩": ["Patong Beach"],
     "卡塔海滩": ["Kata Beach"],
     "卡伦海滩": ["Karon Beach"],
+    "普吉老镇": ["Old Phuket Town", "Phuket Old Town"],
 }
 
 _DEST_ALIASES = {
