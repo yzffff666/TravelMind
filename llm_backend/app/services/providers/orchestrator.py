@@ -40,6 +40,9 @@ def _cache_key(query: str, city: str, keywords: list[str] | None) -> str:
 class _ProviderOutcome:
     """Result of a single parallel provider call."""
     provider_name: str
+    provider_kind: str
+    elapsed_ms: float
+    result_count: int = 0
     response: ProviderResponse | None = None
     error_code: ProviderErrorCode | None = None
     error_message: str = ""
@@ -157,6 +160,7 @@ class ProviderOrchestrator:
         query: str,
         context: ProviderCallContext | None,
     ) -> _ProviderOutcome:
+        started = time.perf_counter()
         try:
             resp = await asyncio.wait_for(
                 provider.search(
@@ -166,16 +170,62 @@ class ProviderOrchestrator:
                 ),
                 timeout=self._policy.timeout_seconds,
             )
-            return _ProviderOutcome(provider_name=provider.name, response=resp)
-        except asyncio.TimeoutError:
+            elapsed_ms = self._elapsed_ms(started)
+            self._log_provider_call(
+                provider_name=provider.name,
+                provider_kind="search",
+                destination=None,
+                query=query,
+                elapsed_ms=elapsed_ms,
+                status="success",
+                result_count=len(resp.candidates),
+                context=context,
+                degraded=resp.degraded,
+            )
             return _ProviderOutcome(
                 provider_name=provider.name,
+                provider_kind="search",
+                elapsed_ms=elapsed_ms,
+                result_count=len(resp.candidates),
+                response=resp,
+            )
+        except asyncio.TimeoutError:
+            elapsed_ms = self._elapsed_ms(started)
+            self._log_provider_call(
+                provider_name=provider.name,
+                provider_kind="search",
+                destination=None,
+                query=query,
+                elapsed_ms=elapsed_ms,
+                status="timeout",
+                context=context,
+                error_type="TimeoutError",
+                degraded=True,
+            )
+            return _ProviderOutcome(
+                provider_name=provider.name,
+                provider_kind="search",
+                elapsed_ms=elapsed_ms,
                 error_code=ProviderErrorCode.TIMEOUT,
                 error_message="搜索服务超时",
             )
         except Exception as exc:  # noqa: BLE001
+            elapsed_ms = self._elapsed_ms(started)
+            self._log_provider_call(
+                provider_name=provider.name,
+                provider_kind="search",
+                destination=None,
+                query=query,
+                elapsed_ms=elapsed_ms,
+                status="error",
+                context=context,
+                error_type=type(exc).__name__,
+                degraded=True,
+            )
             return _ProviderOutcome(
                 provider_name=provider.name,
+                provider_kind="search",
+                elapsed_ms=elapsed_ms,
                 error_code=ProviderErrorCode.UNKNOWN,
                 error_message=str(exc),
             )
@@ -187,6 +237,7 @@ class ProviderOrchestrator:
         keywords: list[str],
         context: ProviderCallContext | None,
     ) -> _ProviderOutcome:
+        started = time.perf_counter()
         try:
             resp = await asyncio.wait_for(
                 provider.nearby_poi(
@@ -197,16 +248,62 @@ class ProviderOrchestrator:
                 ),
                 timeout=self._policy.timeout_seconds,
             )
-            return _ProviderOutcome(provider_name=provider.name, response=resp)
-        except asyncio.TimeoutError:
+            elapsed_ms = self._elapsed_ms(started)
+            self._log_provider_call(
+                provider_name=provider.name,
+                provider_kind="map",
+                destination=city,
+                query=" ".join(keywords),
+                elapsed_ms=elapsed_ms,
+                status="success",
+                result_count=len(resp.candidates),
+                context=context,
+                degraded=resp.degraded,
+            )
             return _ProviderOutcome(
                 provider_name=provider.name,
+                provider_kind="map",
+                elapsed_ms=elapsed_ms,
+                result_count=len(resp.candidates),
+                response=resp,
+            )
+        except asyncio.TimeoutError:
+            elapsed_ms = self._elapsed_ms(started)
+            self._log_provider_call(
+                provider_name=provider.name,
+                provider_kind="map",
+                destination=city,
+                query=" ".join(keywords),
+                elapsed_ms=elapsed_ms,
+                status="timeout",
+                context=context,
+                error_type="TimeoutError",
+                degraded=True,
+            )
+            return _ProviderOutcome(
+                provider_name=provider.name,
+                provider_kind="map",
+                elapsed_ms=elapsed_ms,
                 error_code=ProviderErrorCode.TIMEOUT,
                 error_message="地图服务超时",
             )
         except Exception as exc:  # noqa: BLE001
+            elapsed_ms = self._elapsed_ms(started)
+            self._log_provider_call(
+                provider_name=provider.name,
+                provider_kind="map",
+                destination=city,
+                query=" ".join(keywords),
+                elapsed_ms=elapsed_ms,
+                status="error",
+                context=context,
+                error_type=type(exc).__name__,
+                degraded=True,
+            )
             return _ProviderOutcome(
                 provider_name=provider.name,
+                provider_kind="map",
+                elapsed_ms=elapsed_ms,
                 error_code=ProviderErrorCode.UNKNOWN,
                 error_message=str(exc),
             )
@@ -247,6 +344,43 @@ class ProviderOrchestrator:
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _elapsed_ms(started: float) -> float:
+        return round((time.perf_counter() - started) * 1000, 2)
+
+    def _log_provider_call(
+        self,
+        *,
+        provider_name: str,
+        provider_kind: str,
+        destination: str | None,
+        query: str,
+        elapsed_ms: float,
+        status: str,
+        context: ProviderCallContext | None,
+        result_count: int = 0,
+        error_type: str = "",
+        degraded: bool = False,
+    ) -> None:
+        logger.info(
+            "provider_call %s",
+            {
+                "event_type": "provider_call",
+                "request_id": context.request_id if context else None,
+                "conversation_id": context.conversation_id if context else None,
+                "provider_name": provider_name,
+                "provider_kind": provider_kind,
+                "destination": destination,
+                "query": query,
+                "timeout_ms": int(self._policy.timeout_seconds * 1000),
+                "elapsed_ms": elapsed_ms,
+                "status": status,
+                "result_count": result_count,
+                "error_type": error_type,
+                "degraded": degraded,
+            },
+        )
 
     @staticmethod
     def _merge_response(

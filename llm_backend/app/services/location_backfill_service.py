@@ -86,6 +86,7 @@ class LocationBackfillService:
         if not self._providers:
             report = BackfillReport()
             report.assumptions.append("未配置真实地图数据源，缺失坐标无法回填。")
+            self._log_backfill_summary(itinerary, report, elapsed_ms=0.0)
             return report
 
         pending_slots = self._collect_pending_slots(itinerary)
@@ -99,6 +100,7 @@ class LocationBackfillService:
         if not self._providers:
             report = BackfillReport()
             report.assumptions.append("未配置真实地图数据源，缺失坐标无法回填。")
+            self._log_backfill_summary(itinerary, report, elapsed_ms=0.0)
             return report
 
         changed = set(changed_days or [])
@@ -121,7 +123,7 @@ class LocationBackfillService:
         destination_raw = itinerary.trip_profile.destination_city or ""
         destination = _DEST_ALIASES.get(destination_raw, destination_raw)
 
-        jobs: list[tuple[object, str]] = []
+        jobs: list[tuple[object, str, int | None]] = []
         for slot in pending_slots:
             if time.perf_counter() - started >= self._total_budget_seconds:
                 report.assumptions.append("坐标回填已达到本次请求时延预算，剩余地点保留为空。")
@@ -131,7 +133,7 @@ class LocationBackfillService:
             if not place:
                 continue
             report.attempted += 1
-            jobs.append((slot, place))
+            jobs.append((slot, place, self._find_day_index(itinerary, slot)))
 
         semaphore = asyncio.Semaphore(self._max_concurrent_backfills)
 
@@ -148,11 +150,21 @@ class LocationBackfillService:
                 except asyncio.TimeoutError:
                     return None
 
-        results = await asyncio.gather(*(resolve_job(place) for _, place in jobs))
+        results = await asyncio.gather(*(resolve_job(place) for _, place, _ in jobs))
 
-        for (slot, place), resolved in zip(jobs, results):
+        for (slot, place, day_index), resolved in zip(jobs, results):
             if not resolved:
                 report.unresolved.append(place)
+                self._log_location_backfill(
+                    itinerary=itinerary,
+                    slot=slot,
+                    place=place,
+                    destination=destination,
+                    day_index=day_index,
+                    resolved=None,
+                    elapsed_ms=self._elapsed_ms(started),
+                    fallback_reason="provider_empty_or_timeout",
+                )
                 continue
 
             slot.location = Location(lat=resolved["lat"], lng=resolved["lng"])
@@ -160,6 +172,15 @@ class LocationBackfillService:
                 slot.image_url = str(resolved["image_url"])
             self._attach_evidence(itinerary, slot, place, resolved)
             report.filled += 1
+            self._log_location_backfill(
+                itinerary=itinerary,
+                slot=slot,
+                place=place,
+                destination=destination,
+                day_index=day_index,
+                resolved=resolved,
+                elapsed_ms=self._elapsed_ms(started),
+            )
 
         if report.filled:
             report.assumptions.append(
@@ -170,6 +191,7 @@ class LocationBackfillService:
             report.assumptions.append(
                 f"仍有 {len(report.unresolved)} 个地点未匹配到可靠坐标，例如：{sample}。"
             )
+        self._log_backfill_summary(itinerary, report, elapsed_ms=self._elapsed_ms(started))
         return report
 
     def _remaining_budget(self, started: float) -> float:
@@ -281,9 +303,105 @@ class LocationBackfillService:
                     "cost_estimate": candidate.extra.get("cost_estimate"),
                     "url": candidate.extra.get("url"),
                     "candidate_id": candidate.candidate_id,
+                    "match_score": score,
                 }
                 best_score = score
         return best
+
+    @staticmethod
+    def _find_day_index(itinerary: ItineraryV1, target_slot) -> int | None:
+        for day in itinerary.days:
+            if any(slot is target_slot for slot in day.slots):
+                return day.day_index
+        return None
+
+    @staticmethod
+    def _elapsed_ms(started: float) -> float:
+        return round((time.perf_counter() - started) * 1000, 2)
+
+    def _log_location_backfill(
+        self,
+        *,
+        itinerary: ItineraryV1,
+        slot,
+        place: str,
+        destination: str,
+        day_index: int | None,
+        resolved: dict | None,
+        elapsed_ms: float,
+        fallback_reason: str = "",
+    ) -> None:
+        lat = resolved.get("lat") if resolved else None
+        lng = resolved.get("lng") if resolved else None
+        bbox_valid = (
+            is_coord_within_destination(destination, lat, lng)
+            if lat is not None and lng is not None
+            else False
+        )
+        match_score = float(resolved.get("match_score") or 0.0) if resolved else 0.0
+        logger.info(
+            "location_backfill %s",
+            {
+                "event_type": "location_backfill",
+                "itinerary_id": itinerary.itinerary_id,
+                "revision_id": itinerary.revision_id,
+                "day_index": day_index,
+                "slot_label": getattr(slot, "slot", None),
+                "activity": getattr(slot, "activity", None),
+                "destination": destination,
+                "candidate_title": resolved.get("title") if resolved else None,
+                "lat": lat,
+                "lng": lng,
+                "source": "provider" if resolved else "unresolved",
+                "confidence": self._confidence_label(match_score) if resolved else "low",
+                "elapsed_ms": elapsed_ms,
+                "fallback_reason": fallback_reason,
+                "bbox_valid": bbox_valid,
+            },
+        )
+
+    @staticmethod
+    def _confidence_label(match_score: float) -> str:
+        if match_score >= 0.9:
+            return "high"
+        if match_score >= 0.8:
+            return "medium"
+        return "low"
+
+    @staticmethod
+    def _log_backfill_summary(
+        itinerary: ItineraryV1,
+        report: BackfillReport,
+        *,
+        elapsed_ms: float,
+    ) -> None:
+        total_slots = sum(len(day.slots) for day in itinerary.days)
+        slots_with_location = sum(
+            1
+            for day in itinerary.days
+            for slot in day.slots
+            if slot.location is not None
+        )
+        logger.info(
+            "itinerary_quality_summary %s",
+            {
+                "event_type": "itinerary_quality_summary",
+                "itinerary_id": itinerary.itinerary_id,
+                "revision_id": itinerary.revision_id,
+                "destination": itinerary.trip_profile.destination_city,
+                "days_count": len(itinerary.days),
+                "total_slots": total_slots,
+                "slots_with_location": slots_with_location,
+                "fallback_slots": 0,
+                "bbox_invalid_slots": 0,
+                "coverage_score": itinerary.validation.coverage_score,
+                "backfill_elapsed_ms": elapsed_ms,
+                "backfill_attempted": report.attempted,
+                "backfill_filled": report.filled,
+                "backfill_unresolved": len(report.unresolved),
+                "degraded": bool(report.unresolved),
+            },
+        )
 
     @staticmethod
     def _attach_evidence(
