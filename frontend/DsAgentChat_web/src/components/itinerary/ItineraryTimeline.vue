@@ -9,7 +9,9 @@
       :style="{ animationDelay: `${dayIdx * 0.12}s` }"
     >
       <div class="day-hdr">
-        <span class="day-num">第 {{ day.day_index }} 天</span>
+        <StatusBadge :tone="changedDays?.includes(day.day_index) ? 'success' : 'info'">
+          第 {{ day.day_index }} 天
+        </StatusBadge>
         <span v-if="day.theme" class="day-theme">{{ day.theme }}</span>
       </div>
 
@@ -25,7 +27,7 @@
             <span v-if="si < day.slots.length - 1" class="tl-line" />
           </div>
 
-          <div class="pc" :class="{ 'pc-with-img': slot.image_url }">
+          <GlassCard interactive class="pc" :class="{ 'pc-with-img': slot.image_url }">
             <img
               v-if="slot.image_url"
               :src="slot.image_url"
@@ -35,42 +37,42 @@
               @error="($event.target as HTMLImageElement).style.display = 'none'"
             />
             <div class="pc-body">
-            <span class="pc-slot">{{ slot.slot }}</span>
-            <h4 class="pc-activity">{{ slot.activity }}</h4>
+              <div class="pc-topline">
+                <StatusBadge tone="neutral">{{ slot.slot }}</StatusBadge>
+                <StatusBadge v-if="slot.location" tone="info">地图点位</StatusBadge>
+              </div>
 
-            <div v-if="slot.place" class="pc-row">
-              <svg class="pc-ico" width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="currentColor" stroke-width="1.5"/>
-                <circle cx="12" cy="9" r="2" stroke="currentColor" stroke-width="1.5"/>
-              </svg>
-              <span>{{ slot.place }}</span>
-            </div>
+              <h4 class="pc-activity">{{ slot.activity }}</h4>
 
-            <div v-if="slot.transit" class="pc-row pc-transit">
-              <svg class="pc-ico" width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path d="M13 17l5-5-5-5M6 17l5-5-5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <span>{{ slot.transit }}</span>
-            </div>
-
-            <div class="pc-bottom">
-              <span v-if="slotCost(slot)" class="pc-cost">
-                &yen;{{ fmt(slotCost(slot)!) }}
-              </span>
-              <span
-                v-if="slot.evidence_refs && slot.evidence_refs.length > 0"
-                class="pc-evidence"
-                :title="`${slot.evidence_refs.length} 条数据源佐证`"
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                  <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5"/>
+              <div v-if="slot.place" class="pc-row">
+                <svg class="pc-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="currentColor" stroke-width="1.5"/>
+                  <circle cx="12" cy="9" r="2" stroke="currentColor" stroke-width="1.5"/>
                 </svg>
-                已验证
-              </span>
-            </div>
+                <span>{{ slot.place }}</span>
+              </div>
+
+              <div v-if="slot.transit" class="pc-row pc-transit">
+                <svg class="pc-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M13 17l5-5-5-5M6 17l5-5-5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span>{{ slot.transit }}</span>
+              </div>
+
+              <div class="pc-bottom">
+                <StatusBadge v-if="slotCost(slot)" tone="warning">
+                  &yen;{{ fmt(slotCost(slot)!) }}
+                </StatusBadge>
+                <StatusBadge
+                  v-if="slot.evidence_refs && slot.evidence_refs.length > 0"
+                  tone="success"
+                  :title="`${slot.evidence_refs.length} 条数据源佐证`"
+                >
+                  已验证 {{ slot.evidence_refs.length }}
+                </StatusBadge>
+              </div>
             </div><!-- /.pc-body -->
-          </div>
+          </GlassCard>
         </div>
       </div>
     </div>
@@ -80,6 +82,7 @@
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
 import type { ItineraryDay, ItinerarySlot } from '../../types/itinerary'
+import { GlassCard, StatusBadge } from '../ui'
 
 const props = defineProps<{
   days: ItineraryDay[]
@@ -108,52 +111,42 @@ const slotCost = (slot: ItinerarySlot): number | null => {
 </script>
 
 <style scoped>
-.itinerary { max-width: 680px; }
+.itinerary { max-width: 700px; }
 
-.day-section { margin-bottom: 44px; }
-.day-section:last-child { margin-bottom: 24px; }
+.day-section { margin-bottom: var(--tm-space-10); }
+.day-section:last-child { margin-bottom: var(--tm-space-6); }
 
 .day-hdr {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 22px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--border);
-}
-
-.day-num {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  padding: 4px 14px;
-  background: var(--accent-soft);
-  border-radius: 999px;
-  letter-spacing: 0.03em;
+  gap: var(--tm-space-3);
+  margin-bottom: var(--tm-space-5);
+  padding-bottom: var(--tm-space-4);
+  border-bottom: 1px solid var(--tm-color-border);
 }
 
 .day-theme {
-  font-size: 14px;
-  font-weight: 400;
-  color: var(--text-sec);
+  color: var(--tm-color-text-secondary);
+  font-size: var(--tm-font-size-sm);
+  font-weight: 500;
   font-style: italic;
 }
 
 .timeline {
   position: relative;
-  padding-left: 32px;
+  padding-left: var(--tm-space-8);
 }
 
 .tl-item {
   position: relative;
-  padding-bottom: 22px;
+  padding-bottom: var(--tm-space-6);
 }
 
 .tl-item:last-child { padding-bottom: 0; }
 
 .tl-rail {
   position: absolute;
-  left: -32px;
+  left: calc(var(--tm-space-8) * -1);
   top: 0;
   display: flex;
   flex-direction: column;
@@ -166,37 +159,34 @@ const slotCost = (slot: ItinerarySlot): number | null => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: var(--bg-deep);
-  border: 2px solid var(--accent);
+  background: var(--tm-color-bg);
+  border: 2px solid var(--tm-color-cyan);
+  box-shadow: 0 0 18px rgba(34, 211, 238, 0.34);
   flex-shrink: 0;
   z-index: 1;
-  margin-top: 8px;
+  margin-top: var(--tm-space-4);
 }
 
 .tl-line {
   width: 1px;
   flex: 1;
-  background: var(--border);
-  margin-top: 4px;
+  background: linear-gradient(180deg, var(--tm-color-border-strong), transparent);
+  margin-top: var(--tm-space-1);
 }
 
 .pc {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 16px 20px;
-  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  padding: var(--tm-space-5);
   overflow: hidden;
 }
 
 .pc-with-img {
   display: flex;
-  gap: 14px;
+  gap: var(--tm-space-4);
   padding: 0;
 }
 
 .pc-with-img .pc-body {
-  padding: 16px 20px 16px 0;
+  padding: var(--tm-space-5) var(--tm-space-5) var(--tm-space-5) 0;
   flex: 1;
   min-width: 0;
 }
@@ -206,89 +196,61 @@ const slotCost = (slot: ItinerarySlot): number | null => {
 }
 
 .pc-img {
-  width: 100px;
+  width: 112px;
   min-height: 100%;
   object-fit: cover;
   flex-shrink: 0;
-  border-radius: var(--r-md) 0 0 var(--r-md);
+  border-radius: var(--tm-radius-2xl) 0 0 var(--tm-radius-2xl);
 }
 
 .pc:hover {
-  border-color: var(--border-hover);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
-  transform: translateY(-2px);
+  border-color: var(--tm-color-border-strong);
 }
 
-.pc-slot {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  margin-bottom: 6px;
+.pc-topline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--tm-space-2);
+  margin-bottom: var(--tm-space-3);
 }
 
 .pc-activity {
-  margin: 0 0 10px;
-  font-size: 15px;
-  font-weight: 500;
+  margin: 0 0 var(--tm-space-3);
+  color: var(--tm-color-text-primary);
+  font-size: var(--tm-font-size-md);
+  font-weight: 800;
   line-height: 1.45;
-  color: var(--text);
 }
 
 .pc-row {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  margin-bottom: 6px;
-  font-size: 12.5px;
-  color: var(--text-sec);
-  line-height: 1.5;
+  gap: var(--tm-space-2);
+  margin-bottom: var(--tm-space-2);
+  color: var(--tm-color-text-secondary);
+  font-size: var(--tm-font-size-sm);
+  line-height: var(--tm-line-height-normal);
 }
 
 .pc-row:last-of-type { margin-bottom: 0; }
 
 .pc-ico {
   flex-shrink: 0;
-  margin-top: 1px;
-  color: var(--text-muted);
+  margin-top: 3px;
+  color: var(--tm-color-text-muted);
 }
 
 .pc-transit {
-  color: var(--text-muted);
-  font-size: 11.5px;
+  color: var(--tm-color-text-muted);
+  font-size: var(--tm-font-size-xs);
 }
 
 .pc-bottom {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.pc-cost {
-  display: inline-flex;
-  padding: 3px 10px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--accent-warm);
-  background: var(--accent-warm-soft);
-  border-radius: var(--r-sm);
-  letter-spacing: 0.01em;
-}
-
-.pc-evidence {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--success);
-  background: var(--success-soft);
-  border-radius: var(--r-sm);
-  letter-spacing: 0.02em;
+  gap: var(--tm-space-2);
+  margin-top: var(--tm-space-4);
 }
 
 /* ---- Changed-day highlight ---- */
@@ -297,18 +259,13 @@ const slotCost = (slot: ItinerarySlot): number | null => {
   animation: dayGlow 3s ease-out both;
 }
 
-.day-changed .day-num {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
 .day-changed .pc {
-  border-color: rgba(34, 197, 94, 0.3);
-  box-shadow: 0 0 20px rgba(34, 197, 94, 0.08);
+  border-color: rgba(52, 211, 153, 0.34);
+  box-shadow: var(--tm-shadow-card), 0 0 24px rgba(52, 211, 153, 0.12);
 }
 
 @keyframes dayGlow {
-  0%   { background: rgba(34, 197, 94, 0.06); border-radius: 12px; }
+  0%   { background: rgba(52, 211, 153, 0.08); border-radius: var(--tm-radius-xl); }
   100% { background: transparent; }
 }
 
@@ -320,9 +277,16 @@ const slotCost = (slot: ItinerarySlot): number | null => {
 }
 
 @media (max-width: 480px) {
-  .timeline { padding-left: 24px; }
-  .tl-rail  { left: -24px; }
-  .pc { padding: 14px 16px; }
-  .day-hdr { gap: 10px; margin-bottom: 16px; padding-bottom: 10px; }
+  .timeline { padding-left: var(--tm-space-6); }
+  .tl-rail  { left: calc(var(--tm-space-6) * -1); }
+  .pc { padding: var(--tm-space-4); }
+  .pc-with-img { flex-direction: column; }
+  .pc-with-img .pc-body { padding: 0 var(--tm-space-4) var(--tm-space-4); }
+  .pc-img {
+    width: 100%;
+    max-height: 180px;
+    border-radius: var(--tm-radius-2xl) var(--tm-radius-2xl) 0 0;
+  }
+  .day-hdr { gap: var(--tm-space-2); margin-bottom: var(--tm-space-4); padding-bottom: var(--tm-space-3); }
 }
 </style>
