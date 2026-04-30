@@ -6,23 +6,9 @@
 </template>
 
 <style>
-*, *::before, *::after {
-  box-sizing: border-box;
-}
-
-html, body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  overflow: hidden;
-  background: #0a0a0a;
-}
-
 #app {
-  height: 100%;
-  font-family: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .loading-screen {
@@ -34,14 +20,14 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #0a0a0a;
+  background: var(--tm-color-bg);
 }
 
 .loading-spinner {
   width: 36px;
   height: 36px;
-  border: 2px solid rgba(255,255,255,0.06);
-  border-top-color: #999;
+  border: 2px solid var(--tm-color-border);
+  border-top-color: var(--tm-color-cyan);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }

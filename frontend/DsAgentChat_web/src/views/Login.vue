@@ -1,54 +1,63 @@
 <template>
   <div class="login-container">
-    <div class="login-box">
-      <div class="logo">
-        <img src="../assets/deepseek.svg" alt="TravelMind" />
+    <div class="login-orb login-orb--left" aria-hidden="true" />
+    <div class="login-orb login-orb--right" aria-hidden="true" />
+
+    <GlassCard class="login-box">
+      <div class="brand-block">
+        <div class="logo">
+          <img src="../assets/deepseek.svg" alt="TravelMind" />
+        </div>
+        <StatusBadge tone="info">AI Travel Copilot</StatusBadge>
       </div>
-      
-      <h2 class="login-title">{{ activeTab === 'login' ? '账号登录' : '注册账号' }}</h2>
+
+      <div class="title-group">
+        <h1 class="login-title">{{ activeTab === 'login' ? '欢迎回来' : '创建 TravelMind 账号' }}</h1>
+        <p class="login-subtitle">
+          {{ activeTab === 'login' ? '继续规划你的下一段旅程。' : '用对话、证据和地图一起完成旅行计划。' }}
+        </p>
+      </div>
 
       <div class="form-container">
         <div v-if="errors.general" class="general-error">
           {{ errors.general }}
         </div>
-        
-        <div class="input-group" v-if="activeTab === 'register'">
-          <input 
-            type="text" 
-            v-model="form.username" 
-            placeholder="请输入用户名"
-            :class="{ 'error': errors.username }"
-          />
-          <span class="error-message" v-if="errors.username">{{ errors.username }}</span>
-        </div>
 
-        <div class="input-group">
-          <input 
-            type="email" 
-            v-model="form.email" 
-            placeholder="请输入邮箱"
-            :class="{ 'error': errors.email }"
-          />
-          <span class="error-message" v-if="errors.email">{{ errors.email }}</span>
-        </div>
-        
-        <div class="input-group">
-          <input 
-            type="password" 
-            v-model="form.password" 
-            placeholder="请输入密码"
-            :class="{ 'error': errors.password }"
-          />
-          <span class="error-message" v-if="errors.password">{{ errors.password }}</span>
-        </div>
+        <BaseInput
+          v-if="activeTab === 'register'"
+          v-model="form.username"
+          label="用户名"
+          placeholder="4-16 位字母、数字或下划线"
+          autocomplete="username"
+          :error="errors.username"
+        />
 
-        <div class="input-group" v-if="activeTab === 'register'">
-          <input 
-            type="password" 
-            v-model="form.confirmPassword" 
-            placeholder="请确认密码"
-          />
-        </div>
+        <BaseInput
+          v-model="form.email"
+          label="邮箱"
+          type="email"
+          placeholder="you@example.com"
+          autocomplete="email"
+          :error="errors.email"
+        />
+
+        <BaseInput
+          v-model="form.password"
+          label="密码"
+          type="password"
+          placeholder="请输入密码"
+          autocomplete="current-password"
+          :error="errors.password"
+        />
+
+        <BaseInput
+          v-if="activeTab === 'register'"
+          v-model="form.confirmPassword"
+          label="确认密码"
+          type="password"
+          placeholder="再次输入密码"
+          autocomplete="new-password"
+        />
 
         <div class="agreement">
           <input type="checkbox" v-model="form.agreement" id="agreement" />
@@ -57,9 +66,9 @@
           </label>
         </div>
 
-        <button class="submit-btn" @click="handleSubmit" :disabled="!isFormValid">
+        <BaseButton class="submit-btn" size="lg" :loading="isSubmitting" :disabled="!isFormValid" @click="handleSubmit">
           {{ activeTab === 'login' ? '登录' : '注册' }}
-        </button>
+        </BaseButton>
 
         <div class="register-link">
           {{ activeTab === 'login' ? '还没有账号？' : '已有账号？' }}
@@ -72,13 +81,13 @@
           <div class="divider">
             <span>其他登录方式</span>
           </div>
-          <button class="wechat-btn" @click="handleWechatLogin">
+          <BaseButton class="wechat-btn" variant="secondary" @click="handleWechatLogin">
             <img src="../assets/wechat.svg" alt="WeChat" />
             使用微信自动登录
-          </button>
+          </BaseButton>
         </div>
       </div>
-    </div>
+    </GlassCard>
     <MessageBox
       v-if="showSuccessMessage"
       title="注册成功"
@@ -96,6 +105,7 @@ import { useRouter } from 'vue-router'
 import { AuthService } from '../services/api'
 import MessageBox from '../components/MessageBox.vue'
 import { useConversationStore } from '../stores/conversation'
+import { BaseButton, BaseInput, GlassCard, StatusBadge } from '../components/ui'
 
 const router = useRouter()
 const conversationStore = useConversationStore()
@@ -117,6 +127,7 @@ const errors = ref({
 })
 
 const showSuccessMessage = ref(false)
+const isSubmitting = ref(false)
 
 const validateRules = {
   username: {
@@ -181,9 +192,10 @@ const handleSubmit = async () => {
     return
   }
   
-  if (!isFormValid.value) return
+  if (!isFormValid.value || isSubmitting.value) return
   
   clearErrors()
+  isSubmitting.value = true
   
   try {
     if (activeTab.value === 'register') {
@@ -222,6 +234,8 @@ const handleSubmit = async () => {
     } else {
       errors.value.general = '发生错误，请稍后重试'
     }
+  } finally {
+    isSubmitting.value = false
   }
 }
 
@@ -278,120 +292,161 @@ watch(() => form.value.password, (val) => {
 
 <style scoped>
 .login-container {
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  position: relative;
   min-height: 100vh;
-  background: #1e1e1e;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--tm-space-6);
+  overflow: hidden;
+}
+
+.login-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(rgba(148, 163, 184, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.04) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at center, black, transparent 72%);
+  pointer-events: none;
+}
+
+.login-orb {
+  position: absolute;
+  width: 320px;
+  height: 320px;
+  border-radius: 50%;
+  filter: blur(24px);
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+.login-orb--left {
+  left: -120px;
+  bottom: 10%;
+  background: var(--tm-color-indigo);
+}
+
+.login-orb--right {
+  top: 8%;
+  right: -100px;
+  background: var(--tm-color-cyan);
 }
 
 .login-box {
-  width: 400px;
-  padding: 40px;
-  background: #2d2d2d;
-  border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  position: relative;
+  z-index: 1;
+  width: min(100%, 460px);
+  padding: var(--tm-space-8);
+}
+
+.brand-block,
+.title-group {
+  display: grid;
+  justify-items: center;
+  gap: var(--tm-space-3);
 }
 
 .logo {
-  text-align: center;
-  margin-bottom: 32px;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--tm-color-border-strong);
+  border-radius: var(--tm-radius-2xl);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: var(--tm-shadow-glow);
 }
 
 .logo img {
-  height: 40px;
+  width: 38px;
+  height: 38px;
+}
+
+.title-group {
+  margin-top: var(--tm-space-8);
+  margin-bottom: var(--tm-space-8);
 }
 
 .login-title {
-  color: #fff;
-  font-size: 24px;
-  font-weight: 500;
+  margin: 0;
+  color: var(--tm-color-text-primary);
+  font-size: clamp(28px, 5vw, 36px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: var(--tm-line-height-tight);
   text-align: center;
-  margin-bottom: 32px;
+}
+
+.login-subtitle {
+  margin: 0;
+  color: var(--tm-color-text-secondary);
+  font-size: var(--tm-font-size-sm);
+  line-height: var(--tm-line-height-normal);
+  text-align: center;
+}
+
+.form-container {
+  display: grid;
+  gap: var(--tm-space-4);
 }
 
 .register-link {
   text-align: center;
-  margin-top: 16px;
-  color: #888;
-  font-size: 14px;
+  color: var(--tm-color-text-muted);
+  font-size: var(--tm-font-size-sm);
 }
 
 .register-link a {
-  color: #4b4bff;
+  color: var(--tm-color-cyan);
+  font-weight: 700;
   text-decoration: none;
-  margin-left: 8px;
+  margin-left: var(--tm-space-2);
 }
 
-.register-link a:hover {
+.register-link a:hover,
+.agreement a:hover {
   text-decoration: underline;
-}
-
-.input-group {
-  margin-bottom: 16px;
-}
-
-.input-group input {
-  width: 100%;
-  padding: 12px;
-  background: #1e1e1e;
-  border: 1px solid #333;
-  border-radius: 6px;
-  color: #fff;
-  font-size: 14px;
-  transition: all 0.2s;
-}
-
-.input-group input:focus {
-  border-color: #4b4bff;
-  outline: none;
 }
 
 .agreement {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 24px;
-  color: #888;
-  font-size: 14px;
+  align-items: flex-start;
+  gap: var(--tm-space-2);
+  color: var(--tm-color-text-muted);
+  font-size: var(--tm-font-size-sm);
+  line-height: var(--tm-line-height-normal);
+}
+
+.agreement input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: var(--tm-color-primary);
 }
 
 .agreement a {
-  color: #4b4bff;
+  color: var(--tm-color-cyan);
   text-decoration: none;
 }
 
 .submit-btn {
   width: 100%;
-  padding: 12px;
-  background: #4b4bff;
-  border: none;
-  border-radius: 6px;
-  color: #fff;
-  font-size: 16px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.submit-btn:hover {
-  background: #5c5cff;
-}
-
-.submit-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .other-login {
-  margin-top: 32px;
+  display: grid;
+  gap: var(--tm-space-4);
+  margin-top: var(--tm-space-2);
 }
 
 .divider {
   display: flex;
   align-items: center;
-  margin-bottom: 16px;
-  color: #666;
-  font-size: 14px;
+  color: var(--tm-color-text-muted);
+  font-size: var(--tm-font-size-xs);
 }
 
 .divider::before,
@@ -399,28 +454,12 @@ watch(() => form.value.password, (val) => {
   content: '';
   flex: 1;
   height: 1px;
-  background: #333;
-  margin: 0 16px;
+  background: var(--tm-color-border);
+  margin: 0 var(--tm-space-4);
 }
 
 .wechat-btn {
   width: 100%;
-  padding: 12px;
-  background: #1AAD19;
-  border: none;
-  border-radius: 6px;
-  color: #fff;
-  font-size: 16px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  transition: all 0.2s;
-}
-
-.wechat-btn:hover {
-  background: #2abd29;
 }
 
 .wechat-btn img {
@@ -428,19 +467,23 @@ watch(() => form.value.password, (val) => {
   height: 24px;
 }
 
-.error {
-  border-color: #ff4b4b !important;
-}
-
-.error-message {
-  color: #ff4b4b;
-  font-size: 12px;
-  margin-top: 4px;
-}
-
 .general-error {
-  color: #ff4b4b;
+  padding: var(--tm-space-3) var(--tm-space-4);
+  border: 1px solid rgba(251, 113, 133, 0.32);
+  border-radius: var(--tm-radius-lg);
+  background: rgba(251, 113, 133, 0.12);
+  color: var(--tm-color-danger);
+  font-size: var(--tm-font-size-sm);
   text-align: center;
-  margin-bottom: 16px;
+}
+
+@media (max-width: 560px) {
+  .login-container {
+    padding: var(--tm-space-4);
+  }
+
+  .login-box {
+    padding: var(--tm-space-6);
+  }
 }
 </style> 

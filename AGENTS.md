@@ -37,6 +37,32 @@ npm run type-check   # vue-tsc --noEmit
 npm run test         # vitest run (unit tests)
 ```
 
+### Frontend Design System
+
+TravelMind frontend work must follow the project UI/UX skill and design system:
+
+- Skill: `.cursor/skills/ui-ux-product-polish/SKILL.md`
+- Design system: `docs/frontend/TravelMind前端设计系统.md`
+- Global tokens: `frontend/DsAgentChat_web/src/styles/theme.css`
+
+Design direction:
+
+- Premium dark AI travel companion, not a generic admin dashboard.
+- AI copilot workspace + travel itinerary cards.
+- Indigo / violet / cyan brand gradient.
+- Soft glass panels, subtle map/route/star/glow details, clean typography.
+- Avoid random raw colors, emoji icons, inconsistent shadows, and page-local design systems.
+
+Rules for frontend UI changes:
+
+1. Inspect existing views/components before changing UI.
+2. Reuse global CSS variables for color, spacing, radius, shadow, typography, and motion.
+3. Extract repeated UI into reusable Vue components under `src/components/ui/`.
+4. Preserve API, router, store, and SSE logic unless the task explicitly asks for behavioral changes.
+5. Interactive components must expose applicable hover, focus, active, disabled, loading, and error states.
+6. Maintain responsive layouts and keyboard-accessible focus states.
+7. Run `npm run type-check` and `npm run build` after page-level or design-system changes.
+
 ### Deployment note
 
 `python run.py` mounts the frontend `dist/` at `/` in FastAPI. Build the frontend first for single-server deployment: the static dir expected is `llm_backend/static/dist`.
