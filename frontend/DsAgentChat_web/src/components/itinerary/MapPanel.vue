@@ -2,26 +2,45 @@
   <div class="map-panel">
     <div ref="mapContainer" class="map-container" />
     <div v-if="!mapReady" class="map-placeholder map-placeholder--fullscreen">
-      <span class="map-loading-icon">🗺️</span>
-      <span v-if="mapError">{{ mapError }}</span>
-      <span v-else>地图加载中...</span>
+      <div class="map-placeholder-card" :class="{ 'map-placeholder-card--error': mapError }">
+        <StatusBadge :tone="mapError ? 'danger' : 'info'">
+          {{ mapError ? '地图异常' : '地图加载' }}
+        </StatusBadge>
+        <div class="map-placeholder-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M9 18 3 21V6l6-3 6 3 6-3v15l-6 3-6-3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M9 3v15M15 6v15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div>
+          <p class="map-placeholder-title">{{ mapError ? '地图暂时不可用' : '正在准备地图' }}</p>
+          <p class="map-placeholder-desc">
+            {{ mapError || '根据目的地自动选择高德或 OpenStreetMap，并绘制行程点位。' }}
+          </p>
+        </div>
+      </div>
     </div>
     <div v-if="mapReady" class="map-engine-chip">
-      {{ mapEngine === 'leaflet' ? 'Overseas: OpenStreetMap' : 'China: Gaode Map' }}
+      <StatusBadge :tone="mapEngine === 'leaflet' ? 'info' : 'success'">
+        {{ mapEngineLabel }}
+      </StatusBadge>
+      <span class="map-engine-count">{{ activeLocationCount }}/{{ totalLocationCount }} 点位</span>
     </div>
     <div
       v-if="mapReady && slotsWithLocation.length === 0 && dayTabs.length > 0"
       class="map-hint"
     >
-      <span class="map-hint-title">本日暂无坐标点</span>
-      <span class="map-hint-sub">可切换其他 Day；生成完成后会显示标记与路线</span>
-      <span class="map-hint-key">若底图只有网格、无道路，多为 Key 未开通「Web端(JS API)」，与后端 Web 服务 Key 需分开配置</span>
+      <StatusBadge tone="warning">本日暂无坐标点</StatusBadge>
+      <span class="map-hint-title">可以切换其他 Day 查看已定位地点</span>
+      <span class="map-hint-sub">生成完成后会自动显示标记与路线；如果底图只有网格、无道路，通常是高德 Web 端 JS API Key 未开通。</span>
     </div>
     <div v-if="mapReady && dayTabs.length > 0" class="day-tabs">
       <button
         v-for="tab in dayTabs"
         :key="tab.index"
         :class="['day-tab', { active: tab.index === activeDayIndex }]"
+        :aria-pressed="tab.index === activeDayIndex"
+        :title="tab.theme || `Day ${tab.index}`"
         @click="$emit('selectDay', tab.index)"
       >
         Day {{ tab.index }}
@@ -34,6 +53,7 @@
 import { ref, watch, onMounted, onBeforeUnmount, computed, nextTick } from 'vue'
 import type { ItineraryDay, ItinerarySlot, Location } from '@/types/itinerary'
 import AMapLoader from '@amap/amap-jsapi-loader'
+import { StatusBadge } from '../ui'
 
 const props = defineProps<{
   days: ItineraryDay[]
@@ -73,6 +93,11 @@ const DEFAULT_COLOR = '#10B981'
 const dayTabs = computed(() =>
   props.days.map(d => ({ index: d.day_index, theme: d.theme }))
 )
+const mapEngineLabel = computed(() =>
+  mapEngine.value === 'leaflet' ? '海外 · OpenStreetMap' : '国内 · 高德地图'
+)
+const activeLocationCount = computed(() => slotsWithLocation.value.length)
+const totalLocationCount = computed(() => allLocations.value.length)
 
 const activeDay = computed(() =>
   props.days.find(d => d.day_index === props.activeDayIndex) ?? props.days[0]
@@ -478,9 +503,11 @@ defineExpose({ highlightSlot })
   width: 100%;
   height: 100%;
   min-height: 280px;
-  border-radius: 12px;
+  border-radius: var(--tm-radius-2xl);
   overflow: hidden;
-  background: #f0f2f5;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(34, 211, 238, 0.16), transparent 28%),
+    linear-gradient(145deg, rgba(15, 23, 42, 0.88), rgba(30, 41, 59, 0.68));
 }
 
 .map-container {
@@ -490,15 +517,27 @@ defineExpose({ highlightSlot })
 
 .map-engine-chip {
   position: absolute;
-  right: 12px;
-  top: 12px;
+  right: var(--tm-space-3);
+  top: var(--tm-space-3);
   z-index: 11;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--tm-space-2);
+  padding: var(--tm-space-2);
+  border: 1px solid var(--tm-color-border);
+  border-radius: var(--tm-radius-pill);
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--tm-color-text-secondary);
+  font-size: var(--tm-font-size-xs);
   line-height: 1;
+  box-shadow: var(--tm-shadow-card);
+  backdrop-filter: var(--tm-blur-glass);
+}
+
+.map-engine-count {
+  padding-right: var(--tm-space-2);
+  color: var(--tm-color-text-muted);
+  font-weight: 700;
 }
 
 .map-placeholder--fullscreen {
@@ -508,81 +547,158 @@ defineExpose({ highlightSlot })
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  color: #999;
-  font-size: 14px;
-  background: rgba(240, 242, 245, 0.92);
+  padding: var(--tm-space-6);
+  color: var(--tm-color-text-secondary);
+  background:
+    radial-gradient(circle at 50% 32%, rgba(99, 102, 241, 0.22), transparent 36%),
+    rgba(7, 8, 20, 0.9);
+}
+
+.map-placeholder-card {
+  display: grid;
+  justify-items: center;
+  gap: var(--tm-space-4);
+  max-width: 420px;
+  padding: var(--tm-space-8);
+  border: 1px solid var(--tm-color-border);
+  border-radius: var(--tm-radius-2xl);
+  background: var(--tm-gradient-surface);
+  text-align: center;
+  box-shadow: var(--tm-shadow-card);
+  backdrop-filter: var(--tm-blur-glass);
+}
+
+.map-placeholder-card--error {
+  border-color: rgba(251, 113, 133, 0.36);
+}
+
+.map-placeholder-icon {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--tm-radius-2xl);
+  background: var(--tm-color-primary-soft);
+  color: var(--tm-color-cyan);
+  box-shadow: var(--tm-shadow-glow);
+}
+
+.map-placeholder-card--error .map-placeholder-icon {
+  background: rgba(251, 113, 133, 0.14);
+  color: var(--tm-color-danger);
+}
+
+.map-placeholder-icon svg {
+  width: 34px;
+  height: 34px;
+}
+
+.map-placeholder-title {
+  margin: 0;
+  color: var(--tm-color-text-primary);
+  font-size: var(--tm-font-size-xl);
+  font-weight: 800;
+  line-height: var(--tm-line-height-tight);
+}
+
+.map-placeholder-desc {
+  margin: var(--tm-space-2) 0 0;
+  color: var(--tm-color-text-secondary);
+  font-size: var(--tm-font-size-sm);
+  line-height: var(--tm-line-height-normal);
 }
 
 .map-hint {
   position: absolute;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
+  left: var(--tm-space-3);
+  right: var(--tm-space-3);
+  bottom: var(--tm-space-3);
   z-index: 9;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(6px);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-  font-size: 12px;
-  line-height: 1.45;
-  color: #555;
+  align-items: flex-start;
+  gap: var(--tm-space-2);
+  max-width: 520px;
+  padding: var(--tm-space-4);
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  border-radius: var(--tm-radius-xl);
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: var(--tm-blur-glass);
+  box-shadow: var(--tm-shadow-card);
+  font-size: var(--tm-font-size-xs);
+  line-height: var(--tm-line-height-normal);
+  color: var(--tm-color-text-secondary);
   pointer-events: none;
 }
 
 .map-hint-title {
-  font-weight: 600;
-  color: #333;
+  font-weight: 800;
+  color: var(--tm-color-text-primary);
 }
 
 .map-hint-sub {
-  color: #666;
-}
-
-.map-hint-key {
-  margin-top: 2px;
-  font-size: 11px;
-  color: #888;
-}
-
-.map-loading-icon {
-  font-size: 36px;
+  color: var(--tm-color-text-muted);
 }
 
 .day-tabs {
   position: absolute;
-  top: 12px;
-  left: 12px;
+  top: var(--tm-space-3);
+  left: var(--tm-space-3);
   display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: var(--tm-space-2);
   z-index: 10;
+  max-width: calc(100% - 260px);
 }
 
 .day-tab {
-  padding: 4px 12px;
-  border: none;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(4px);
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
-  transition: all 0.2s ease;
+  min-height: 32px;
+  padding: 0 var(--tm-space-3);
+  border: 1px solid var(--tm-color-border);
+  border-radius: var(--tm-radius-pill);
+  background: rgba(15, 23, 42, 0.68);
+  backdrop-filter: var(--tm-blur-glass);
+  color: var(--tm-color-text-secondary);
+  font-size: var(--tm-font-size-xs);
+  font-weight: 800;
+  box-shadow: var(--tm-shadow-card);
+  transition:
+    transform var(--tm-motion-fast),
+    border-color var(--tm-motion-fast),
+    background var(--tm-motion-fast),
+    color var(--tm-motion-fast);
 }
 
 .day-tab:hover {
-  background: #fff;
-  color: #333;
+  transform: translateY(-1px);
+  border-color: var(--tm-color-border-strong);
+  color: var(--tm-color-text-primary);
 }
 
 .day-tab.active {
-  background: #6366f1;
-  color: #fff;
+  border-color: rgba(34, 211, 238, 0.42);
+  background: var(--tm-gradient-brand);
+  color: var(--tm-color-text-primary);
+}
+
+.day-tab:focus-visible {
+  box-shadow: var(--tm-shadow-focus);
+}
+
+@media (max-width: 640px) {
+  .map-engine-chip {
+    left: var(--tm-space-3);
+    right: auto;
+    top: var(--tm-space-3);
+  }
+
+  .day-tabs {
+    top: calc(var(--tm-space-3) + 44px);
+    max-width: calc(100% - var(--tm-space-6));
+  }
+
+  .map-hint {
+    max-width: none;
+  }
 }
 </style>
