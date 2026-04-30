@@ -17,7 +17,7 @@ from app.domain.travel.sse_envelope import (
     build_event_line,
 )
 from app.domain.travel.query_processor import TravelQueryProcessor
-from app.lg_agent.travel_draft_graph import travel_draft_graph
+from app.lg_agent.travel_draft_graph import _apply_city_center_fallback, travel_draft_graph
 from app.lg_agent.utils import new_uuid
 from app.models.user import User
 from app.services.conversation_service import ConversationService
@@ -523,6 +523,7 @@ async def _stream_edit_result(
                     if assumption not in existing:
                         edited_model.validation.assumptions.append(assumption)
                         existing.add(assumption)
+            _apply_city_center_fallback(edited_model)
             coverage = CoverageTracker().compute(edited_model)
             edited_model.validation.coverage_score = coverage.coverage_score
             result.new_itinerary = edited_model.model_dump(mode="json")
