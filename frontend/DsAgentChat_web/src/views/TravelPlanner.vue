@@ -26,9 +26,12 @@
     >
       <div class="chat-scroll" ref="chatScrollRef">
         <nav class="nav">
-          <h1 class="brand-name">TravelMind</h1>
+          <div class="brand-lockup">
+            <h1 class="brand-name">TravelMind</h1>
+            <StatusBadge :tone="workspaceStatusTone">{{ workspaceStatusLabel }}</StatusBadge>
+          </div>
           <div class="nav-spacer" />
-          <button class="user-menu-btn" @click="handleLogout" title="退出登录">
+          <button class="user-menu-btn" aria-label="退出登录" @click="handleLogout" title="退出登录">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
               <polyline points="16 17 21 12 16 7"/>
@@ -190,6 +193,7 @@ import TripOverview from '../components/itinerary/TripOverview.vue'
 import BudgetCard from '../components/itinerary/BudgetCard.vue'
 import ItineraryTimeline from '../components/itinerary/ItineraryTimeline.vue'
 import MapPanel from '../components/itinerary/MapPanel.vue'
+import { StatusBadge } from '../components/ui'
 
 // ---------- State ----------
 
@@ -268,6 +272,20 @@ const intentLabel = computed(() => {
     reset: '重置会话',
   }
   return map[currentIntent.value] || ''
+})
+
+const workspaceStatusLabel = computed(() => {
+  if (isStreaming.value) return currentIntent.value === 'edit' ? '正在编辑' : '正在规划'
+  if (phase.value === 'error') return '需要处理'
+  if (itinerary.value) return '行程已就绪'
+  return '准备规划'
+})
+
+const workspaceStatusTone = computed<'neutral' | 'info' | 'success' | 'warning' | 'danger'>(() => {
+  if (phase.value === 'error') return 'danger'
+  if (isStreaming.value) return 'info'
+  if (itinerary.value) return 'success'
+  return 'neutral'
 })
 
 const canReset = computed(() =>
@@ -503,39 +521,45 @@ const submitQuery = async (queryText: string) => {
 <style scoped>
 /* ==================== Design Tokens ==================== */
 .page {
-  --bg-deep: #0a0a0a;
-  --bg: #111111;
-  --bg-card: #1a1a1a;
-  --bg-card-hover: #222222;
-  --border: rgba(255,255,255,0.06);
-  --border-hover: rgba(255,255,255,0.12);
+  --bg-deep: var(--tm-color-bg);
+  --bg: var(--tm-color-surface);
+  --bg-card: var(--tm-color-surface-elevated);
+  --bg-card-hover: var(--tm-color-surface-solid);
+  --border: var(--tm-color-border);
+  --border-hover: var(--tm-color-border-strong);
 
-  --accent: #6366f1;
-  --accent-soft: rgba(99,102,241,0.10);
-  --accent-warm: #f59e0b;
-  --accent-warm-soft: rgba(245,158,11,0.08);
-  --success: #22c55e;
-  --success-soft: rgba(34,197,94,0.08);
-  --warn: #f59e0b;
-  --warn-soft: rgba(245,158,11,0.08);
-  --error: #ef4444;
-  --error-soft: rgba(239,68,68,0.08);
+  --accent: var(--tm-color-primary);
+  --accent-soft: var(--tm-color-primary-soft);
+  --accent-warm: var(--tm-color-warning);
+  --accent-warm-soft: rgba(251, 191, 36, 0.12);
+  --success: var(--tm-color-success);
+  --success-soft: rgba(52, 211, 153, 0.12);
+  --warn: var(--tm-color-warning);
+  --warn-soft: rgba(251, 191, 36, 0.12);
+  --error: var(--tm-color-danger);
+  --error-soft: rgba(251, 113, 133, 0.12);
 
-  --text: #f0f0f0;
-  --text-sec: #999999;
-  --text-muted: #555555;
+  --text: var(--tm-color-text-primary);
+  --text-sec: var(--tm-color-text-secondary);
+  --text-muted: var(--tm-color-text-muted);
 
-  --r-sm: 10px;
-  --r-md: 14px;
-  --r-lg: 20px;
+  --r-sm: var(--tm-radius-md);
+  --r-md: var(--tm-radius-lg);
+  --r-lg: var(--tm-radius-2xl);
 
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--bg-deep);
+  height: 100dvh;
+  padding: var(--tm-space-3);
+  gap: var(--tm-space-3);
+  background:
+    radial-gradient(circle at 18% 12%, rgba(99, 102, 241, 0.22), transparent 32%),
+    radial-gradient(circle at 82% 8%, rgba(34, 211, 238, 0.14), transparent 28%),
+    var(--bg-deep);
   color: var(--text);
-  font-family: 'Inter', 'Noto Sans SC', system-ui, -apple-system, sans-serif;
-  font-size: 14px;
+  font-family: var(--tm-font-sans);
+  font-size: var(--tm-font-size-sm);
   line-height: 1.7;
   -webkit-font-smoothing: antialiased;
 }
@@ -546,7 +570,11 @@ const submitQuery = async (queryText: string) => {
   display: flex;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
-  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--tm-radius-xl);
+  background: rgba(15, 23, 42, 0.78);
+  backdrop-filter: var(--tm-blur-glass);
+  overflow: hidden;
 }
 
 .tab-btn {
@@ -565,7 +593,8 @@ const submitQuery = async (queryText: string) => {
 
 .tab-btn.active {
   color: var(--text);
-  border-bottom-color: var(--text);
+  border-bottom-color: var(--tm-color-cyan);
+  background: var(--tm-color-primary-soft);
 }
 
 .tab-btn:hover:not(.active) {
@@ -577,11 +606,18 @@ const submitQuery = async (queryText: string) => {
 .chat-panel,
 .itinerary-panel {
   overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--tm-gradient-surface);
+  box-shadow: var(--tm-shadow-card);
+  backdrop-filter: var(--tm-blur-glass);
 }
 
 .map-section {
   overflow: hidden;
-  border-radius: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--tm-radius-2xl);
+  background: var(--bg);
+  box-shadow: var(--tm-shadow-card);
 }
 
 @media (min-width: 768px) {
@@ -589,6 +625,7 @@ const submitQuery = async (queryText: string) => {
     display: grid;
     grid-template-columns: 2fr 3fr;
     grid-template-rows: 1fr auto;
+    min-height: 0;
   }
 
   .chat-panel {
@@ -635,7 +672,6 @@ const submitQuery = async (queryText: string) => {
     display: block;
     grid-column: 2;
     grid-row: 1;
-    padding: 8px 8px 0 0;
   }
 
   .page:has(.map-section:not([style*="display: none"])) .itinerary-panel {
@@ -674,7 +710,7 @@ const submitQuery = async (queryText: string) => {
 .chat-panel {
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  border-radius: var(--tm-radius-2xl);
 }
 
 .chat-scroll {
@@ -690,16 +726,24 @@ const submitQuery = async (queryText: string) => {
 .nav {
   display: flex;
   align-items: center;
-  padding: 4px 0 28px;
+  gap: var(--tm-space-3);
+  padding: var(--tm-space-1) 0 var(--tm-space-6);
   flex-shrink: 0;
 }
 
 .nav-spacer { flex: 1; }
 
+.brand-lockup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--tm-space-3);
+}
+
 .brand-name {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
+  font-size: var(--tm-font-size-lg);
+  font-weight: 800;
   letter-spacing: -0.02em;
   color: var(--text);
 }
@@ -712,7 +756,7 @@ const submitQuery = async (queryText: string) => {
   height: 34px;
   border-radius: 50%;
   border: 1px solid var(--border);
-  background: transparent;
+  background: rgba(15, 23, 42, 0.54);
   color: var(--text-sec);
   cursor: pointer;
   transition: all 0.2s;
@@ -721,7 +765,11 @@ const submitQuery = async (queryText: string) => {
 .user-menu-btn:hover {
   color: var(--text);
   border-color: var(--border-hover);
-  background: rgba(255,255,255,0.04);
+  background: var(--tm-color-primary-soft);
+}
+
+.user-menu-btn:focus-visible {
+  box-shadow: var(--tm-shadow-focus);
 }
 
 /* ---- Welcome State ---- */
@@ -735,8 +783,8 @@ const submitQuery = async (queryText: string) => {
 
 .welcome-title {
   margin: 0 0 12px;
-  font-size: 26px;
-  font-weight: 300;
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 800;
   color: var(--text);
   letter-spacing: -0.02em;
 }
@@ -767,7 +815,7 @@ const submitQuery = async (queryText: string) => {
 }
 
 .msg-user .msg-text {
-  background: rgba(255,255,255,0.08);
+  background: var(--tm-gradient-brand);
   color: var(--text);
   border-radius: 20px 20px 4px 20px;
   padding: 12px 18px;
@@ -809,7 +857,7 @@ const submitQuery = async (queryText: string) => {
   overflow-y: auto;
   padding: 40px 40px 40px 48px;
   scroll-behavior: smooth;
-  background: var(--bg-deep);
+  border-radius: var(--tm-radius-2xl);
 }
 
 .itinerary-content {
