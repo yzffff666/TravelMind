@@ -9,6 +9,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.core.config import ServiceType, settings
+from app.domain.travel.draft_builder import extract_budget
 
 
 IntentName = Literal["create", "edit", "qa", "reset", "chat"]
@@ -35,6 +36,35 @@ class StructuredQPConstraints(BaseModel):
     def _blank_to_none(cls, value: Any) -> Any:
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("budget", mode="before")
+    @classmethod
+    def _normalize_budget(cls, value: Any) -> Any:
+        if value is None or isinstance(value, int | float):
+            return value
+        if isinstance(value, str):
+            parsed = extract_budget(f"预算{value}") or extract_budget(value)
+            if parsed is not None:
+                return parsed
+            if not value.strip():
+                return None
+        return value
+
+    @field_validator("pace", mode="before")
+    @classmethod
+    def _normalize_pace(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        if normalized in {"relaxed", "slow", "easy", "light", "轻松", "慢节奏", "不赶", "别太累"}:
+            return "relaxed"
+        if normalized in {"intensive", "fast", "compact", "tight", "紧凑", "特种兵", "赶一点"}:
+            return "intensive"
         return value
 
 

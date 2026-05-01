@@ -160,6 +160,15 @@ def test_qp_structured_strategy_exception_falls_back_to_rule():
     assert "RuntimeError" in out["fallback_reason"]
 
 
+def test_structured_qp_constraints_normalize_llm_surface_values():
+    constraints = StructuredQPConstraints.model_validate({
+        "budget": "中等",
+        "pace": "slow",
+    })
+    assert constraints.budget == 6000.0
+    assert constraints.pace == "relaxed"
+
+
 # ---------- 约束抽取与 recall_query ----------
 
 
