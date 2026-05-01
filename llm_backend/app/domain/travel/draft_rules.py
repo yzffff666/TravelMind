@@ -41,6 +41,7 @@ DRAFT_CONFIG: Final[DraftConfig] = DraftConfig(
         re.compile(r"(?:去|到|在)\s*([A-Za-z\u4e00-\u9fa5]{2,20})"),
         re.compile(r"(?:travel\s+to|trip\s+to|visit)\s+([A-Za-z\u4e00-\u9fa5]{2,20})", re.IGNORECASE),
         re.compile(r"(?:改成|换成|改去|改到|换去|换到)\s*([A-Za-z\u4e00-\u9fa5]{2,20})"),
+        re.compile(r"\d+\s*(?:天|日|days?)\s*([A-Za-z\u4e00-\u9fa5]{2,20})", re.IGNORECASE),
         re.compile(r"([A-Za-z\u4e00-\u9fa5]{2,20})\s*\d+\s*天"),
     ),
     # 出行人群关键词

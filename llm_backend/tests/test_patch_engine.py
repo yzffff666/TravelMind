@@ -207,6 +207,16 @@ class TestParseAndApply:
         pm = next(s for s in day2["slots"] if s["slot"] == "下午")
         assert "南京路" in pm["activity"]
 
+    def test_e2e_replace_with_chinese_day_number(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("把第二天下午改成更轻松的室内活动", it)
+        result = apply_patch(it, ops)
+        assert result.success
+        assert 2 in result.change_summary["changed_days"]
+        day2 = next(d for d in result.new_itinerary["days"] if d["day_index"] == 2)
+        pm = next(s for s in day2["slots"] if s["slot"] == "下午")
+        assert "更轻松的室内活动" in pm["activity"]
+
     def test_e2e_budget_change(self):
         it = _make_itinerary()
         ops = parse_edit_ops("预算改成10000", it)

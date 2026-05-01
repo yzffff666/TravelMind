@@ -65,6 +65,17 @@ def test_qp_intent_create():
     assert out["intent_detail"] == "first_create"
 
 
+def test_qp_create_with_duration_and_qualitative_budget_is_not_edit():
+    processor = TravelQueryProcessor()
+    out = processor.process("帮我规划 3 天成都亲子游，预算中等，节奏轻松")
+    assert out["intent"] == "create"
+    assert out["intent_detail"] == "first_create"
+    assert out["constraints"]["destination_city"] == "成都"
+    assert out["constraints"]["days"] == 3
+    assert out["constraints"]["budget"] == 6000.0
+    assert out["missing_required"] == []
+
+
 # ---------- 约束抽取与 recall_query ----------
 
 

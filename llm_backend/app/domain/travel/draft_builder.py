@@ -58,6 +58,11 @@ _DIGIT_YUAN_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(?:元|块钱?)")
 _BUDGET_CONTEXT_PATTERN = re.compile(r"(\d{3,}(?:\.\d+)?)\s*(?:左右|以内|以下|上下|出头|多(?!少))")
 _BUDGET_RANGE_PATTERN = re.compile(r"(\d{3,6})\s*[-~到至]\s*(\d{3,6})")
 _STANDALONE_BUDGET_PATTERN = re.compile(r"^\s*(\d{3,6})(?:\.0+)?\s*$")
+_QUALITATIVE_BUDGETS = (
+    (("经济", "省钱", "低预算", "穷游"), 3000.0),
+    (("中等", "适中", "中档", "普通预算"), 6000.0),
+    (("高预算", "宽松预算", "豪华", "品质"), 12000.0),
+)
 
 
 def extract_budget(query: str, config: DraftConfig = DRAFT_CONFIG) -> float | None:
@@ -107,9 +112,16 @@ def extract_budget(query: str, config: DraftConfig = DRAFT_CONFIG) -> float | No
     if m:
         return max(float(m.group(1)), 0.0)
 
+    if "预算" in query or "budget" in query.lower():
+        for keywords, value in _QUALITATIVE_BUDGETS:
+            if any(keyword in query for keyword in keywords):
+                return value
+
     return None
 
-_TRAILING_PARTICLES = re.compile(r"(?:旅游|旅行|度假|游玩|转转|看看|走走|玩玩|玩|了|吧|呢|啊|的|呀|哦|哈|嘛|吗)+$")
+_TRAILING_PARTICLES = re.compile(r"(?:旅游|旅行|度假|游玩|亲子游|情侣游|家庭游|自由行|转转|看看|走走|玩玩|玩|游|了|吧|呢|啊|的|呀|哦|哈|嘛|吗)+$")
+_DESTINATION_NOISE_HINTS = ("规划", "安排", "帮我", "帮忙", "制定")
+_DESTINATION_SUFFIX_NOISE = ("亲子", "情侣", "家庭", "朋友")
 
 
 def extract_destination(query: str, config: DraftConfig = DRAFT_CONFIG) -> str | None:
@@ -117,7 +129,12 @@ def extract_destination(query: str, config: DraftConfig = DRAFT_CONFIG) -> str |
         match = pattern.search(query)
         if match:
             raw = match.group(1)
-            return _TRAILING_PARTICLES.sub("", raw) or raw
+            cleaned = _TRAILING_PARTICLES.sub("", raw).strip()
+            for suffix in _DESTINATION_SUFFIX_NOISE:
+                cleaned = re.sub(rf"{suffix}$", "", cleaned).strip()
+            if not cleaned or any(hint in cleaned for hint in _DESTINATION_NOISE_HINTS):
+                continue
+            return cleaned
     return None
 
 

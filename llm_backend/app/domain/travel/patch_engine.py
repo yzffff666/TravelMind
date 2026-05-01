@@ -47,7 +47,20 @@ class PatchResult:
     error: str | None = None
 
 
-_DAY_PATTERN = re.compile(r"第\s*(\d+)\s*天")
+_DAY_PATTERN = re.compile(r"第\s*(\d+|[一二两三四五六七八九十]+)\s*天")
+_CN_DAY_NUM = {
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+}
 _SLOT_LABELS = ("上午", "下午", "晚上")
 
 # 将常见 slot 变体规范化到标准三档
@@ -222,9 +235,22 @@ def apply_patch(
 def _extract_target_day(text: str, total_days: int) -> int | None:
     m = _DAY_PATTERN.search(text)
     if m:
-        d = int(m.group(1))
+        raw = m.group(1)
+        d = int(raw) if raw.isdigit() else _cn_day_to_int(raw)
         return d if 1 <= d <= total_days else None
     return None
+
+
+def _cn_day_to_int(raw: str) -> int:
+    if raw in _CN_DAY_NUM:
+        return _CN_DAY_NUM[raw]
+    if raw.startswith("十") and len(raw) == 2:
+        return 10 + _CN_DAY_NUM.get(raw[1], 0)
+    if raw.endswith("十") and len(raw) == 2:
+        return _CN_DAY_NUM.get(raw[0], 1) * 10
+    if len(raw) == 3 and raw[1] == "十":
+        return _CN_DAY_NUM.get(raw[0], 0) * 10 + _CN_DAY_NUM.get(raw[2], 0)
+    return 0
 
 
 def _extract_target_slot(text: str) -> str | None:
