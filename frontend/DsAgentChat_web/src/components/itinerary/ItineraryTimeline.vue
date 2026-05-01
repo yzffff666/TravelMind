@@ -39,12 +39,12 @@
             <div class="pc-body">
               <div class="pc-topline">
                 <StatusBadge tone="neutral">{{ slot.slot }}</StatusBadge>
-                <StatusBadge v-if="slot.location" tone="info">地图点位</StatusBadge>
+                <StatusBadge v-if="slot.location" tone="info">已定位</StatusBadge>
               </div>
 
               <h4 class="pc-activity">{{ slot.activity }}</h4>
 
-              <div v-if="slot.place" class="pc-row">
+              <div v-if="slot.place" class="pc-place">
                 <svg class="pc-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="currentColor" stroke-width="1.5"/>
                   <circle cx="12" cy="9" r="2" stroke="currentColor" stroke-width="1.5"/>
@@ -62,6 +62,9 @@
               <div class="pc-bottom">
                 <StatusBadge v-if="slotCost(slot)" tone="warning">
                   &yen;{{ fmt(slotCost(slot)!) }}
+                </StatusBadge>
+                <StatusBadge v-if="slot.transit" tone="neutral">
+                  交通
                 </StatusBadge>
                 <StatusBadge
                   v-if="slot.evidence_refs && slot.evidence_refs.length > 0"
@@ -175,20 +178,37 @@ const slotCost = (slot: ItinerarySlot): number | null => {
 }
 
 .pc {
-  padding: var(--tm-space-5);
+  position: relative;
+  padding: var(--tm-space-6);
   overflow: hidden;
+}
+
+.pc::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(247, 242, 232, 0.035), transparent 42%),
+    radial-gradient(circle at 92% 10%, rgba(198, 161, 91, 0.13), transparent 34%);
+  opacity: 0.9;
+  pointer-events: none;
 }
 
 .pc-with-img {
   display: flex;
-  gap: var(--tm-space-4);
+  gap: 0;
   padding: 0;
 }
 
 .pc-with-img .pc-body {
-  padding: var(--tm-space-5) var(--tm-space-5) var(--tm-space-5) 0;
+  padding: var(--tm-space-6);
   flex: 1;
   min-width: 0;
+}
+
+.pc-body {
+  position: relative;
+  z-index: 1;
 }
 
 .pc:not(.pc-with-img) .pc-body {
@@ -196,11 +216,12 @@ const slotCost = (slot: ItinerarySlot): number | null => {
 }
 
 .pc-img {
-  width: 112px;
+  width: 168px;
   min-height: 100%;
   object-fit: cover;
   flex-shrink: 0;
   border-radius: var(--tm-radius-2xl) 0 0 var(--tm-radius-2xl);
+  filter: saturate(0.9) contrast(1.05);
 }
 
 .pc:hover {
@@ -211,15 +232,27 @@ const slotCost = (slot: ItinerarySlot): number | null => {
   display: flex;
   flex-wrap: wrap;
   gap: var(--tm-space-2);
-  margin-bottom: var(--tm-space-3);
+  margin-bottom: var(--tm-space-4);
 }
 
 .pc-activity {
-  margin: 0 0 var(--tm-space-3);
+  margin: 0 0 var(--tm-space-4);
   color: var(--tm-color-text-primary);
-  font-size: var(--tm-font-size-md);
+  font-size: clamp(var(--tm-font-size-md), 2.5vw, var(--tm-font-size-xl));
   font-weight: 800;
-  line-height: 1.45;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.pc-place {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--tm-space-2);
+  margin-bottom: var(--tm-space-3);
+  color: var(--tm-color-primary-hover);
+  font-size: var(--tm-font-size-sm);
+  font-weight: 800;
+  line-height: var(--tm-line-height-normal);
 }
 
 .pc-row {
@@ -250,7 +283,9 @@ const slotCost = (slot: ItinerarySlot): number | null => {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--tm-space-2);
-  margin-top: var(--tm-space-4);
+  margin-top: var(--tm-space-5);
+  padding-top: var(--tm-space-4);
+  border-top: 1px solid var(--tm-color-border);
 }
 
 /* ---- Changed-day highlight ---- */
@@ -281,10 +316,10 @@ const slotCost = (slot: ItinerarySlot): number | null => {
   .tl-rail  { left: calc(var(--tm-space-6) * -1); }
   .pc { padding: var(--tm-space-4); }
   .pc-with-img { flex-direction: column; }
-  .pc-with-img .pc-body { padding: 0 var(--tm-space-4) var(--tm-space-4); }
+  .pc-with-img .pc-body { padding: var(--tm-space-4); }
   .pc-img {
     width: 100%;
-    max-height: 180px;
+    max-height: 220px;
     border-radius: var(--tm-radius-2xl) var(--tm-radius-2xl) 0 0;
   }
   .day-hdr { gap: var(--tm-space-2); margin-bottom: var(--tm-space-4); padding-bottom: var(--tm-space-3); }

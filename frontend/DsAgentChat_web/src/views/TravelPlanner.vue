@@ -43,8 +43,22 @@
         <!-- Chat Messages -->
         <div class="chat-messages">
           <div v-if="!chatHistory.length && phase === 'idle'" class="welcome">
-            <h2 class="welcome-title">想去哪里旅行？</h2>
-            <p class="welcome-sub">描述你的理想旅行，或者随便聊聊</p>
+            <div class="welcome-card">
+              <span class="welcome-kicker">AI Travel Concierge</span>
+              <h2 class="welcome-title">把下一段旅程，写成一份可以出发的计划。</h2>
+              <p class="welcome-sub">告诉我目的地、天数、预算和旅行节奏，我会把对话整理成行程、证据和地图点位。</p>
+              <div class="welcome-prompts" aria-label="推荐旅行需求">
+                <button
+                  v-for="prompt in welcomePrompts"
+                  :key="prompt"
+                  class="welcome-prompt"
+                  type="button"
+                  @click="submitQuery(prompt)"
+                >
+                  {{ prompt }}
+                </button>
+              </div>
+            </div>
           </div>
 
           <template v-for="msg in chatHistory" :key="msg.id">
@@ -293,6 +307,11 @@ const canReset = computed(() =>
   Boolean(itinerary.value) ||
   chatHistory.value.length > 0
 )
+const welcomePrompts = [
+  '帮我规划 3 天成都亲子游，预算中等，节奏轻松',
+  '帮我规划 4 天普吉岛轻松游，偏好海岛和美食',
+  '东京 5 天情侣旅行，想要城市漫步和好餐厅',
+]
 
 // ---------- Helpers ----------
 
@@ -782,24 +801,96 @@ const submitQuery = async (queryText: string) => {
 
 .welcome {
   margin: auto 0;
-  text-align: center;
-  padding: 40px 20px;
+  padding: var(--tm-space-4) 0 var(--tm-space-8);
   animation: fadeIn 0.6s ease-out both;
 }
 
+.welcome-card {
+  position: relative;
+  display: grid;
+  gap: var(--tm-space-4);
+  padding: var(--tm-space-6);
+  border: 1px solid var(--tm-color-border);
+  border-radius: var(--tm-radius-2xl);
+  background:
+    linear-gradient(145deg, rgba(24, 23, 20, 0.72), rgba(12, 12, 10, 0.52)),
+    radial-gradient(circle at 90% 10%, rgba(198, 161, 91, 0.16), transparent 36%);
+  box-shadow: var(--tm-shadow-card);
+  overflow: hidden;
+}
+
+.welcome-card::before {
+  content: '';
+  position: absolute;
+  inset: var(--tm-space-4);
+  border: 1px solid rgba(217, 199, 160, 0.08);
+  border-radius: calc(var(--tm-radius-2xl) - var(--tm-space-2));
+  pointer-events: none;
+}
+
+.welcome-kicker {
+  position: relative;
+  color: var(--tm-color-primary);
+  font-size: var(--tm-font-size-xs);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
 .welcome-title {
-  margin: 0 0 12px;
-  font-size: clamp(28px, 4vw, 40px);
+  position: relative;
+  max-width: 10em;
+  margin: 0;
+  font-size: clamp(32px, 5.4vw, 54px);
   font-weight: 800;
   color: var(--text);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
 }
 
 .welcome-sub {
+  position: relative;
+  max-width: 34em;
   margin: 0;
-  font-size: 14px;
-  color: var(--text-muted);
+  color: var(--text-sec);
+  font-size: var(--tm-font-size-sm);
   font-weight: 400;
+  line-height: var(--tm-line-height-normal);
+}
+
+.welcome-prompts {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--tm-space-2);
+  margin-top: var(--tm-space-2);
+}
+
+.welcome-prompt {
+  min-height: 34px;
+  padding: 0 var(--tm-space-3);
+  border: 1px solid var(--tm-color-border);
+  border-radius: var(--tm-radius-pill);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--tm-color-text-secondary);
+  font-size: var(--tm-font-size-xs);
+  font-weight: 700;
+  transition:
+    border-color var(--tm-motion-fast),
+    background var(--tm-motion-fast),
+    color var(--tm-motion-fast),
+    transform var(--tm-motion-fast);
+}
+
+.welcome-prompt:hover {
+  transform: translateY(-1px);
+  border-color: var(--tm-color-border-strong);
+  background: var(--tm-color-primary-soft);
+  color: var(--tm-color-text-primary);
+}
+
+.welcome-prompt:focus-visible {
+  box-shadow: var(--tm-shadow-focus);
 }
 
 /* ---- Chat Messages ---- */
