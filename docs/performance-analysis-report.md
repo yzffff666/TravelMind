@@ -740,8 +740,9 @@ EMBEDDING_MODEL: str = "bge-m3"
 | Evidence URL 缺失 | 部分 map/search evidence 无 URL | 可追溯性降低，产生 assumption | 中 |
 | Provider 降级 | 已记录 `provider_call`、`location_backfill`、`itinerary_quality_summary`；下一步需做降级率汇总 | 数据质量可观测性提升，但尚未形成趋势报表 | 中 |
 | 召回噪声 | 上海/北京仍可能过滤到泛新闻、旅行社等噪声 | 影响候选质量与用户信任 | 中 |
+| QP 模型增强评测 | Structured QP MVP 已落地，默认关闭，支持 `qp_source/confidence/fallback_reason`；仍缺真实中文 query 批量评测 | 后续多模型路由、缓存短路和局部复用都依赖 QP 判断准确性 | 高 |
 
-**优先处理建议**：下一步应扩大真实 Provider 样例集，并基于新增结构化日志统计 P50/P95、fallback 触发率、bbox invalid 比例和 evidence/source 缺失率。
+**优先处理建议**：下一步应先做 Structured QP 真实中文 query 评测，确认 `create/edit/qa/reset/chat` 与约束抽取准确率；随后扩大真实 Provider 样例集，并基于新增结构化日志统计 P50/P95、fallback 触发率、bbox invalid 比例和 evidence/source 缺失率。
 
 ---
 
@@ -765,11 +766,13 @@ EMBEDDING_MODEL: str = "bge-m3"
 | 1.10 | **坐标回填并发与时延预算**：并发解析缺坐标 slot，按 day 优先级提前停止 | 5.8 | `location_backfill_service.py` | 已实施，已补结构化日志，待批量 P95 统计 |
 | 1.11 | **海外 POI 置信度校验**：按目的地 bbox / address / source 限制误匹配 | 5.8 | `location_backfill_service.py` / `serp_providers.py` | 核心 smoke 2/9→9/9，待扩展更多城市 |
 | 1.12 | **编辑局部回填深化**：从 changed day 升级到 changed slot + transit 影响域 | 5.8 / 6.5.3 | `patch_engine.py` / `travel.py` | 多轮微调稳定在秒级，并减少无关回填 |
+| 1.13 | **Structured QP 真实评测**：规则 baseline vs LLM Structured QP 对比 | 5.8 / T-M2-009a | `query_processor.py` / `structured_qp.py` / evaluation docs | 已落地 MVP，待用 30-50 条真实中文 query 验证是否默认开启 |
 
 **验证标准**：
 - 语义缓存 lookup：1000 条时 <10ms（当前 ~500ms）
 - 完全重复查询 <5ms（L0 命中）
 - LLM 偶发失败重试恢复率提升
+- Structured QP 评测记录包含 intent 准确率、低置信度比例和 fallback_reason 分布
 - 全量回归测试通过
 - 海外地图不空白，普吉岛 Day marker 在 OpenStreetMap 正常显示
 - 坐标回填不引入跨国家/跨城市误匹配
@@ -1214,6 +1217,12 @@ cd llm_backend && py -X utf8 tests/test_e2e_performance.py
 • 分步并行生成：大纲+按天并行，LLM 耗时预期提升 60~80%
 • 热门模板缓存：Top-50 城市预生成，覆盖 40~60% 查询，命中 <1s
 • Prompt 深度压缩：精简模板 → LLM 时间 -30~50%
+
+Structured QP 新增结论（v5.5）：
+• 已新增 `structured_qp.py`：LLM Structured Output + Pydantic schema 校验，输出兼容 `QPOutput`
+• 默认 `ENABLE_STRUCTURED_QP=false`，开启后低置信度、超时、异常、JSON 非法均回退规则 baseline
+• `travel.py` 已记录 `qp_source/confidence/fallback_reason`，可支撑后续真实 query 评测和多模型路由决策
+• 下一步应先做 30-50 条真实中文 query 的 rule vs structured 对比，再决定是否灰度开启
 
 已规划优化策略 — 流水线维度（6.5 新增）：
 • 分层缓存短路：各阶段(recall/rank/LLM)独立缓存，命中即跳过后续
