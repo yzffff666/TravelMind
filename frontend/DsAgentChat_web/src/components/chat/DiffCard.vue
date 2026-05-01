@@ -113,7 +113,7 @@ defineProps<{ diff: EditDiffData }>()
   height: 6px;
   border-radius: 50%;
   background: var(--tm-color-cyan);
-  box-shadow: 0 0 14px rgba(34, 211, 238, 0.34);
+  box-shadow: 0 0 14px rgba(216, 192, 138, 0.34);
 }
 
 .diff-days {

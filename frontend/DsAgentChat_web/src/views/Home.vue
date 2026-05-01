@@ -3212,12 +3212,12 @@ button.delete-btn:hover {
   display: flex;
   align-items: center;
   padding: 12px 14px;
-  background: linear-gradient(135deg, #4b4bff 0%, #6366f1 60%, #7c83ff 100%);
+  background: var(--tm-gradient-brand);
   border-radius: 12px;
   cursor: pointer;
   margin-bottom: 12px;
   transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-  box-shadow: 0 4px 12px rgba(75, 75, 255, 0.28);
+  box-shadow: var(--tm-shadow-glow);
   position: relative;
   overflow: hidden;
 }

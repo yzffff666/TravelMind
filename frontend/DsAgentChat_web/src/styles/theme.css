@@ -1,33 +1,33 @@
 :root {
   color-scheme: dark;
 
-  --tm-color-bg: #070814;
-  --tm-color-bg-soft: #0d1020;
-  --tm-color-bg-glow: rgba(99, 102, 241, 0.24);
-  --tm-color-surface: rgba(15, 23, 42, 0.72);
-  --tm-color-surface-elevated: rgba(24, 31, 52, 0.78);
-  --tm-color-surface-solid: #121827;
-  --tm-color-border: rgba(148, 163, 184, 0.18);
-  --tm-color-border-strong: rgba(199, 210, 254, 0.28);
+  --tm-color-bg: #050505;
+  --tm-color-bg-soft: #0f0f0d;
+  --tm-color-bg-glow: rgba(198, 161, 91, 0.18);
+  --tm-color-surface: rgba(18, 18, 16, 0.78);
+  --tm-color-surface-elevated: rgba(28, 27, 23, 0.84);
+  --tm-color-surface-solid: #171713;
+  --tm-color-border: rgba(217, 199, 160, 0.16);
+  --tm-color-border-strong: rgba(232, 211, 166, 0.32);
 
-  --tm-color-text-primary: #f8fafc;
-  --tm-color-text-secondary: #cbd5e1;
-  --tm-color-text-muted: #8b98ad;
-  --tm-color-text-inverse: #07111f;
+  --tm-color-text-primary: #f7f2e8;
+  --tm-color-text-secondary: #d2c5ac;
+  --tm-color-text-muted: #8f846f;
+  --tm-color-text-inverse: #080806;
 
-  --tm-color-primary: #8b5cf6;
-  --tm-color-primary-hover: #a78bfa;
-  --tm-color-primary-soft: rgba(139, 92, 246, 0.16);
-  --tm-color-cyan: #22d3ee;
-  --tm-color-indigo: #6366f1;
-  --tm-color-violet: #8b5cf6;
-  --tm-color-success: #34d399;
-  --tm-color-warning: #fbbf24;
-  --tm-color-danger: #fb7185;
-  --tm-color-info: #38bdf8;
+  --tm-color-primary: #c6a15b;
+  --tm-color-primary-hover: #dfc382;
+  --tm-color-primary-soft: rgba(198, 161, 91, 0.16);
+  --tm-color-cyan: #d8c08a;
+  --tm-color-indigo: #8a7652;
+  --tm-color-violet: #b4925c;
+  --tm-color-success: #9fbe9b;
+  --tm-color-warning: #d5a84d;
+  --tm-color-danger: #d47d71;
+  --tm-color-info: #c9b06e;
 
-  --tm-gradient-brand: linear-gradient(135deg, #6366f1 0%, #8b5cf6 48%, #22d3ee 100%);
-  --tm-gradient-surface: linear-gradient(145deg, rgba(15, 23, 42, 0.86), rgba(30, 41, 59, 0.58));
+  --tm-gradient-brand: linear-gradient(135deg, #7b6744 0%, #c6a15b 52%, #f0d89b 100%);
+  --tm-gradient-surface: linear-gradient(145deg, rgba(17, 17, 15, 0.9), rgba(35, 33, 28, 0.68));
 
   --tm-font-sans: Inter, "Noto Sans SC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --tm-font-size-xs: 12px;
@@ -57,9 +57,9 @@
   --tm-radius-2xl: 24px;
   --tm-radius-pill: 999px;
 
-  --tm-shadow-card: 0 18px 60px rgba(2, 6, 23, 0.38);
-  --tm-shadow-glow: 0 0 48px rgba(99, 102, 241, 0.24);
-  --tm-shadow-focus: 0 0 0 3px rgba(34, 211, 238, 0.22);
+  --tm-shadow-card: 0 18px 60px rgba(0, 0, 0, 0.52);
+  --tm-shadow-glow: 0 0 48px rgba(198, 161, 91, 0.22);
+  --tm-shadow-focus: 0 0 0 3px rgba(216, 192, 138, 0.24);
 
   --tm-blur-glass: blur(22px);
   --tm-motion-fast: 140ms ease;
@@ -81,9 +81,9 @@ body,
 body {
   margin: 0;
   background:
-    radial-gradient(circle at 12% 10%, rgba(99, 102, 241, 0.28), transparent 34%),
-    radial-gradient(circle at 88% 18%, rgba(34, 211, 238, 0.18), transparent 32%),
-    radial-gradient(circle at 70% 92%, rgba(139, 92, 246, 0.18), transparent 30%),
+    radial-gradient(circle at 12% 10%, rgba(198, 161, 91, 0.18), transparent 34%),
+    radial-gradient(circle at 88% 18%, rgba(245, 232, 198, 0.08), transparent 32%),
+    radial-gradient(circle at 70% 92%, rgba(124, 103, 68, 0.14), transparent 30%),
     var(--tm-color-bg);
   color: var(--tm-color-text-primary);
   font-family: var(--tm-font-sans);

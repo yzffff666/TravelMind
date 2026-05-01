@@ -84,11 +84,11 @@ let leafletMarkerBySlot = new Map<number, any>()
 let _mapLoading = false
 
 const SLOT_COLORS: Record<string, string> = {
-  '上午': '#3B82F6',
-  '下午': '#F59E0B',
-  '晚上': '#8B5CF6',
+  '上午': '#c6a15b',
+  '下午': '#8f7a55',
+  '晚上': '#5f5441',
 }
-const DEFAULT_COLOR = '#10B981'
+const DEFAULT_COLOR = '#9fbe9b'
 
 const dayTabs = computed(() =>
   props.days.map(d => ({ index: d.day_index, theme: d.theme }))
@@ -359,7 +359,7 @@ function renderAmapMarkers() {
   if (positions.length >= 2) {
     polyline = new AMapLib.Polyline({
       path: positions,
-      strokeColor: '#6366F1',
+      strokeColor: '#c6a15b',
       strokeWeight: 3,
       strokeOpacity: 0.7,
       strokeStyle: 'dashed',
@@ -420,7 +420,7 @@ function renderLeafletMarkers() {
 
   if (latLngs.length >= 2) {
     leafletPolyline = leafletLib.polyline(latLngs, {
-      color: '#6366F1',
+      color: '#c6a15b',
       weight: 3,
       opacity: 0.7,
       dashArray: '8, 6',
@@ -506,8 +506,8 @@ defineExpose({ highlightSlot })
   border-radius: var(--tm-radius-2xl);
   overflow: hidden;
   background:
-    radial-gradient(circle at 20% 18%, rgba(34, 211, 238, 0.16), transparent 28%),
-    linear-gradient(145deg, rgba(15, 23, 42, 0.88), rgba(30, 41, 59, 0.68));
+    radial-gradient(circle at 20% 18%, rgba(198, 161, 91, 0.14), transparent 28%),
+    linear-gradient(145deg, rgba(12, 12, 10, 0.9), rgba(34, 32, 27, 0.72));
 }
 
 .map-container {
@@ -550,7 +550,7 @@ defineExpose({ highlightSlot })
   padding: var(--tm-space-6);
   color: var(--tm-color-text-secondary);
   background:
-    radial-gradient(circle at 50% 32%, rgba(99, 102, 241, 0.22), transparent 36%),
+    radial-gradient(circle at 50% 32%, rgba(198, 161, 91, 0.18), transparent 36%),
     rgba(7, 8, 20, 0.9);
 }
 
@@ -676,7 +676,7 @@ defineExpose({ highlightSlot })
 }
 
 .day-tab.active {
-  border-color: rgba(34, 211, 238, 0.42);
+  border-color: rgba(216, 192, 138, 0.42);
   background: var(--tm-gradient-brand);
   color: var(--tm-color-text-primary);
 }

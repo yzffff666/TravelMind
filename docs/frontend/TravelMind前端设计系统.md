@@ -23,11 +23,13 @@ TravelMind 的前端目标是从 demo 级聊天页面升级为产品级 AI 旅�
 
 ### 色彩
 
-主色使用 indigo / violet / cyan 渐变。深色背景分为三层：
+主色使用 noir graphite / warm champagne / soft ivory。整体应接近黑色高级旅行产品，而不是蓝紫科技面板。深色背景分为三层：
 
 - `background`：页面底色。
 - `surface`：主面板。
 - `surfaceElevated`：浮层、卡片、输入区。
+
+品牌色使用暖金属感渐变，控制饱和度；蓝色不作为主视觉，只可在地图底图或第三方内容中自然出现。
 
 状态色必须语义化：
 

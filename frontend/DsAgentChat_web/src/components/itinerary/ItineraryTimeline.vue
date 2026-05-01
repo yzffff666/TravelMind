@@ -161,7 +161,7 @@ const slotCost = (slot: ItinerarySlot): number | null => {
   border-radius: 50%;
   background: var(--tm-color-bg);
   border: 2px solid var(--tm-color-cyan);
-  box-shadow: 0 0 18px rgba(34, 211, 238, 0.34);
+  box-shadow: 0 0 18px rgba(216, 192, 138, 0.34);
   flex-shrink: 0;
   z-index: 1;
   margin-top: var(--tm-space-4);

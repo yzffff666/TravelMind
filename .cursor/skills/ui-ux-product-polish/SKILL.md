@@ -13,8 +13,8 @@ TravelMind should feel like a premium AI travel companion:
 
 - Dark-first, calm, trustworthy, modern.
 - AI copilot workspace + travel itinerary cards.
-- Indigo / violet / cyan brand gradient.
-- Soft glass panels, subtle map-route/star/grid/glow details.
+- Noir graphite / warm champagne / soft ivory brand palette.
+- Soft glass panels, subtle map-route/star/grid/warm glow details.
 - Clean typography and strong hierarchy.
 - Avoid generic admin dashboards, random colors, emoji-as-icons, heavy borders, and low-contrast gray text.
 

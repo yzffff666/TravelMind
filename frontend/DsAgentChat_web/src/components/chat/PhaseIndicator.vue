@@ -75,7 +75,7 @@ const tone = computed<'neutral' | 'info' | 'success' | 'warning' | 'danger'>(() 
   position: absolute;
   inset: auto -20% -60% 20%;
   height: 90px;
-  background: radial-gradient(circle, rgba(34, 211, 238, 0.2), transparent 68%);
+  background: radial-gradient(circle, rgba(198, 161, 91, 0.2), transparent 68%);
   pointer-events: none;
 }
 
@@ -101,16 +101,16 @@ const tone = computed<'neutral' | 'info' | 'success' | 'warning' | 'danger'>(() 
   height: 9px;
   border-radius: 50%;
   background: var(--tm-color-cyan);
-  box-shadow: 0 0 0 0 rgba(34, 211, 238, 0.36);
+  box-shadow: 0 0 0 0 rgba(216, 192, 138, 0.36);
   animation: phase-pulse 1.5s ease-out infinite;
 }
 
 @keyframes phase-pulse {
   70% {
-    box-shadow: 0 0 0 12px rgba(34, 211, 238, 0);
+    box-shadow: 0 0 0 12px rgba(216, 192, 138, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(34, 211, 238, 0);
+    box-shadow: 0 0 0 0 rgba(216, 192, 138, 0);
   }
 }
 </style>

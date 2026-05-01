@@ -49,7 +49,7 @@ Design direction:
 
 - Premium dark AI travel companion, not a generic admin dashboard.
 - AI copilot workspace + travel itinerary cards.
-- Indigo / violet / cyan brand gradient.
+- Noir graphite / warm champagne / soft ivory brand palette.
 - Soft glass panels, subtle map/route/star/glow details, clean typography.
 - Avoid random raw colors, emoji icons, inconsistent shadows, and page-local design systems.
 

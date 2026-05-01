@@ -554,8 +554,8 @@ const submitQuery = async (queryText: string) => {
   padding: var(--tm-space-3);
   gap: var(--tm-space-3);
   background:
-    radial-gradient(circle at 18% 12%, rgba(99, 102, 241, 0.22), transparent 32%),
-    radial-gradient(circle at 82% 8%, rgba(34, 211, 238, 0.14), transparent 28%),
+    radial-gradient(circle at 18% 12%, rgba(198, 161, 91, 0.18), transparent 32%),
+    radial-gradient(circle at 82% 8%, rgba(245, 232, 198, 0.08), transparent 28%),
     var(--bg-deep);
   color: var(--text);
   font-family: var(--tm-font-sans);

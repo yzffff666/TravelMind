@@ -50,7 +50,7 @@ const categories = computed(() => {
   const total = props.budget.total_estimate || 1
   const mapping: [string, number | null | undefined, string][] = [
     ['交通', cat.transport, 'info'],
-    ['住宿', cat.hotel, 'violet'],
+    ['住宿', cat.hotel, 'lodging'],
     ['门票', cat.tickets, 'warning'],
     ['餐饮', cat.food, 'success'],
     ['其他', cat.other, 'neutral'],
@@ -131,8 +131,8 @@ const categories = computed(() => {
 .bgt-dot--info,
 .bgt-fill--info { background: var(--tm-color-info); }
 
-.bgt-dot--violet,
-.bgt-fill--violet { background: var(--tm-color-violet); }
+.bgt-dot--lodging,
+.bgt-fill--lodging { background: var(--tm-color-violet); }
 
 .bgt-dot--warning,
 .bgt-fill--warning { background: var(--tm-color-warning); }
