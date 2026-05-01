@@ -356,6 +356,47 @@ class TestLlmDraftNode:
         assert result["perf"]["llm_ttft_ms"] is not None
         assert result["perf"]["llm_ttft_ms"] >= 0
 
+    def test_llm_retry_recovers_from_transient_failure(self, monkeypatch):
+        from app.core.config import settings
+        from app.lg_agent.travel_draft_graph import llm_draft_node
+
+        monkeypatch.setattr(settings, "TRAVEL_DRAFT_LLM_MAX_ATTEMPTS", 2)
+        monkeypatch.setattr(settings, "TRAVEL_DRAFT_LLM_TIMEOUT_SECONDS", 5.0)
+        monkeypatch.setattr(settings, "TRAVEL_DRAFT_LLM_RETRY_BACKOFF_SECONDS", 0.0)
+
+        state = {
+            "query": "上海 3天 预算5000",
+            "destination": "上海",
+            "days_count": 3,
+            "total_budget": 5000.0,
+            "traveler_type": None,
+            "preferences": [],
+            "pace": None,
+            "assumptions": [],
+            "pipeline_result": None,
+            "perf": {},
+        }
+        attempts = 0
+        flaky_llm = MagicMock()
+
+        async def flaky_astream(*a, **kw):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("temporary llm failure")
+            for i in range(0, len(_MOCK_LLM_RESPONSE), 100):
+                chunk = MagicMock()
+                chunk.content = _MOCK_LLM_RESPONSE[i:i + 100]
+                yield chunk
+
+        flaky_llm.astream = flaky_astream
+        with patch("app.lg_agent.travel_draft_graph._get_llm", return_value=flaky_llm):
+            result = _run(llm_draft_node(state))
+
+        assert result["itinerary"] is not None
+        assert result["perf"]["llm_attempts"] == 2
+        assert result["perf"]["llm_status"] == "ok"
+
 
 # ===================================================================
 # Full-graph integration tests (output contract must match old single-node)

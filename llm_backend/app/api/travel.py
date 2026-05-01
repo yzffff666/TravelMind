@@ -1,5 +1,7 @@
 import os
+import time
 from datetime import datetime
+from hashlib import md5
 from pathlib import Path
 from typing import Optional
 
@@ -40,6 +42,59 @@ edit_backfill_service = LocationBackfillService(
     provider_timeout_seconds=1.5,
     total_budget_seconds=3.0,
 )
+_active_request_fingerprints: dict[str, float] = {}
+
+
+def _request_fingerprint(*, user_id: int, conversation_id: str | None, query: str) -> str:
+    scope = conversation_id or "new"
+    normalized = " ".join((query or "").strip().lower().split())
+    raw = f"{user_id}|{scope}|{normalized}"
+    return md5(raw.encode("utf-8")).hexdigest()
+
+
+def _try_acquire_request_fingerprint(fingerprint: str) -> bool:
+    now = time.monotonic()
+    ttl = max(0.1, settings.TRAVEL_REQUEST_DEDUPE_TTL_SECONDS)
+    expired = [key for key, ts in _active_request_fingerprints.items() if now - ts >= ttl]
+    for key in expired:
+        _active_request_fingerprints.pop(key, None)
+
+    if fingerprint in _active_request_fingerprints:
+        return False
+    _active_request_fingerprints[fingerprint] = now
+    return True
+
+
+def _release_request_fingerprint(fingerprint: str | None) -> None:
+    if fingerprint:
+        _active_request_fingerprints.pop(fingerprint, None)
+
+
+async def _guard_stream(stream, fingerprint: str):
+    try:
+        async for line in stream:
+            yield line
+    finally:
+        _release_request_fingerprint(fingerprint)
+
+
+def _guard_response(response: StreamingResponse, fingerprint: str | None) -> StreamingResponse:
+    if fingerprint:
+        response.body_iterator = _guard_stream(response.body_iterator, fingerprint)
+    return response
+
+
+def _build_duplicate_request_response(*, request_id: str, conversation_id: str) -> StreamingResponse:
+    return StreamingResponse(
+        _stream_intent_text_response(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            intent="chat",
+            intent_detail="general_chat",
+            text="相同请求正在处理中，请稍等当前结果返回后再继续。",
+        ),
+        media_type="text/event-stream",
+    )
 
 
 async def _build_qp_context(conversation_id: str) -> dict | None:
@@ -703,6 +758,7 @@ async def langgraph_query(
     image: Optional[UploadFile] = File(None),
 ):
     """旅行规划主入口：新建/续跑会话 + 澄清门槛 + SSE 流式输出。"""
+    request_fingerprint: str | None = None
     # 处理行程查询请求
     try:
         logger.info(f"Processing travel planning query for user {user_id} and conversation {conversation_id}")
@@ -728,6 +784,27 @@ async def langgraph_query(
         # 会话线程ID：有 conversation_id 就复用，否则生成新会话。
         thread_id = conversation_id if conversation_id else new_uuid()
         request_id = new_uuid()
+        request_fingerprint = _request_fingerprint(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            query=query,
+        )
+        if not _try_acquire_request_fingerprint(request_fingerprint):
+            logger.info(
+                "duplicate_travel_request",
+                extra={
+                    "conversation_id": conversation_id,
+                    "user_id": user_id,
+                    "dedupe_ttl_seconds": settings.TRAVEL_REQUEST_DEDUPE_TTL_SECONDS,
+                },
+            )
+            response = _build_duplicate_request_response(
+                request_id=request_id,
+                conversation_id=thread_id,
+            )
+            response.headers["X-Conversation-ID"] = thread_id
+            return response
+
         qp_output = await _process_qp(query, thread_id)
         normalized_query = qp_output["normalized_query"]
         recall_query = qp_output["recall_query"]
@@ -771,7 +848,7 @@ async def langgraph_query(
                 last_user_query=query,
             )
             response.headers["X-Conversation-ID"] = thread_id
-            return response
+            return _guard_response(response, request_fingerprint)
 
         # --- Guided conversation: follow-up to pending clarification ---
         if clarification_service.has_pending(thread_id):
@@ -798,7 +875,7 @@ async def langgraph_query(
                     media_type="text/event-stream",
                 )
                 response.headers["X-Conversation-ID"] = thread_id
-                return response
+                return _guard_response(response, request_fingerprint)
 
             if decision.get("has_pending"):
                 combined_query = decision["combined_query"]
@@ -830,7 +907,7 @@ async def langgraph_query(
                     process_guided_complete(), media_type="text/event-stream",
                 )
                 response.headers["X-Conversation-ID"] = thread_id
-                return response
+                return _guard_response(response, request_fingerprint)
 
         if intent in {"edit", "qa"}:
             response = await _build_edit_qa_response(
@@ -842,7 +919,7 @@ async def langgraph_query(
                 user_id=user_id,
             )
             response.headers["X-Conversation-ID"] = thread_id
-            return response
+            return _guard_response(response, request_fingerprint)
 
         if intent == "chat":
             chat_text = await _generate_chat_response(query, thread_id)
@@ -857,7 +934,7 @@ async def langgraph_query(
                 media_type="text/event-stream",
             )
             response.headers["X-Conversation-ID"] = thread_id
-            return response
+            return _guard_response(response, request_fingerprint)
 
         # --- Create intent: first clarification gate ---
         decision = clarification_service.start_new(thread_id=thread_id, query=normalized_query)
@@ -881,7 +958,7 @@ async def langgraph_query(
                 media_type="text/event-stream",
             )
             response.headers["X-Conversation-ID"] = thread_id
-            return response
+            return _guard_response(response, request_fingerprint)
 
         logger.info("Clarification gate passed, generating minimal itinerary draft.")
 
@@ -904,10 +981,12 @@ async def langgraph_query(
 
         response = StreamingResponse(process_stream(), media_type="text/event-stream")
         response.headers["X-Conversation-ID"] = thread_id
-        return response
+        return _guard_response(response, request_fingerprint)
     except HTTPException:
+        _release_request_fingerprint(request_fingerprint)
         raise
     except Exception as e:
+        _release_request_fingerprint(request_fingerprint)
         logger.error(f"LangGraph query error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -917,6 +996,7 @@ async def langgraph_query(
 @router.post("/langgraph/resume")
 async def langgraph_resume(request: LangGraphResumeRequest):
     """恢复旅行规划流程：优先补全 pending 澄清，再 resume 图执行。"""
+    request_fingerprint: str | None = None
     # 处理行程恢复请求
     try:
         logger.info(f"Resuming travel planning query for user {request.user_id} with conversation {request.conversation_id}")
@@ -925,6 +1005,27 @@ async def langgraph_resume(request: LangGraphResumeRequest):
         # 创建线程ID
         thread_id = request.conversation_id
         request_id = new_uuid()
+        request_fingerprint = _request_fingerprint(
+            user_id=request.user_id,
+            conversation_id=thread_id,
+            query=request.query,
+        )
+        if not _try_acquire_request_fingerprint(request_fingerprint):
+            logger.info(
+                "duplicate_travel_resume_request",
+                extra={
+                    "conversation_id": thread_id,
+                    "user_id": request.user_id,
+                    "dedupe_ttl_seconds": settings.TRAVEL_REQUEST_DEDUPE_TTL_SECONDS,
+                },
+            )
+            response = _build_duplicate_request_response(
+                request_id=request_id,
+                conversation_id=thread_id,
+            )
+            response.headers["X-Conversation-ID"] = thread_id
+            return response
+
         qp_output = await _process_qp(request.query, thread_id)
         normalized_query = qp_output["normalized_query"]
         recall_query = qp_output["recall_query"]
@@ -960,7 +1061,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 last_user_query=request.query,
             )
             response.headers["X-Conversation-ID"] = thread_id
-            return response
+            return _guard_response(response, request_fingerprint)
 
         # 若该线程仍有待澄清项，优先完成澄清闭环。
         if clarification_service.has_pending(thread_id):
@@ -992,7 +1093,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                     media_type="text/event-stream",
                 )
                 response.headers["X-Conversation-ID"] = thread_id
-                return response
+                return _guard_response(response, request_fingerprint)
 
             # 将初始 query 与补充信息合并后重启输入，避免上下文丢失。
             combined_query = decision["combined_query"]
@@ -1020,7 +1121,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
 
             response = StreamingResponse(process_resume_after_clarification(), media_type="text/event-stream")
             response.headers["X-Conversation-ID"] = thread_id
-            return response
+            return _guard_response(response, request_fingerprint)
 
         if intent in {"edit", "qa"}:
             response = await _build_edit_qa_response(
@@ -1032,7 +1133,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 user_id=request.user_id,
             )
             response.headers["X-Conversation-ID"] = thread_id
-            return response
+            return _guard_response(response, request_fingerprint)
 
         # 无 pending 时，直接按当前补充信息生成最小结构化草案。
         async def process_resume():
@@ -1054,11 +1155,13 @@ async def langgraph_resume(request: LangGraphResumeRequest):
 
         response = StreamingResponse(process_resume(), media_type="text/event-stream")
         response.headers["X-Conversation-ID"] = thread_id
-        return response
+        return _guard_response(response, request_fingerprint)
 
     except HTTPException:
+        _release_request_fingerprint(request_fingerprint)
         raise
     except Exception as e:
+        _release_request_fingerprint(request_fingerprint)
         logger.error(f"LangGraph resume error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 

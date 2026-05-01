@@ -98,3 +98,22 @@ def test_clarification_stream_backward_compatible_text_fallback():
     assert data_2["event"] == "stage_progress"
     assert data_2["missing_required"] == ["destination"]
 
+
+def test_travel_request_fingerprint_dedupes_active_request(monkeypatch):
+    from app.api import travel
+
+    monkeypatch.setattr(travel.settings, "TRAVEL_REQUEST_DEDUPE_TTL_SECONDS", 5.0)
+    travel._active_request_fingerprints.clear()
+
+    fingerprint = travel._request_fingerprint(
+        user_id=1,
+        conversation_id="conv_001",
+        query="上海 3天 预算5000",
+    )
+    assert travel._try_acquire_request_fingerprint(fingerprint) is True
+    assert travel._try_acquire_request_fingerprint(fingerprint) is False
+
+    travel._release_request_fingerprint(fingerprint)
+    assert travel._try_acquire_request_fingerprint(fingerprint) is True
+    travel._active_request_fingerprints.clear()
+

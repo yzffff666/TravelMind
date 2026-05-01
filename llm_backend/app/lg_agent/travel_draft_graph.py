@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re as _re
 import time
@@ -424,6 +425,60 @@ def _get_llm():
     )
 
 
+async def _collect_llm_stream_with_retry(llm, messages: list[dict]) -> tuple[str, float | None, int]:
+    """Collect streamed LLM content with a hard timeout and bounded retries."""
+    max_attempts = max(1, settings.TRAVEL_DRAFT_LLM_MAX_ATTEMPTS)
+    timeout_seconds = max(0.1, settings.TRAVEL_DRAFT_LLM_TIMEOUT_SECONDS)
+    backoff_seconds = max(0.0, settings.TRAVEL_DRAFT_LLM_RETRY_BACKOFF_SECONDS)
+    last_exc: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        attempt_started = time.perf_counter()
+        first_token_at: float | None = None
+        buffer = ""
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                async for chunk in llm.astream(messages):
+                    if chunk.content:
+                        if first_token_at is None:
+                            first_token_at = time.perf_counter()
+                        buffer += chunk.content
+            elapsed_ms = (time.perf_counter() - attempt_started) * 1000
+            logger.info(
+                "llm_draft_call",
+                extra={
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                    "timeout_ms": int(timeout_seconds * 1000),
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "ttft_ms": round((first_token_at - attempt_started) * 1000, 2) if first_token_at else None,
+                    "status": "ok",
+                },
+            )
+            return buffer, first_token_at, attempt
+        except Exception as exc:  # noqa: BLE001
+            elapsed_ms = (time.perf_counter() - attempt_started) * 1000
+            last_exc = exc
+            logger.warning(
+                "llm_draft_call_failed",
+                extra={
+                    "attempt": attempt,
+                    "max_attempts": max_attempts,
+                    "timeout_ms": int(timeout_seconds * 1000),
+                    "elapsed_ms": round(elapsed_ms, 2),
+                    "status": "failed",
+                    "error_type": type(exc).__name__,
+                    "retryable": attempt < max_attempts,
+                },
+            )
+            if attempt >= max_attempts:
+                break
+            await asyncio.sleep(backoff_seconds * attempt)
+
+    assert last_exc is not None
+    raise last_exc
+
+
 def _build_template_itinerary(
     destination: str,
     days_count: int,
@@ -689,6 +744,8 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
     """Node 3: Call LLM to generate the itinerary draft."""
     t0 = time.perf_counter()
     t_first_token = None
+    llm_attempts = 0
+    llm_status = "not_called"
 
     destination = state["destination"]
     days_count = state["days_count"]
@@ -724,13 +781,8 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
         ]
         logger.info(f"Calling LLM for travel draft: {destination} {days_count}天 预算{int(total_budget)}")
 
-        buffer = ""
-        async for chunk in llm.astream(messages):
-            if chunk.content:
-                if t_first_token is None:
-                    t_first_token = time.perf_counter()
-                buffer += chunk.content
-        raw_content = buffer
+        raw_content, t_first_token, llm_attempts = await _collect_llm_stream_with_retry(llm, messages)
+        llm_status = "ok"
 
         itinerary = _parse_llm_itinerary(
             raw=raw_content,
@@ -752,6 +804,7 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
         logger.info("LLM travel draft generated successfully")
 
     except Exception as e:
+        llm_status = "fallback"
         logger.warning(f"LLM draft generation failed, falling back to template: {e}")
         assumptions.append(f"LLM 生成失败（{type(e).__name__}），已降级为模板草案。")
         itinerary = _build_template_itinerary(
@@ -772,7 +825,13 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
         "itinerary": itinerary_dict,
         "explanation": explanation,
         "assumptions": assumptions,
-        "perf": {**state.get("perf", {}), "llm_ms": elapsed, "llm_ttft_ms": ttft},
+        "perf": {
+            **state.get("perf", {}),
+            "llm_ms": elapsed,
+            "llm_ttft_ms": ttft,
+            "llm_attempts": llm_attempts,
+            "llm_status": llm_status,
+        },
     }
 
 

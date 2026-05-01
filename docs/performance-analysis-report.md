@@ -740,9 +740,11 @@ EMBEDDING_MODEL: str = "bge-m3"
 | Evidence URL 缺失 | 部分 map/search evidence 无 URL | 可追溯性降低，产生 assumption | 中 |
 | Provider 降级 | 已记录 `provider_call`、`location_backfill`、`itinerary_quality_summary`；下一步需做降级率汇总 | 数据质量可观测性提升，但尚未形成趋势报表 | 中 |
 | 召回噪声 | 上海/北京仍可能过滤到泛新闻、旅行社等噪声 | 影响候选质量与用户信任 | 中 |
-| QP 模型增强评测 | Structured QP MVP 已落地，默认关闭，支持 `qp_source/confidence/fallback_reason`；仍缺真实中文 query 批量评测 | 后续多模型路由、缓存短路和局部复用都依赖 QP 判断准确性 | 高 |
+| QP 模型增强评测 | Structured QP MVP 已落地，默认关闭，支持 `qp_source/confidence/fallback_reason`；已完成 30 条真实中文评测与本地灰度 smoke，仍需扩展到 60-100 条 | 后续多模型路由、缓存短路和局部复用都依赖 QP 判断准确性 | 中 |
+| LLM 调用稳定性 | 草案生成与澄清/闲聊 LLM 已补 timeout、bounded retry 与 latency logging；仍需真实流量观察超时率与重试恢复率 | 远程 LLM 是主链路尾延迟和失败率核心来源 | 高 |
+| 重复请求保护 | `/travel/query` 与 `/travel/resume` 已增加进程内 TTL 请求指纹去重；仍未做跨进程/Redis 级去重 | 降低重复点击、刷新重发造成的重复生成与状态写入 | 中 |
 
-**优先处理建议**：下一步应先做 Structured QP 真实中文 query 评测，确认 `create/edit/qa/reset/chat` 与约束抽取准确率；随后扩大真实 Provider 样例集，并基于新增结构化日志统计 P50/P95、fallback 触发率、bbox invalid 比例和 evidence/source 缺失率。
+**优先处理建议**：下一步应基于新增 LLM latency/retry 日志统计 P50/P95、timeout 率、重试恢复率与 fallback 触发率；同时将 Structured QP 样例扩展到 60-100 条，并继续扩大真实 Provider 样例集，统计 bbox invalid 比例和 evidence/source 缺失率。
 
 ---
 
@@ -758,15 +760,15 @@ EMBEDDING_MODEL: str = "bge-m3"
 | 1.2 | **L2 FAISS 替换暴力扫描**：`faiss.IndexFlatIP` | G1 | `redis_semantic_cache.py` | lookup O(n)→O(log n) |
 | 1.3 | **消除 `redis.keys()`**：改用 `SCAN` 命令 | G1 | `redis_semantic_cache.py` | 不阻塞 Redis |
 | 1.4 | **LLM 单例化** | G2 | `travel_draft_graph.py` | 省去重复实例化 |
-| 1.5 | **LLM retry + timeout**：tenacity + wait_for(90s) | G2 | `travel_draft_graph.py` | 模板降级率 -80% |
+| 1.5 | **LLM retry + timeout**：配置化 timeout + bounded retry + latency logging | G2 | `travel_draft_graph.py` / `deepseek_service.py` | 已实施，待真实流量统计恢复率 |
 | 1.6 | **Embedding 连接池**：共享 ClientSession | G3 | `redis_semantic_cache.py` | -20ms/次 |
 | 1.7 | **L0 查询级缓存**：MD5(query+constraints) → 完整结果 | 6.5.2 | `travel_draft_graph.py` | 重复查询 <5ms |
-| 1.8 | **请求去重**：相同指纹 5s 内合并 | 6.5.5 | `travel.py` | 防重复提交 |
+| 1.8 | **请求去重**：相同指纹 5s 内拦截 | 6.5.5 | `travel.py` | 已实施进程内 TTL guard，后续可升级 Redis 跨进程 |
 | 1.9 | **变更字段检测**：extract_node 增加 diff 逻辑 | 6.5.3 | `travel_draft_graph.py` | 为局部复用铺路 |
 | 1.10 | **坐标回填并发与时延预算**：并发解析缺坐标 slot，按 day 优先级提前停止 | 5.8 | `location_backfill_service.py` | 已实施，已补结构化日志，待批量 P95 统计 |
 | 1.11 | **海外 POI 置信度校验**：按目的地 bbox / address / source 限制误匹配 | 5.8 | `location_backfill_service.py` / `serp_providers.py` | 核心 smoke 2/9→9/9，待扩展更多城市 |
 | 1.12 | **编辑局部回填深化**：从 changed day 升级到 changed slot + transit 影响域 | 5.8 / 6.5.3 | `patch_engine.py` / `travel.py` | 多轮微调稳定在秒级，并减少无关回填 |
-| 1.13 | **Structured QP 真实评测**：规则 baseline vs LLM Structured QP 对比 | 5.8 / T-M2-009a | `query_processor.py` / `structured_qp.py` / evaluation docs | 已落地 MVP，待用 30-50 条真实中文 query 验证是否默认开启 |
+| 1.13 | **Structured QP 真实评测**：规则 baseline vs LLM Structured QP 对比 | 5.8 / T-M2-009a | `query_processor.py` / `structured_qp.py` / evaluation docs | 已完成 30 条真实中文评测和本地灰度 smoke，待扩展 60-100 条 |
 
 **验证标准**：
 - 语义缓存 lookup：1000 条时 <10ms（当前 ~500ms）
