@@ -59,7 +59,7 @@
           autocomplete="new-password"
         />
 
-        <div class="agreement">
+        <div v-if="activeTab === 'register'" class="agreement">
           <input type="checkbox" v-model="form.agreement" id="agreement" />
           <label for="agreement">
             我已同意 <a href="#" @click.prevent="showTerms">用户协议</a> 与 <a href="#" @click.prevent="showPrivacy">隐私政策</a>
@@ -139,8 +139,8 @@ const validateRules = {
     message: '请输入有效的邮箱地址'
   },
   password: {
-    pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d]{8,}$/,
-    message: '密码必须包含大小写字母和数字，至少8位'
+    pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/,
+    message: '密码必须包含大小写字母和数字，至少8位，可使用特殊字符'
   }
 }
 
@@ -159,22 +159,24 @@ const validate = (field: 'username' | 'email' | 'password', value: string) => {
 
 const isFormValid = computed(() => {
   if (activeTab.value === 'login') {
-    return form.value.email && 
-           form.value.password &&
-           form.value.agreement &&
-           validate('email', form.value.email) &&
-           validate('password', form.value.password)
-  } else {
-    return form.value.username && 
-           form.value.email &&
-           form.value.password && 
-           form.value.confirmPassword && 
-           form.value.password === form.value.confirmPassword &&
-           form.value.agreement &&
-           validate('username', form.value.username) &&
-           validate('email', form.value.email) &&
-           validate('password', form.value.password)
+    return Boolean(
+      form.value.email &&
+      validateRules.email.pattern.test(form.value.email) &&
+      form.value.password
+    )
   }
+
+  return Boolean(
+    form.value.username &&
+    form.value.email &&
+    form.value.password &&
+    form.value.confirmPassword &&
+    form.value.password === form.value.confirmPassword &&
+    form.value.agreement &&
+    validateRules.username.pattern.test(form.value.username) &&
+    validateRules.email.pattern.test(form.value.email) &&
+    validateRules.password.pattern.test(form.value.password)
+  )
 })
 
 const clearErrors = () => {
@@ -187,7 +189,7 @@ const clearErrors = () => {
 }
 
 const handleSubmit = async () => {
-  if (!form.value.agreement) {
+  if (activeTab.value === 'register' && !form.value.agreement) {
     errors.value.general = '请先同意用户协议和隐私政策'
     return
   }

@@ -689,6 +689,7 @@ const submitQuery = async (queryText: string) => {
   .page {
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
 
   .tab-bar { flex-shrink: 0; }
@@ -696,8 +697,13 @@ const submitQuery = async (queryText: string) => {
   .chat-panel,
   .itinerary-panel,
   .map-section {
-    flex: 1;
+    flex: 1 1 0;
     min-height: 0;
+  }
+
+  .chat-panel,
+  .itinerary-panel {
+    min-height: 320px;
   }
 
   .map-section {
@@ -862,6 +868,10 @@ const submitQuery = async (queryText: string) => {
 
 .itinerary-content {
   max-width: 700px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: min-content;
 }
 
 /* ---- Loading ---- */
@@ -995,7 +1005,12 @@ const submitQuery = async (queryText: string) => {
 /* ==================== Responsive ==================== */
 
 @media (max-width: 767px) {
-  .itinerary-panel { padding: 20px 16px; }
+  .itinerary-panel {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 20px 16px;
+  }
   .chat-scroll { padding: 20px 16px; }
   .brand-name { font-size: 16px; }
   .welcome-title { font-size: 22px; }
