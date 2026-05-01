@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     ENABLE_GRAPHRAG_EXT: bool = False
     ENABLE_DEEPAGENTS: bool = False
     ENABLE_DEEPSEARCH: bool = False
+    ENABLE_STRUCTURED_QP: bool = False
+    STRUCTURED_QP_TIMEOUT_SECONDS: float = 4.0
+    STRUCTURED_QP_CONFIDENCE_THRESHOLD: float = 0.65
 
     # GraphRAG settings
     GRAPHRAG_PROJECT_DIR: str = "llm_backend/app/graphrag"  # GraphRAG项目目录

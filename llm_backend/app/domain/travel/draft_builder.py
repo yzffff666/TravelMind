@@ -120,7 +120,7 @@ def extract_budget(query: str, config: DraftConfig = DRAFT_CONFIG) -> float | No
     return None
 
 _TRAILING_PARTICLES = re.compile(r"(?:旅游|旅行|度假|游玩|亲子游|情侣游|家庭游|自由行|转转|看看|走走|玩玩|玩|游|了|吧|呢|啊|的|呀|哦|哈|嘛|吗)+$")
-_DESTINATION_NOISE_HINTS = ("规划", "安排", "帮我", "帮忙", "制定")
+_DESTINATION_NOISE_HINTS = ("规划", "安排", "帮我", "帮忙", "制定", "预算", "budget")
 _DESTINATION_SUFFIX_NOISE = ("亲子", "情侣", "家庭", "朋友")
 
 

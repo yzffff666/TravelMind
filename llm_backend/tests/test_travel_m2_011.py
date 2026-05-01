@@ -6,12 +6,26 @@ T-M2-011 对话意图路由 相关单元测试。
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
 import pytest
 
 from app.domain.travel.query_processor import TravelQueryProcessor
+from app.domain.travel.structured_qp import StructuredQPConstraints, StructuredQPResult
+
+
+class _FakeStructuredQPStrategy:
+    def __init__(self, result: StructuredQPResult | Exception):
+        self.result = result
+        self.seen_context = None
+
+    async def classify(self, query: str, *, context=None):
+        self.seen_context = context
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
 
 
 # ---------- 意图识别 ----------
@@ -76,6 +90,76 @@ def test_qp_create_with_duration_and_qualitative_budget_is_not_edit():
     assert out["missing_required"] == []
 
 
+def test_qp_structured_strategy_can_drive_contextual_edit():
+    strategy = _FakeStructuredQPStrategy(
+        StructuredQPResult(
+            intent="edit",
+            intent_detail="edit_day",
+            confidence=0.92,
+            target_day=2,
+            constraints=StructuredQPConstraints(
+                budget=5000,
+                pace="relaxed",
+                preferences=["亲子"],
+            ),
+            rewrite_query="把第 2 天节奏调轻松，预算保持 5000",
+            reason="用户要求调整已有行程",
+        )
+    )
+    processor = TravelQueryProcessor(
+        structured_strategy=strategy,
+        enable_structured_qp=True,
+    )
+    out = asyncio.run(
+        processor.process_async(
+            "预算还是5000，第二天别太赶",
+            context={"has_itinerary": True, "trip_profile": {"destination_city": "成都"}},
+        )
+    )
+    assert out["intent"] == "edit"
+    assert out["intent_detail"] == "edit_day"
+    assert out["qp_source"] == "llm"
+    assert out["confidence"] == 0.92
+    assert out["constraints"]["budget"] == 5000.0
+    assert out["constraints"]["pace"] == "relaxed"
+    assert out["rewrite_applied"] is True
+    assert "节奏:relaxed" in out["recall_query"]
+    assert strategy.seen_context.has_itinerary is True
+
+
+def test_qp_structured_strategy_low_confidence_falls_back_to_rule():
+    strategy = _FakeStructuredQPStrategy(
+        StructuredQPResult(
+            intent="create",
+            intent_detail="first_create",
+            confidence=0.2,
+            constraints=StructuredQPConstraints(destination_city="成都", days=3, budget=5000),
+        )
+    )
+    processor = TravelQueryProcessor(
+        structured_strategy=strategy,
+        enable_structured_qp=True,
+        confidence_threshold=0.65,
+    )
+    out = asyncio.run(processor.process_async("调整一下行程"))
+    assert out["intent"] == "edit"
+    assert out["qp_source"] == "fallback"
+    assert out["confidence"] == 0.2
+    assert out["fallback_reason"] == "low_confidence"
+
+
+def test_qp_structured_strategy_exception_falls_back_to_rule():
+    processor = TravelQueryProcessor(
+        structured_strategy=_FakeStructuredQPStrategy(RuntimeError("boom")),
+        enable_structured_qp=True,
+    )
+    out = asyncio.run(processor.process_async("第2天安排是什么？"))
+    assert out["intent"] == "qa"
+    assert out["intent_detail"] == "qa_local"
+    assert out["qp_source"] == "fallback"
+    assert "RuntimeError" in out["fallback_reason"]
+
+
 # ---------- 约束抽取与 recall_query ----------
 
 
@@ -94,6 +178,17 @@ def test_qp_constraints_and_recall_query():
     assert "目的地:" in out["recall_query"]
     assert "天数:4" in out["recall_query"]
     assert "预算:6000" in out["recall_query"]
+
+
+def test_qp_destination_prefers_city_before_duration_over_budget_token():
+    processor = TravelQueryProcessor()
+    for query, city in (
+        ("上海 4天 预算6000 情侣 文化 美食", "上海"),
+        ("北京 3天 预算5000 亲子", "北京"),
+        ("成都 5天 预算8000 美食", "成都"),
+    ):
+        out = processor.process(query)
+        assert out["constraints"]["destination_city"] == city
 
 
 def test_qp_missing_required():

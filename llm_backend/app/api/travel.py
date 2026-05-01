@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
+from app.core.config import settings
 
 from app.core.database import AsyncSessionLocal
 from app.core.logger import get_logger
@@ -39,6 +40,27 @@ edit_backfill_service = LocationBackfillService(
     provider_timeout_seconds=1.5,
     total_budget_seconds=3.0,
 )
+
+
+async def _build_qp_context(conversation_id: str) -> dict | None:
+    if not settings.ENABLE_STRUCTURED_QP:
+        return None
+    state = await ConversationService.get_travel_conversation_state(conversation_id)
+    if not state:
+        return None
+    return {
+        "has_itinerary": bool(state.get("current_itinerary")),
+        "trip_profile": state.get("trip_profile"),
+        "chat_summary": state.get("chat_summary"),
+        "last_user_query": state.get("last_user_query"),
+    }
+
+
+async def _process_qp(query: str, conversation_id: str) -> dict:
+    return await query_processor.process_async(
+        query,
+        context=await _build_qp_context(conversation_id),
+    )
 
 # 构建SSE行
 def _build_sse_line(payload: object) -> str:
@@ -706,7 +728,7 @@ async def langgraph_query(
         # 会话线程ID：有 conversation_id 就复用，否则生成新会话。
         thread_id = conversation_id if conversation_id else new_uuid()
         request_id = new_uuid()
-        qp_output = query_processor.process(query)
+        qp_output = await _process_qp(query, thread_id)
         normalized_query = qp_output["normalized_query"]
         recall_query = qp_output["recall_query"]
         logger.info(
@@ -716,6 +738,9 @@ async def langgraph_query(
                 "intent": qp_output["intent"],
                 "intent_detail": qp_output["intent_detail"],
                 "missing_required": qp_output["missing_required"],
+                "qp_source": qp_output.get("qp_source"),
+                "confidence": qp_output.get("confidence"),
+                "fallback_reason": qp_output.get("fallback_reason"),
             },
         )
         intent = qp_output["intent"]
@@ -777,7 +802,7 @@ async def langgraph_query(
 
             if decision.get("has_pending"):
                 combined_query = decision["combined_query"]
-                combined_qp = query_processor.process(combined_query)
+                combined_qp = await _process_qp(combined_query, thread_id)
                 combined_recall = combined_qp["recall_query"]
                 logger.info(
                     f"Guided conversation complete for thread={thread_id}, "
@@ -900,7 +925,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
         # 创建线程ID
         thread_id = request.conversation_id
         request_id = new_uuid()
-        qp_output = query_processor.process(request.query)
+        qp_output = await _process_qp(request.query, thread_id)
         normalized_query = qp_output["normalized_query"]
         recall_query = qp_output["recall_query"]
         logger.info(
@@ -910,6 +935,9 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 "intent": qp_output["intent"],
                 "intent_detail": qp_output["intent_detail"],
                 "missing_required": qp_output["missing_required"],
+                "qp_source": qp_output.get("qp_source"),
+                "confidence": qp_output.get("confidence"),
+                "fallback_reason": qp_output.get("fallback_reason"),
             },
         )
         intent = qp_output["intent"]
@@ -968,7 +996,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
 
             # 将初始 query 与补充信息合并后重启输入，避免上下文丢失。
             combined_query = decision["combined_query"]
-            combined_qp_output = query_processor.process(combined_query)
+            combined_qp_output = await _process_qp(combined_query, thread_id)
             combined_recall_query = combined_qp_output["recall_query"]
             logger.info(f"Clarification completed for thread={thread_id}, continuing planning flow.")
 

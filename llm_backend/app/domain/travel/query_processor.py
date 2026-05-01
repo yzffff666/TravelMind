@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from typing import Any, Protocol, Literal
 
+from app.core.config import settings
 from app.domain.travel.clarification_rules import HARD_REQUIRED_FIELDS
 from app.domain.travel.draft_builder import (
     extract_budget,
@@ -12,6 +13,11 @@ from app.domain.travel.draft_builder import (
     extract_traveler_type,
 )
 from app.domain.travel.qp_rules import QP_RULES
+from app.domain.travel.structured_qp import (
+    LLMStructuredQPStrategy,
+    StructuredQPContext,
+    StructuredQPResult,
+)
 
 # 意图类型
 IntentType = Literal["create", "edit", "qa", "reset", "chat"]
@@ -37,17 +43,86 @@ class QPOutput:
     constraint_presence: dict[str, bool]
     missing_required: list[str]
     rewrite_applied: bool = False
+    qp_source: Literal["rule", "llm", "fallback"] = "rule"
+    confidence: float | None = None
+    fallback_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         return payload
 
+
+class StructuredQPStrategy(Protocol):
+    async def classify(
+        self,
+        query: str,
+        *,
+        context: StructuredQPContext | None = None,
+    ) -> StructuredQPResult:
+        ...
+
 # 旅行查询处理器
 class TravelQueryProcessor:
     """QP baseline: intent + constraints extraction + recall-ready query."""
 
+    def __init__(
+        self,
+        *,
+        structured_strategy: StructuredQPStrategy | None = None,
+        enable_structured_qp: bool | None = None,
+        confidence_threshold: float | None = None,
+    ) -> None:
+        self._structured_strategy = structured_strategy
+        self._enable_structured_qp = (
+            settings.ENABLE_STRUCTURED_QP
+            if enable_structured_qp is None
+            else enable_structured_qp
+        )
+        self._confidence_threshold = (
+            settings.STRUCTURED_QP_CONFIDENCE_THRESHOLD
+            if confidence_threshold is None
+            else confidence_threshold
+        )
+
     # 处理查询
     def process(self, query: str) -> dict[str, Any]:
+        """Synchronous rule baseline. Async callers may opt into Structured QP."""
+        return self._process_rule(query)
+
+    async def process_async(
+        self,
+        query: str,
+        *,
+        context: StructuredQPContext | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        baseline = self._process_rule(query)
+        if not self._should_use_structured_qp(baseline):
+            return baseline
+
+        structured_context = self._coerce_context(context)
+        try:
+            result = await self._get_structured_strategy().classify(
+                query,
+                context=structured_context,
+            )
+        except Exception as exc:
+            return self._with_metadata(
+                baseline,
+                qp_source="fallback",
+                fallback_reason=f"{type(exc).__name__}: {exc}",
+            )
+
+        if result.confidence < self._confidence_threshold:
+            return self._with_metadata(
+                baseline,
+                qp_source="fallback",
+                confidence=result.confidence,
+                fallback_reason="low_confidence",
+            )
+
+        return self._merge_structured_result(query, baseline, result)
+
+    def _process_rule(self, query: str) -> dict[str, Any]:
         # 标准化查询
         normalized = self._normalize_query(query)
         # 提取约束
@@ -76,6 +151,119 @@ class TravelQueryProcessor:
             constraint_presence=presence,
             missing_required=missing_required,
         ).to_dict()
+
+    def _should_use_structured_qp(self, baseline: dict[str, Any]) -> bool:
+        if not self._enable_structured_qp:
+            return False
+        # Keep deterministic controls cheap and stable.
+        if baseline["intent"] == "reset":
+            return False
+        if not baseline["normalized_query"]:
+            return False
+        return True
+
+    def _get_structured_strategy(self) -> StructuredQPStrategy:
+        if self._structured_strategy is None:
+            self._structured_strategy = LLMStructuredQPStrategy()
+        return self._structured_strategy
+
+    @staticmethod
+    def _coerce_context(context: StructuredQPContext | dict[str, Any] | None) -> StructuredQPContext | None:
+        if context is None or isinstance(context, StructuredQPContext):
+            return context
+        return StructuredQPContext.model_validate(context)
+
+    @staticmethod
+    def _with_metadata(
+        payload: dict[str, Any],
+        *,
+        qp_source: Literal["rule", "llm", "fallback"],
+        confidence: float | None = None,
+        fallback_reason: str | None = None,
+    ) -> dict[str, Any]:
+        enriched = dict(payload)
+        enriched["qp_source"] = qp_source
+        enriched["confidence"] = confidence
+        enriched["fallback_reason"] = fallback_reason
+        return enriched
+
+    def _merge_structured_result(
+        self,
+        query: str,
+        baseline: dict[str, Any],
+        result: StructuredQPResult,
+    ) -> dict[str, Any]:
+        normalized = baseline["normalized_query"]
+        constraints = self._merge_constraints(
+            self._constraints_from_dict(baseline["constraints"]),
+            result,
+        )
+        presence = self._constraint_presence(constraints)
+        missing_required = [key for key in HARD_REQUIRED_FIELDS if not presence.get(key, False)]
+        intent = result.intent
+        intent_detail = result.intent_detail or self._default_intent_detail(intent)
+        recall_base = result.rewrite_query or result.recall_query or normalized
+        recall_query = self._build_recall_query(self._normalize_query(recall_base), constraints)
+
+        return QPOutput(
+            intent=intent,
+            intent_detail=intent_detail,
+            normalized_query=normalized,
+            recall_query=recall_query,
+            constraints=constraints,
+            constraint_presence=presence,
+            missing_required=missing_required,
+            rewrite_applied=bool(
+                result.rewrite_query and result.rewrite_query.strip() != query.strip()
+            ),
+            qp_source="llm",
+            confidence=result.confidence,
+            fallback_reason=None,
+        ).to_dict()
+
+    @staticmethod
+    def _constraints_from_dict(payload: dict[str, Any]) -> QPConstraints:
+        return QPConstraints(
+            destination_city=payload.get("destination_city"),
+            days=payload.get("days"),
+            budget=payload.get("budget"),
+            traveler_type=payload.get("traveler_type"),
+            preferences=list(payload.get("preferences") or []),
+            pace=payload.get("pace"),
+        )
+
+    @staticmethod
+    def _merge_constraints(base: QPConstraints, result: StructuredQPResult) -> QPConstraints:
+        incoming = result.constraints
+        preferences = list(dict.fromkeys([*base.preferences, *incoming.preferences]))
+        return QPConstraints(
+            destination_city=base.destination_city or incoming.destination_city,
+            days=base.days if base.days is not None else incoming.days,
+            budget=base.budget if base.budget is not None else incoming.budget,
+            traveler_type=base.traveler_type or incoming.traveler_type,
+            preferences=preferences,
+            pace=base.pace or incoming.pace,
+        )
+
+    @staticmethod
+    def _constraint_presence(constraints: QPConstraints) -> dict[str, bool]:
+        return {
+            "destination": bool(constraints.destination_city),
+            "duration": constraints.days is not None,
+            "budget": constraints.budget is not None,
+            "travelers": bool(constraints.traveler_type),
+        }
+
+    @staticmethod
+    def _default_intent_detail(intent: IntentType) -> IntentDetailType:
+        mapping: dict[str, IntentDetailType] = {
+            "create": "first_create",
+            "edit": "edit_day",
+            "qa": "qa_local",
+            "reset": "reset_all",
+            "chat": "general_chat",
+        }
+        return mapping[intent]
 
     # 标准化查询
     @staticmethod
