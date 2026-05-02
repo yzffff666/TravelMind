@@ -39,6 +39,7 @@ ENV/
 *.log
 logs/
 log/
+llm_backend/reports/
 
 # Local development
 .env.local

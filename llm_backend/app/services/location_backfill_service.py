@@ -9,12 +9,14 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from hashlib import md5
 
+from app.core.logger import get_logger
 from app.schemas.itinerary_v1 import EvidenceItem, ItineraryV1, Location
 from app.services.geo_bounds import is_coord_within_destination
 from app.services.providers.base import MapProvider
 from app.services.providers.factory import build_registry
 
 logger = logging.getLogger(__name__)
+structured_logger = get_logger(service="location_backfill")
 
 _CACHE_TTL_SECONDS = 3600
 _cache: dict[str, tuple[float, dict | None]] = {}
@@ -340,9 +342,9 @@ class LocationBackfillService:
             else False
         )
         match_score = float(resolved.get("match_score") or 0.0) if resolved else 0.0
-        logger.info(
-            "location_backfill %s",
-            {
+        structured_logger.info(
+            "location_backfill",
+            extra={
                 "event_type": "location_backfill",
                 "itinerary_id": itinerary.itinerary_id,
                 "revision_id": itinerary.revision_id,
@@ -383,9 +385,9 @@ class LocationBackfillService:
             for slot in day.slots
             if slot.location is not None
         )
-        logger.info(
-            "itinerary_quality_summary %s",
-            {
+        structured_logger.info(
+            "itinerary_quality_summary",
+            extra={
                 "event_type": "itinerary_quality_summary",
                 "itinerary_id": itinerary.itinerary_id,
                 "revision_id": itinerary.revision_id,

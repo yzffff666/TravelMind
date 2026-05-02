@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.logger import get_logger
 from app.services.providers.base import (
     MapProvider,
     ProviderCallContext,
@@ -20,6 +21,7 @@ from app.services.providers.call_policy import ProviderCallPolicy, ProviderType
 from app.services.providers.registry import ProviderRegistry
 
 logger = logging.getLogger(__name__)
+structured_logger = get_logger(service="provider_orchestrator")
 
 from app.core.config import settings as _settings
 _RECALL_CACHE_TTL = _settings.REDIS_CACHE_EXPIRE
@@ -363,9 +365,9 @@ class ProviderOrchestrator:
         error_type: str = "",
         degraded: bool = False,
     ) -> None:
-        logger.info(
-            "provider_call %s",
-            {
+        structured_logger.info(
+            "provider_call",
+            extra={
                 "event_type": "provider_call",
                 "request_id": context.request_id if context else None,
                 "conversation_id": context.conversation_id if context else None,

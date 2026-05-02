@@ -20,6 +20,7 @@ from typing import Any, Iterable
 KNOWN_EVENTS = {
     "deepseek_llm_call",
     "deepseek_llm_call_failed",
+    "llm_draft_call",
     "semantic_cache_lookup",
     "provider_call",
     "location_backfill",
@@ -117,13 +118,23 @@ def parse_log_line(line: str, *, source: str = "") -> ObservabilityEvent | None:
         message = str(record.get("message") or "").strip()
         extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
         payload: dict[str, Any] = dict(extra)
+        nested_extra = payload.pop("extra", None)
+        if isinstance(nested_extra, dict):
+            payload.update(nested_extra)
 
         embedded = _parse_mapping(message)
         if embedded:
             payload.update(embedded.get("data") if isinstance(embedded.get("data"), dict) else embedded)
         else:
-            payload.setdefault("event_type", message if message in KNOWN_EVENTS else "")
-        return _event_from_payload(payload, message, source)
+            event_type = payload.get("event_type") or (
+                _normalize_event_type(message)
+                if message in KNOWN_EVENTS or message.lower() == "qp parsed"
+                else ""
+            )
+            if not event_type:
+                return None
+            payload.setdefault("event_type", event_type)
+        return _event_from_payload(payload, str(payload.get("event_type") or message), source)
 
     message = _message_from_plain_line(stripped)
     embedded = _parse_mapping(message)
@@ -175,7 +186,7 @@ def _summarize_llm(events: list[ObservabilityEvent]) -> dict[str, Any]:
     relevant = [
         event
         for event in events
-        if event.event_type in {"deepseek_llm_call", "deepseek_llm_call_failed"}
+        if event.event_type in {"deepseek_llm_call", "deepseek_llm_call_failed", "llm_draft_call"}
         or event.payload.get("llm_status")
     ]
     latencies = [_as_float(event.payload.get("elapsed_ms") or event.payload.get("llm_ms")) for event in relevant]
@@ -256,7 +267,11 @@ def _summarize_backfill(events: list[ObservabilityEvent]) -> dict[str, Any]:
         "source_counts": _compact_counter(Counter(event.payload.get("source") for event in fills)),
         "confidence_counts": _compact_counter(Counter(event.payload.get("confidence") for event in fills)),
         "fallback_reasons": _compact_counter(Counter(event.payload.get("fallback_reason") for event in fills)),
-        "bbox_invalid_count": sum(1 for event in fills if event.payload.get("bbox_valid") is False),
+        "bbox_invalid_count": sum(
+            1
+            for event in fills
+            if event.payload.get("source") == "provider" and event.payload.get("bbox_valid") is False
+        ),
         "attempted": sum(int(_as_float(event.payload.get("backfill_attempted")) or 0) for event in summaries),
         "filled": sum(int(_as_float(event.payload.get("backfill_filled")) or 0) for event in summaries),
         "unresolved": sum(int(_as_float(event.payload.get("backfill_unresolved")) or 0) for event in summaries),

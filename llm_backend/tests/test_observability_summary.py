@@ -35,6 +35,35 @@ def test_parse_loguru_json_extra_event():
     assert event.payload["lookup_ms"] == 4.2
 
 
+def test_parse_loguru_json_nested_extra_from_standard_logging_style():
+    event = parse_log_line(
+        _loguru_json(
+            "deepseek_llm_call",
+            {
+                "service": "deepseek",
+                "extra": {
+                    "attempt": 1,
+                    "max_attempts": 2,
+                    "elapsed_ms": 1389.59,
+                    "status": "ok",
+                },
+            },
+        )
+    )
+
+    assert event is not None
+    assert event.event_type == "deepseek_llm_call"
+    assert event.payload["service"] == "deepseek"
+    assert event.payload["attempt"] == 1
+    assert event.payload["elapsed_ms"] == 1389.59
+
+
+def test_parse_loguru_json_ignores_non_observability_messages():
+    event = parse_log_line(_loguru_json("Initializing Deepseek Service", {"service": "deepseek"}))
+
+    assert event is None
+
+
 def test_parse_legacy_text_event_with_python_dict():
     line = (
         "2026-05-01 10:00:00.000 | INFO     | app.services.providers.orchestrator:_log:367 - "
@@ -67,7 +96,7 @@ def test_summarize_events_groups_core_metrics():
     events = [
         parse_log_line(
             _loguru_json(
-                "deepseek_llm_call",
+                "llm_draft_call",
                 {
                     "attempt": 2,
                     "max_attempts": 3,
@@ -106,6 +135,11 @@ def test_summarize_events_groups_core_metrics():
             "location_backfill {'event_type': 'location_backfill', 'source': 'unresolved', "
             "'confidence': 'low', 'elapsed_ms': 33, 'fallback_reason': 'provider_empty_or_timeout', "
             "'bbox_valid': False}"
+        ),
+        parse_log_line(
+            "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
+            "location_backfill {'event_type': 'location_backfill', 'source': 'provider', "
+            "'confidence': 'low', 'elapsed_ms': 12, 'bbox_valid': False}"
         ),
         parse_log_line(
             "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
