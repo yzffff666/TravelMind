@@ -208,8 +208,9 @@ lookup(messages)
 推荐顺序：
 
 1. **观测汇总脚本 / 报表**
-  - 从日志统计 `llm_status`、`llm_attempts`、`cache_source`、Provider `elapsed_ms`。
-  - 目标是从“功能完成”进入“真实数据驱动”。
+   - 已新增 `llm_backend/scripts/observability_summary.py`，从 `logs/structured.log` 或兼容的 `logs/app.log` 文本日志统计 `llm_status`、`llm_attempts`、`cache_source`、Provider `elapsed_ms`。
+   - 推荐命令：`python -m scripts.observability_summary --log logs/structured.log --output reports/observability-summary.md`。
+   - 目标是从“功能完成”进入“真实数据驱动”。
 2. **EmbeddingProvider 解耦**
   - 让 `EMBEDDING_TYPE` 真正生效。
   - Ollama 不可用时可走 `sentence-transformers` fallback。

@@ -811,6 +811,7 @@ async def langgraph_query(
         logger.info(
             "QP parsed",
             extra={
+                "event_type": "qp_parsed",
                 "conversation_id": thread_id,
                 "intent": qp_output["intent"],
                 "intent_detail": qp_output["intent_detail"],
@@ -1032,6 +1033,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
         logger.info(
             "QP parsed",
             extra={
+                "event_type": "qp_parsed",
                 "conversation_id": thread_id,
                 "intent": qp_output["intent"],
                 "intent_detail": qp_output["intent_detail"],

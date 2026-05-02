@@ -29,6 +29,17 @@ logger.add(
     encoding="utf-8"
 )
 
+# 结构化 JSON 日志：保留 extra 字段，供离线观测汇总脚本统计。
+logger.add(
+    "logs/structured.log",
+    rotation="500 MB",
+    retention="10 days",
+    compression="zip",
+    level="INFO",
+    encoding="utf-8",
+    serialize=True,
+)
+
 # 错误日志单独存储
 logger.add(
     "logs/error.log",  # 错误日志文件
