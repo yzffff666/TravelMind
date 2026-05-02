@@ -1,6 +1,6 @@
 # TravelMind 性能优化与技术选型综合分析报告
 
-> 版本：v5.7（Structured QP、LLM 稳定性、Redis/FAISS 缓存） | 日期：2026-05-01 | 作者：TravelMind Dev Team
+> 版本：v5.8（观测闭环、QA 本地复用） | 日期：2026-05-02 | 作者：TravelMind Dev Team
 >
 > 说明：本文是“当前状态型”报告，保留核心数据、阶段演进和下一步判断；完整历史长文已归档到 [performance-analysis-report-v5.6-full-history.md](archive/performance-analysis-report-v5.6-full-history.md)。
 
@@ -16,12 +16,14 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 - Structured QP 已落地并默认关闭，通过真实中文 30 条评测和本地灰度 smoke。
 - LLM 调用已补 timeout、bounded retry 和 latency logging。
 - Redis 语义缓存已从 `KEYS + Python 全扫` 升级为 `L1 exact + L2 FAISS + SCAN fallback`。
+- 基于已有行程的 QA 已增加本地 fast path，明确问“第 N 天安排”时可跳过 Structured QP LLM。
 
 当前最重要的后续工作不是继续大幅改架构，而是用真实样例和日志验证：
 
 - LLM retry / timeout 的真实恢复率。
 - `cache_source=exact|faiss|semantic_scan|miss` 的命中分布。
 - Provider / backfill 的 P50/P95 与 fallback 原因。
+- QA `qa_source=local_itinerary` 的命中率与未命中原因。
 - Structured QP 从 30 条扩到 60-100 条后的稳定性。
 
 ---
@@ -65,6 +67,7 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 | 完整草案 E2E    | ~85s      | ~40-70s 估算              | 仍受远程 LLM 波动影响         |
 | Pipeline 检索 | ~12s      | ~3s 估算                  | Provider 并行化后下降明显     |
 | 缺字段早退       | ~75s      | <2ms                    | LangGraph 条件边 + QP 门槛 |
+| 已有行程 QA      | ~2.3-2.5s 单轮观测 | 23.5ms E2E / 6.04ms 本地回答 | 跳过 Structured QP LLM，直接复用 itinerary |
 | mock 图节点开销  | N/A       | ~6ms                    | 说明本地图执行不是瓶颈           |
 | 完全重复 query  | 原无缓存      | exact hit 可跳过 embedding | Redis response key 命中 |
 | 相似 query    | Python 全扫 | FAISS L2 检索             | Redis 仍是真源，FAISS 可重建  |
@@ -97,6 +100,7 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 | v5.5 Structured QP | 提升自然语言理解         | LLM structured output、Pydantic schema、confidence/fallback | 30 条真实中文 query 30/30，默认关闭    |
 | v5.6 LLM 稳定性       | 降低远程 API 失败影响    | timeout、bounded retry、latency logging、请求去重                | 后端回归通过，具备观测重试恢复率能力           |
 | v5.7 缓存稳定性         | 降低重复/相似 query 成本 | Redis SCAN、L1 exact、FAISS L2、cache_source 日志              | 消除 `KEYS`，相似检索不再常规 Python 全扫 |
+| v5.8 观测闭环与 QA 复用   | 用真实观测驱动下一步优化      | observability smoke/summary、QA local fast path              | QA 从约 2.3s 降至 23.5ms E2E |
 
 
 ---
@@ -199,6 +203,7 @@ lookup(messages)
 | 中   | Provider 长尾样例不足       | 核心样例已过，长尾城市未统计                       | 扩展巴黎、伦敦、新加坡、纽约等样例集                                               |
 | 中   | 前端进度透明度不足             | SSE 事件有了，但 UI 未充分展示 tool/provider 过程 | 展示 tool_result、阶段耗时、低置信度提示                                       |
 | 中   | Structured QP 样例量不足   | 30 条不足以默认开启                          | 扩展到 60-100 条再决定默认策略                                              |
+| 低   | QA fast path 覆盖面有限     | 当前优先覆盖 itinerary 结构内的天数、预算、某天安排        | 扩展交通/住宿/证据类本地回答，未命中再走 LLM                                      |
 
 
 ---

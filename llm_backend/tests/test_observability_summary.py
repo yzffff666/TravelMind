@@ -152,6 +152,12 @@ def test_summarize_events_groups_core_metrics():
                 {"qp_source": "fallback", "confidence": 0.4, "fallback_reason": "low_confidence"},
             )
         ),
+        parse_log_line(
+            _loguru_json(
+                "qa_local_fast_path",
+                {"qa_source": "local_itinerary", "qa_elapsed_ms": 18.5},
+            )
+        ),
     ]
 
     summary = summarize_events(event for event in events if event is not None)
@@ -164,6 +170,9 @@ def test_summarize_events_groups_core_metrics():
     assert summary["backfill"]["attempted"] == 3
     assert summary["backfill"]["bbox_invalid_count"] == 1
     assert summary["qp"]["source_counts"] == {"fallback": 1}
+    assert summary["qa"]["events"] == 1
+    assert summary["qa"]["source_counts"] == {"local_itinerary": 1}
+    assert summary["qa"]["elapsed_ms"]["p50"] == 18.5
 
 
 def test_render_markdown_includes_major_sections():

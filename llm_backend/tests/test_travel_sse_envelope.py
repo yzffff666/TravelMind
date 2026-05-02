@@ -117,3 +117,92 @@ def test_travel_request_fingerprint_dedupes_active_request(monkeypatch):
     assert travel._try_acquire_request_fingerprint(fingerprint) is True
     travel._active_request_fingerprints.clear()
 
+
+def test_answer_itinerary_qa_supports_chinese_day_number():
+    from app.api.travel import _answer_itinerary_qa
+
+    itinerary = {
+        "trip_profile": {"destination_city": "成都"},
+        "days": [
+            {
+                "day_index": 2,
+                "theme": "亲子乐园与城市文化",
+                "slots": [
+                    {"slot": "上午", "activity": "亲子乐园", "place": "亲子乐园"},
+                    {"slot": "下午", "activity": "室内活动", "place": "四川科技馆"},
+                ],
+            }
+        ],
+        "budget_summary": {"total_estimate": 6000},
+    }
+
+    text = _answer_itinerary_qa("第二天安排是什么？", itinerary)
+
+    assert "第2天" in text
+    assert "亲子乐园" in text
+    assert "四川科技馆" in text
+
+
+def test_classify_local_qa_fast_path_only_accepts_qa():
+    from app.api.travel import _classify_local_qa_fast_path
+
+    assert _classify_local_qa_fast_path("第 2 天安排是什么？")["intent"] == "qa"
+    assert _classify_local_qa_fast_path("把第 2 天改成东方明珠") is None
+
+
+def test_build_local_qa_fast_response_returns_sse_without_structured_qp(monkeypatch):
+    import asyncio
+
+    from app.api import travel
+
+    itinerary = {
+        "trip_profile": {"destination_city": "成都"},
+        "days": [
+            {
+                "day_index": 2,
+                "theme": "亲子乐园与城市文化",
+                "slots": [{"slot": "上午", "activity": "亲子乐园", "place": "亲子乐园"}],
+            }
+        ],
+        "budget_summary": {"total_estimate": 6000},
+    }
+
+    async def fake_get_state(conversation_id: str):
+        assert conversation_id == "conv_qa"
+        return {"current_itinerary": itinerary}
+
+    async def fake_upsert(**kwargs):
+        assert kwargs["conversation_id"] == "conv_qa"
+        assert kwargs["last_user_query"] == "第 2 天安排是什么？"
+        return kwargs
+
+    async def fail_process_qp(*args, **kwargs):  # noqa: ARG001
+        raise AssertionError("local QA fast path should not call Structured QP")
+
+    monkeypatch.setattr(travel.ConversationService, "get_travel_conversation_state", fake_get_state)
+    monkeypatch.setattr(travel.ConversationService, "upsert_travel_conversation_state", fake_upsert)
+    monkeypatch.setattr(travel, "_process_qp", fail_process_qp)
+
+    async def collect():
+        response = await travel._build_local_qa_fast_response(
+            request_id="req_qa",
+            conversation_id="conv_qa",
+            query_text="第 2 天安排是什么？",
+            user_id=1,
+        )
+        assert response is not None
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(collect())
+    event_1, data_1 = _parse_sse_chunk(chunks[0])
+    event_2, data_2 = _parse_sse_chunk(chunks[1])
+
+    assert event_1 == "intent_routed"
+    assert data_1["payload"]["intent"] == "qa"
+    assert event_2 == "final_text"
+    assert data_2["payload"]["qa_source"] == "local_itinerary"
+    assert "亲子乐园" in data_2["payload"]["text"]
+

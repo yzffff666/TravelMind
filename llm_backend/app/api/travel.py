@@ -153,6 +153,7 @@ async def _stream_intent_text_response(
     intent_detail: str,
     text: str,
     event_name: str = "final_text",
+    payload_extra: dict | None = None,
 ):
     # 流式意图路由事件
     async for line in _stream_intent_routed_event(
@@ -170,7 +171,7 @@ async def _stream_intent_text_response(
             request_id=request_id,
             conversation_id=conversation_id,
             revision_id=None,
-            payload={"text": text},
+            payload={"text": text, **(payload_extra or {})},
         ),
     )
     yield _build_sse_line(text)
@@ -539,9 +540,14 @@ def _answer_itinerary_qa(query: str, itinerary: dict) -> str:
         return "。".join(parts) + "。"
     if "第" in query and "天" in query:
         import re as _re
-        m = _re.search(r"第\s*(\d+)\s*天", query)
+        cn_day_map = {
+            "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
+            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+        }
+        m = _re.search(r"第\s*(\d+|[一二两三四五六七八九十])\s*天", query)
         if m:
-            idx = int(m.group(1))
+            raw_idx = m.group(1)
+            idx = int(raw_idx) if raw_idx.isdigit() else cn_day_map.get(raw_idx, 0)
             for d in days:
                 if d.get("day_index") == idx:
                     slots_desc = []
@@ -553,6 +559,60 @@ def _answer_itinerary_qa(query: str, itinerary: dict) -> str:
 
     slot_count = sum(len(d.get("slots", [])) for d in days)
     return f"当前行程：{dest} {len(days)} 天，共 {slot_count} 个时段安排，总预算 {int(budget.get('total_estimate', 0))} 元。如需了解具体某天，可以问'第N天安排是什么'。"
+
+
+def _classify_local_qa_fast_path(query: str) -> dict | None:
+    """Cheap deterministic QA classifier used before Structured QP LLM."""
+    qp_output = query_processor.process(query)
+    return qp_output if qp_output.get("intent") == "qa" else None
+
+
+async def _build_local_qa_fast_response(
+    *,
+    request_id: str,
+    conversation_id: str,
+    query_text: str,
+    user_id: int,
+) -> StreamingResponse | None:
+    started = time.perf_counter()
+    state = await ConversationService.get_travel_conversation_state(conversation_id)
+    itinerary = state.get("current_itinerary") if state else None
+    if not itinerary:
+        return None
+
+    qp_output = _classify_local_qa_fast_path(query_text)
+    if not qp_output:
+        return None
+
+    text = _answer_itinerary_qa(query_text, itinerary)
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+    logger.info(
+        "qa_local_fast_path",
+        extra={
+            "event_type": "qa_local_fast_path",
+            "conversation_id": conversation_id,
+            "intent": "qa",
+            "intent_detail": qp_output.get("intent_detail"),
+            "qa_source": "local_itinerary",
+            "qa_elapsed_ms": elapsed_ms,
+        },
+    )
+    await ConversationService.upsert_travel_conversation_state(
+        conversation_id=conversation_id,
+        user_id=user_id,
+        last_user_query=query_text,
+    )
+    return StreamingResponse(
+        _stream_intent_text_response(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            intent="qa",
+            intent_detail=qp_output.get("intent_detail") or "qa_local",
+            text=text,
+            payload_extra={"qa_source": "local_itinerary", "qa_elapsed_ms": elapsed_ms},
+        ),
+        media_type="text/event-stream",
+    )
 
 
 async def _stream_edit_result(
@@ -805,6 +865,17 @@ async def langgraph_query(
             response.headers["X-Conversation-ID"] = thread_id
             return response
 
+        if conversation_id and not clarification_service.has_pending(thread_id):
+            local_qa_response = await _build_local_qa_fast_response(
+                request_id=request_id,
+                conversation_id=thread_id,
+                query_text=query,
+                user_id=user_id,
+            )
+            if local_qa_response is not None:
+                local_qa_response.headers["X-Conversation-ID"] = thread_id
+                return _guard_response(local_qa_response, request_fingerprint)
+
         qp_output = await _process_qp(query, thread_id)
         normalized_query = qp_output["normalized_query"]
         recall_query = qp_output["recall_query"]
@@ -1026,6 +1097,17 @@ async def langgraph_resume(request: LangGraphResumeRequest):
             )
             response.headers["X-Conversation-ID"] = thread_id
             return response
+
+        if not clarification_service.has_pending(thread_id):
+            local_qa_response = await _build_local_qa_fast_response(
+                request_id=request_id,
+                conversation_id=thread_id,
+                query_text=request.query,
+                user_id=request.user_id,
+            )
+            if local_qa_response is not None:
+                local_qa_response.headers["X-Conversation-ID"] = thread_id
+                return _guard_response(local_qa_response, request_fingerprint)
 
         qp_output = await _process_qp(request.query, thread_id)
         normalized_query = qp_output["normalized_query"]

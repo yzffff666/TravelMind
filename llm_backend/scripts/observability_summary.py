@@ -26,6 +26,7 @@ KNOWN_EVENTS = {
     "location_backfill",
     "itinerary_quality_summary",
     "qp_parsed",
+    "qa_local_fast_path",
 }
 
 
@@ -179,6 +180,7 @@ def summarize_events(events: Iterable[ObservabilityEvent]) -> dict[str, Any]:
         "providers": _summarize_providers(event_list),
         "backfill": _summarize_backfill(event_list),
         "qp": _summarize_qp(event_list),
+        "qa": _summarize_qa(event_list),
     }
 
 
@@ -298,6 +300,20 @@ def _summarize_qp(events: list[ObservabilityEvent]) -> dict[str, Any]:
     }
 
 
+def _summarize_qa(events: list[ObservabilityEvent]) -> dict[str, Any]:
+    relevant = [event for event in events if event.event_type == "qa_local_fast_path"]
+    latencies = [_as_float(event.payload.get("qa_elapsed_ms")) for event in relevant]
+    return {
+        "events": len(relevant),
+        "source_counts": _compact_counter(Counter(event.payload.get("qa_source") for event in relevant)),
+        "elapsed_ms": {
+            "p50": _percentile([v for v in latencies if v is not None], 50),
+            "p95": _percentile([v for v in latencies if v is not None], 95),
+            "avg": _mean([v for v in latencies if v is not None]),
+        },
+    }
+
+
 def render_markdown(summary: dict[str, Any]) -> str:
     lines = [
         "# TravelMind Observability Summary",
@@ -361,6 +377,12 @@ def render_markdown(summary: dict[str, Any]) -> str:
             f"- Source counts: `{json.dumps(summary['qp']['source_counts'], ensure_ascii=False)}`",
             f"- Fallback reasons: `{json.dumps(summary['qp']['fallback_reasons'], ensure_ascii=False)}`",
             f"- Confidence: `{json.dumps(summary['qp']['confidence'], ensure_ascii=False)}`",
+            "",
+            "## QA",
+            "",
+            f"- Events: {summary['qa']['events']}",
+            f"- Source counts: `{json.dumps(summary['qa']['source_counts'], ensure_ascii=False)}`",
+            f"- Elapsed ms: `{json.dumps(summary['qa']['elapsed_ms'], ensure_ascii=False)}`",
             "",
         ]
     )
