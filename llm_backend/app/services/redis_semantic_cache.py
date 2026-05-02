@@ -10,6 +10,11 @@ import asyncio
 from datetime import datetime
 import time
 
+try:
+    import faiss
+except Exception:  # pragma: no cover - optional acceleration dependency
+    faiss = None
+
 logger = get_logger(service="redis_cache")
 
 
@@ -38,6 +43,15 @@ class RedisSemanticCache:
         self.cleanup_interval = cleanup_interval
         self._cleanup_task: asyncio.Task | None = None
         self._session: aiohttp.ClientSession | None = None
+        self._init_faiss_state()
+
+    def _init_faiss_state(self) -> None:
+        self._faiss_index = None
+        self._faiss_hash_ids: list[str] = []
+        self._faiss_hash_set: set[str] = set()
+        self._faiss_loaded = False
+        self._faiss_dim: int | None = None
+        self._faiss_lock = asyncio.Lock()
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -94,6 +108,68 @@ class RedisSemanticCache:
     async def _scan_keys(self, pattern: str) -> list[str]:
         """Incrementally scan keys instead of blocking Redis with KEYS."""
         return [key async for key in self.redis.scan_iter(match=pattern)]
+
+    @staticmethod
+    def _normalize_vector(vector: List[float]) -> np.ndarray | None:
+        arr = np.asarray(vector, dtype="float32").reshape(1, -1)
+        norm = np.linalg.norm(arr)
+        if norm <= 0:
+            return None
+        return arr / norm
+
+    def _add_vector_to_faiss(self, hash_id: str, vector: List[float]) -> bool:
+        if faiss is None or hash_id in self._faiss_hash_set:
+            return False
+
+        normalized = self._normalize_vector(vector)
+        if normalized is None:
+            return False
+
+        dim = int(normalized.shape[1])
+        if self._faiss_index is None:
+            self._faiss_index = faiss.IndexFlatIP(dim)
+            self._faiss_dim = dim
+        elif self._faiss_dim != dim:
+            logger.warning(
+                "semantic_cache_faiss_dim_mismatch",
+                extra={"prefix": self.prefix, "expected_dim": self._faiss_dim, "actual_dim": dim},
+            )
+            return False
+
+        self._faiss_index.add(normalized)
+        self._faiss_hash_ids.append(hash_id)
+        self._faiss_hash_set.add(hash_id)
+        return True
+
+    async def _ensure_faiss_loaded(self) -> bool:
+        if faiss is None:
+            return False
+        if self._faiss_loaded:
+            return self._faiss_index is not None and self._faiss_index.ntotal > 0
+
+        async with self._faiss_lock:
+            if self._faiss_loaded:
+                return self._faiss_index is not None and self._faiss_index.ntotal > 0
+
+            loaded_count = 0
+            for vec_key in await self._scan_keys(f"{self.prefix}:vec:*"):
+                raw = await self.redis.get(vec_key)
+                if not raw:
+                    continue
+                try:
+                    hash_id = vec_key.split(":")[-1]
+                    vector = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if self._add_vector_to_faiss(hash_id, vector):
+                    loaded_count += 1
+
+            self._faiss_loaded = True
+            logger.info(
+                "semantic_cache_faiss_loaded",
+                extra={"prefix": self.prefix, "loaded_count": loaded_count},
+            )
+            return self._faiss_index is not None and self._faiss_index.ntotal > 0
 
     async def _auto_cleanup(self) -> None:
         while True:
@@ -169,38 +245,36 @@ class RedisSemanticCache:
 
             current_vector = await self._get_embedding(user_message)
 
-            pattern = f"{self.prefix}:vec:*"
-            all_vec_keys: List[str] = await self._scan_keys(pattern)
-
-            max_similarity = 0.0
-            most_similar_key: str | None = None
-
-            for vec_key in all_vec_keys:
-                scanned_count += 1
-                raw = await self.redis.get(vec_key)
-                if not raw:
-                    continue
-                cached_vector = json.loads(raw)
-                similarity = float(np.dot(current_vector, cached_vector) / (
-                    np.linalg.norm(current_vector) * np.linalg.norm(cached_vector)
-                ))
-                if similarity > max_similarity:
-                    max_similarity = similarity
-                    most_similar_key = vec_key
-
-            if max_similarity >= self.score_threshold and most_similar_key:
-                hash_id = most_similar_key.split(":")[-1]
-                resp_key = self._get_response_key_by_hash(hash_id)
-                cached_response: str | None = await self.redis.get(resp_key)
-                if cached_response:
-                    await self._update_metadata(hash_id=hash_id)
+            faiss_result = await self._lookup_faiss(current_vector)
+            if faiss_result["available"]:
+                if faiss_result["response"]:
                     self._log_lookup(
-                        cache_source="semantic",
+                        cache_source="faiss",
                         lookup_ms=self._elapsed_ms(started),
-                        scanned_count=scanned_count,
-                        similarity=max_similarity,
+                        scanned_count=faiss_result["indexed_count"],
+                        similarity=faiss_result["similarity"],
                     )
-                    return cached_response
+                    return faiss_result["response"]
+
+                self._log_lookup(
+                    cache_source="miss",
+                    lookup_ms=self._elapsed_ms(started),
+                    scanned_count=faiss_result["indexed_count"],
+                    similarity=faiss_result["similarity"],
+                )
+                return None
+
+            scan_result = await self._lookup_semantic_scan(current_vector)
+            scanned_count = scan_result["scanned_count"]
+            max_similarity = scan_result["similarity"]
+            if scan_result["response"]:
+                self._log_lookup(
+                    cache_source="semantic_scan",
+                    lookup_ms=self._elapsed_ms(started),
+                    scanned_count=scanned_count,
+                    similarity=max_similarity,
+                )
+                return scan_result["response"]
 
             self._log_lookup(
                 cache_source="miss",
@@ -212,6 +286,74 @@ class RedisSemanticCache:
         except Exception as e:
             logger.error(f"Error in lookup: {e}", exc_info=True)
             return None
+
+    async def _lookup_faiss(self, current_vector: List[float]) -> dict:
+        if not await self._ensure_faiss_loaded():
+            return {"available": False, "response": None, "similarity": 0.0, "indexed_count": 0}
+
+        normalized = self._normalize_vector(current_vector)
+        if normalized is None or self._faiss_dim != int(normalized.shape[1]):
+            return {"available": False, "response": None, "similarity": 0.0, "indexed_count": 0}
+
+        top_k = min(5, self._faiss_index.ntotal)
+        scores, positions = self._faiss_index.search(normalized, top_k)
+        best_similarity = float(scores[0][0]) if top_k else 0.0
+
+        for score, pos in zip(scores[0], positions[0]):
+            if pos < 0 or float(score) < self.score_threshold:
+                continue
+            hash_id = self._faiss_hash_ids[int(pos)]
+            cached_response: str | None = await self.redis.get(self._get_response_key_by_hash(hash_id))
+            if cached_response:
+                await self._update_metadata(hash_id=hash_id)
+                return {
+                    "available": True,
+                    "response": cached_response,
+                    "similarity": float(score),
+                    "indexed_count": self._faiss_index.ntotal,
+                }
+
+        return {
+            "available": True,
+            "response": None,
+            "similarity": best_similarity,
+            "indexed_count": self._faiss_index.ntotal,
+        }
+
+    async def _lookup_semantic_scan(self, current_vector: List[float]) -> dict:
+        pattern = f"{self.prefix}:vec:*"
+        all_vec_keys: List[str] = await self._scan_keys(pattern)
+
+        scanned_count = 0
+        max_similarity = 0.0
+        most_similar_key: str | None = None
+
+        for vec_key in all_vec_keys:
+            scanned_count += 1
+            raw = await self.redis.get(vec_key)
+            if not raw:
+                continue
+            cached_vector = json.loads(raw)
+            similarity = float(np.dot(current_vector, cached_vector) / (
+                np.linalg.norm(current_vector) * np.linalg.norm(cached_vector)
+            ))
+            if similarity > max_similarity:
+                max_similarity = similarity
+                most_similar_key = vec_key
+
+        if max_similarity >= self.score_threshold and most_similar_key:
+            hash_id = most_similar_key.split(":")[-1]
+            resp_key = self._get_response_key_by_hash(hash_id)
+            cached_response: str | None = await self.redis.get(resp_key)
+            if cached_response:
+                await self._update_metadata(hash_id=hash_id)
+                return {
+                    "response": cached_response,
+                    "similarity": max_similarity,
+                    "scanned_count": scanned_count,
+                }
+
+        return {"response": None, "similarity": max_similarity, "scanned_count": scanned_count}
 
     def _log_lookup(
         self,
@@ -257,6 +399,8 @@ class RedisSemanticCache:
                 }),
                 ex=expire,
             )
+            if self._faiss_loaded:
+                self._add_vector_to_faiss(self._hash(user_message), vector)
             logger.info(f"Cache updated for message: {user_message[:50]}...")
         except Exception as e:
             logger.error(f"Error in update: {e}", exc_info=True)

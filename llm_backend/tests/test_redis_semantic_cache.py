@@ -48,6 +48,7 @@ def _make_cache(*, threshold: float = 0.8, max_cache_size: int = 1000):
     cache.cleanup_interval = 3600
     cache._cleanup_task = None
     cache._session = None
+    cache._init_faiss_state()
     cache._ensure_cleanup_task = lambda: None
     return cache
 
@@ -85,6 +86,72 @@ def test_semantic_cache_hit_uses_scan_not_keys():
     assert result == "semantic response"
     assert cache.redis.keys_called is False
     assert cache.redis.scan_patterns == ["test-cache:vec:*"]
+
+
+def test_faiss_hit_reuses_loaded_index_without_rescan():
+    pytest.importorskip("faiss")
+    cache = _make_cache()
+    cached_message = "上海三天旅行"
+    cache.redis.store[cache._get_vector_key(cached_message)] = json.dumps([1.0, 0.0])
+    cache.redis.store[cache._get_response_key(cached_message)] = "faiss response"
+
+    async def fake_embedding(text: str):  # noqa: ARG001
+        return [1.0, 0.0]
+
+    cache._get_embedding = fake_embedding
+
+    first = asyncio.run(cache.lookup([{"role": "user", "content": "上海旅行三天"}]))
+    assert first == "faiss response"
+    assert cache.redis.scan_patterns == ["test-cache:vec:*"]
+
+    cache.redis.scan_patterns.clear()
+    second = asyncio.run(cache.lookup([{"role": "user", "content": "上海三日游"}]))
+
+    assert second == "faiss response"
+    assert cache.redis.keys_called is False
+    assert cache.redis.scan_patterns == []
+
+
+def test_faiss_unavailable_falls_back_to_semantic_scan(monkeypatch):
+    import app.services.redis_semantic_cache as cache_module
+
+    monkeypatch.setattr(cache_module, "faiss", None)
+    cache = _make_cache()
+    cached_message = "上海三天旅行"
+    cache.redis.store[cache._get_vector_key(cached_message)] = json.dumps([1.0, 0.0])
+    cache.redis.store[cache._get_response_key(cached_message)] = "scan response"
+
+    async def fake_embedding(text: str):  # noqa: ARG001
+        return [1.0, 0.0]
+
+    cache._get_embedding = fake_embedding
+
+    result = asyncio.run(cache.lookup([{"role": "user", "content": "上海旅行三天"}]))
+
+    assert result == "scan response"
+    assert cache.redis.keys_called is False
+    assert cache.redis.scan_patterns == ["test-cache:vec:*"]
+
+
+def test_update_appends_to_loaded_faiss_index():
+    pytest.importorskip("faiss")
+    cache = _make_cache()
+
+    async def fake_embedding(text: str):  # noqa: ARG001
+        return [1.0, 0.0]
+
+    cache._get_embedding = fake_embedding
+
+    assert asyncio.run(cache.lookup([{"role": "user", "content": "没有缓存"}])) is None
+    assert cache._faiss_loaded is True
+
+    asyncio.run(cache.update([{"role": "user", "content": "上海 3天 预算5000"}], "new response"))
+
+    cache.redis.scan_patterns.clear()
+    result = asyncio.run(cache.lookup([{"role": "user", "content": "上海三日游"}]))
+
+    assert result == "new response"
+    assert cache.redis.scan_patterns == []
 
 
 def test_cleanup_uses_scan_and_removes_oldest_items():

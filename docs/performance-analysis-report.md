@@ -60,12 +60,12 @@
 
 | 中间件 | 版本/约束 | 角色 | 问题标记 |
 |--------|----------|------|---------|
-| **Redis** | `>=5.0.0` (普通版) | 语义缓存 | ❌ O(n) 暴力扫描 + 同步客户端 |
+| **Redis** | `>=5.0.0` (普通版) | 缓存真源 | ✅ 存储 response/vector/meta，已避免 `KEYS` |
 | **Ollama** | `langchain-ollama==0.3.0` | Embedding | ❌ 硬绑定 + 无连接池 |
 | **DeepSeek** | `langchain-deepseek==0.1.3` | LLM | ❌ 无 retry/timeout/连接池 |
 | **LangGraph** | `==0.3.25` | 工作流引擎 | ⚠ 偏旧，单节点架构 |
 | **MySQL** | aiomysql `>=0.1.1` | 持久化 | ✅ 异步 ORM |
-| **FAISS** | `faiss-cpu` | 向量搜索 | ⚠ 已安装但语义缓存未使用 |
+| **FAISS** | `faiss-cpu` | 进程内 L2 向量索引 | ✅ 已用于语义缓存加速，Redis 仍为真源 |
 | **sentence-transformers** | 未指定版本 | 备用 Embedding | ⚠ 已安装但未使用 |
 | **tenacity** | `>=8.0.0` | 重试框架 | ⚠ 已安装但 LLM 路径未使用 |
 
@@ -550,34 +550,36 @@ Redis 语义缓存      ░░                                             2%  �
 
 ---
 
-### 5.2 [G1] Redis 语义缓存 — L1 exact 已落地，L2 仍待索引化
+### 5.2 [G1] Redis 语义缓存 — L1 exact + L2 FAISS 已落地
 
 **严重度：高 | 代码位置：`redis_semantic_cache.py`**
 
 #### 问题描述
 
-v5.6 已完成第一步零部署修复：
+v5.6 已完成零部署缓存修复：
 
 - `lookup()` 先走 L1 exact response key，完全相同 query 命中时跳过 embedding 和语义向量扫描。
 - `lookup()` 与 cleanup 不再使用 `redis.keys()`，改为 `SCAN`/`scan_iter` 增量遍历。
-- 新增 `semantic_cache_lookup` 结构化日志，记录 `cache_source=exact|semantic|miss`、`lookup_ms`、`scanned_count` 和 `similarity`。
+- L2 语义相似检索使用进程内 FAISS `IndexFlatIP`，向量归一化后用 inner product 近似 cosine similarity。
+- Redis 仍保存 `response/vector/meta`，FAISS 只作为可重建的进程内加速层。
+- 新增 `semantic_cache_lookup` 结构化日志，记录 `cache_source=exact|faiss|semantic_scan|miss`、`lookup_ms`、`scanned_count` 和 `similarity`。
 
-仍需继续优化的是 L2 语义相似缓存：语义 miss / semantic hit 仍需要遍历向量并在 Python 中计算相似度。
+FAISS 不可用或索引构建异常时，系统会回退到 `semantic_scan`，保证缓存失败不影响主链路。
 
 ```
-1. SCAN "cache:vec:*"                    ← 已避免 KEYS 阻塞，但仍会遍历
-2. for vec_key in all_vectors:            ← n 次网络往返
-3.     redis.get(vec_key)                 ← 每次 GET 一个向量（JSON 序列化）
-4.     np.dot(current, cached) / norms    ← n 次余弦计算
-5. return best match if > threshold
+1. exact response key lookup              ← 完全相同 query 直接返回
+2. embedding current query
+3. FAISS index.search(top_k)              ← 常规语义命中路径
+4. Redis GET response by hash_id
+5. fallback semantic_scan if FAISS unavailable
 ```
 
 | 问题 | 严重度 |
 |------|--------|
 | `redis.keys()` 阻塞整个 Redis 实例 | 已修复 |
-| 逐条 GET 向量（n 次网络往返） | 严重 |
+| 逐条 GET 向量（n 次网络往返） | 常规路径已由 FAISS 替代；fallback 仍保留 |
 | 同步 `redis` 客户端阻塞 FastAPI 事件循环 | 已使用 `redis.asyncio` |
-| 向量 JSON 序列化（768 维 ~12KB vs 二进制 ~6KB） | 中 |
+| 向量 JSON 序列化（768 维 ~12KB vs 二进制 ~6KB） | 中，后续可二进制化 |
 | 完全相同查询重复调 Ollama | 已通过 L1 exact hit 避免 |
 
 #### 规模退化预估
@@ -603,7 +605,7 @@ v5.6 已完成第一步零部署修复：
 | **Milvus Lite** | <5ms | 嵌入式 | 中 | <100 万条 |
 | **ChromaDB** | <10ms | 嵌入式 | 低 | <10 万条 |
 
-**推荐**：短期继续将 L2 语义向量从 Python 全扫升级为 FAISS（零部署）；中期再评估 Qdrant（生产级持久化）。
+**推荐**：短期继续观察 FAISS L2 的命中率、索引加载耗时和内存占用；中期若多进程部署或缓存规模增长，再评估 Qdrant（生产级持久化与跨进程共享）。
 
 ---
 
@@ -676,7 +678,7 @@ EMBEDDING_TYPE: str = "ollama"       # ollama 或 sentence_transformer
 EMBEDDING_MODEL: str = "bge-m3"
 ```
 
-但 `redis_semantic_cache.py` 完全忽略 `EMBEDDING_TYPE`，硬编码 Ollama。`sentence_transformers` 和 `faiss-cpu` 均已安装但未被使用。
+但 `redis_semantic_cache.py` 仍忽略 `EMBEDDING_TYPE`，Embedding 生成路径硬编码 Ollama。`faiss-cpu` 已用于 L2 语义索引，`sentence_transformers` 仍未接入。
 
 #### 替代方案
 
@@ -731,9 +733,9 @@ EMBEDDING_MODEL: str = "bge-m3"
 
 | 类别 | 数量 | 示例 |
 |------|------|------|
-| 性能反模式 | 3 | `redis.keys()`、无连接池、同步 Redis 客户端 |
-| 配置未生效 | 1 | `EMBEDDING_TYPE` 声明但语义缓存未使用 |
-| 已安装未利用 | 2 | `faiss-cpu`、`sentence_transformers` |
+| 性能反模式 | 1 | Redis 向量 JSON 序列化与跨进程索引未共享 |
+| 配置未生效 | 1 | `EMBEDDING_TYPE` 声明但 Embedding 生成路径仍硬编码 Ollama |
+| 已安装未利用 | 1 | `sentence_transformers` |
 | 已安装未使用 | 1 | `tenacity`（LLM 路径未用） |
 | 隐式依赖 | 1 | `langchain-openai` 未在 requirements.txt |
 | 版本风险 | 18+ | 宽松下界的 pip 包 |
@@ -765,7 +767,7 @@ EMBEDDING_MODEL: str = "bge-m3"
 | 序号 | 任务 | 对应 | 改动文件 | 预计收益 |
 |------|------|------|---------|---------|
 | 1.1 | **L1 精确缓存**：MD5 精确匹配 response key，命中跳过 embedding | G1 | `redis_semantic_cache.py` | 已实施，重复查询跳过语义向量扫描 |
-| 1.2 | **L2 FAISS 替换暴力扫描**：`faiss.IndexFlatIP` | G1 | `redis_semantic_cache.py` | lookup O(n)→O(log n) |
+| 1.2 | **L2 FAISS 替换暴力扫描**：`faiss.IndexFlatIP` | G1 | `redis_semantic_cache.py` | 已实施，常规语义命中走进程内向量索引 |
 | 1.3 | **消除 `redis.keys()`**：改用 `SCAN` 命令 | G1 | `redis_semantic_cache.py` | 已实施，避免阻塞 Redis |
 | 1.4 | **LLM 单例化** | G2 | `travel_draft_graph.py` | 省去重复实例化 |
 | 1.5 | **LLM retry + timeout**：配置化 timeout + bounded retry + latency logging | G2 | `travel_draft_graph.py` / `deepseek_service.py` | 已实施，待真实流量统计恢复率 |
@@ -839,7 +841,7 @@ EMBEDDING_MODEL: str = "bge-m3"
 | **LLM** | 请求池化/批量推理 | 无 | **不适用** | 依赖自建推理服务 |
 | **LLM** | 多模型路由 | 仅 DeepSeek 一个模型 | **中期可借鉴** | 轻量模型处理简单查询，DeepSeek 只处理复杂行程 |
 | **LLM** | INT4/INT8 量化 | 不适用 | **不适用** | 依赖自建推理服务 |
-| **缓存** | Qdrant/FAISS 向量缓存 | 已识别（Gap G1） | **高，直接做** | 已安装 FAISS 但未用，与 Phase 1 一致 |
+| **缓存** | Qdrant/FAISS 向量缓存 | FAISS L2 已落地，Qdrant 待规模化再评估 | **中** | 当前先用零部署 FAISS，后续再考虑持久化向量库 |
 | **缓存** | 缓存分层 | Phase 1-2 规划 | **高，思路一致** | L1/L2/L3 热冷分层 |
 | **缓存** | 热门模板缓存 | Phase 2 规划 | **高，投入产出比最高** | Top-50 城市预生成，覆盖 40-60% 查询 |
 | **流式** | 流式输出 | **已实施** ✅ | — | astream + SSE day_ready |
