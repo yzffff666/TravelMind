@@ -550,14 +550,22 @@ Redis 语义缓存      ░░                                             2%  �
 
 ---
 
-### 5.2 [G1] Redis 语义缓存 O(n) 暴力扫描 — 最严重
+### 5.2 [G1] Redis 语义缓存 — L1 exact 已落地，L2 仍待索引化
 
 **严重度：高 | 代码位置：`redis_semantic_cache.py`**
 
 #### 问题描述
 
+v5.6 已完成第一步零部署修复：
+
+- `lookup()` 先走 L1 exact response key，完全相同 query 命中时跳过 embedding 和语义向量扫描。
+- `lookup()` 与 cleanup 不再使用 `redis.keys()`，改为 `SCAN`/`scan_iter` 增量遍历。
+- 新增 `semantic_cache_lookup` 结构化日志，记录 `cache_source=exact|semantic|miss`、`lookup_ms`、`scanned_count` 和 `similarity`。
+
+仍需继续优化的是 L2 语义相似缓存：语义 miss / semantic hit 仍需要遍历向量并在 Python 中计算相似度。
+
 ```
-1. redis.keys("cache:vec:*")              ← O(n) 全库扫描，生产禁用
+1. SCAN "cache:vec:*"                    ← 已避免 KEYS 阻塞，但仍会遍历
 2. for vec_key in all_vectors:            ← n 次网络往返
 3.     redis.get(vec_key)                 ← 每次 GET 一个向量（JSON 序列化）
 4.     np.dot(current, cached) / norms    ← n 次余弦计算
@@ -566,11 +574,11 @@ Redis 语义缓存      ░░                                             2%  �
 
 | 问题 | 严重度 |
 |------|--------|
-| `redis.keys()` 阻塞整个 Redis 实例 | 严重 |
+| `redis.keys()` 阻塞整个 Redis 实例 | 已修复 |
 | 逐条 GET 向量（n 次网络往返） | 严重 |
-| 同步 `redis` 客户端阻塞 FastAPI 事件循环 | 严重 |
+| 同步 `redis` 客户端阻塞 FastAPI 事件循环 | 已使用 `redis.asyncio` |
 | 向量 JSON 序列化（768 维 ~12KB vs 二进制 ~6KB） | 中 |
-| 无 Embedding 结果缓存（相同查询重复调 Ollama） | 低 |
+| 完全相同查询重复调 Ollama | 已通过 L1 exact hit 避免 |
 
 #### 规模退化预估
 
@@ -595,7 +603,7 @@ Redis 语义缓存      ░░                                             2%  �
 | **Milvus Lite** | <5ms | 嵌入式 | 中 | <100 万条 |
 | **ChromaDB** | <10ms | 嵌入式 | 低 | <10 万条 |
 
-**推荐**：短期用 L1 dict + L2 FAISS（零部署），中期迁移 Qdrant（生产级持久化）。
+**推荐**：短期继续将 L2 语义向量从 Python 全扫升级为 FAISS（零部署）；中期再评估 Qdrant（生产级持久化）。
 
 ---
 
@@ -756,9 +764,9 @@ EMBEDDING_MODEL: str = "bge-m3"
 
 | 序号 | 任务 | 对应 | 改动文件 | 预计收益 |
 |------|------|------|---------|---------|
-| 1.1 | **L1 精确缓存**：内存 dict + MD5 精确匹配 | G1 | `redis_semantic_cache.py` | 重复查询 <1ms |
+| 1.1 | **L1 精确缓存**：MD5 精确匹配 response key，命中跳过 embedding | G1 | `redis_semantic_cache.py` | 已实施，重复查询跳过语义向量扫描 |
 | 1.2 | **L2 FAISS 替换暴力扫描**：`faiss.IndexFlatIP` | G1 | `redis_semantic_cache.py` | lookup O(n)→O(log n) |
-| 1.3 | **消除 `redis.keys()`**：改用 `SCAN` 命令 | G1 | `redis_semantic_cache.py` | 不阻塞 Redis |
+| 1.3 | **消除 `redis.keys()`**：改用 `SCAN` 命令 | G1 | `redis_semantic_cache.py` | 已实施，避免阻塞 Redis |
 | 1.4 | **LLM 单例化** | G2 | `travel_draft_graph.py` | 省去重复实例化 |
 | 1.5 | **LLM retry + timeout**：配置化 timeout + bounded retry + latency logging | G2 | `travel_draft_graph.py` / `deepseek_service.py` | 已实施，待真实流量统计恢复率 |
 | 1.6 | **Embedding 连接池**：共享 ClientSession | G3 | `redis_semantic_cache.py` | -20ms/次 |
