@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from hashlib import md5
+from typing import Any
 
 from app.core.logger import get_logger
 from app.schemas.itinerary_v1 import EvidenceItem, ItineraryV1, Location
@@ -61,6 +62,73 @@ class BackfillReport:
     filled: int = 0
     unresolved: list[str] = field(default_factory=list)
     assumptions: list[str] = field(default_factory=list)
+
+
+@dataclass
+class _CacheLookup:
+    found: bool
+    payload: dict | None = None
+
+
+@dataclass
+class _BackfillDiagnostics:
+    fallback_reason: str = ""
+    variants_tried: list[str] = field(default_factory=list)
+    provider_status_counts: dict[str, int] = field(default_factory=dict)
+    best_candidate_title: str | None = None
+    best_match_score: float = 0.0
+    candidate_count: int = 0
+    rejected_bbox_count: int = 0
+    rejected_score_count: int = 0
+    rejected_missing_coord_count: int = 0
+    cache_hit_count: int = 0
+    cache_negative_hit_count: int = 0
+    variant_limit_reached: bool = False
+
+    def merge(self, other: "_BackfillDiagnostics") -> None:
+        self.variants_tried.extend(other.variants_tried)
+        for status, count in other.provider_status_counts.items():
+            self.provider_status_counts[status] = self.provider_status_counts.get(status, 0) + count
+        self.candidate_count += other.candidate_count
+        self.rejected_bbox_count += other.rejected_bbox_count
+        self.rejected_score_count += other.rejected_score_count
+        self.rejected_missing_coord_count += other.rejected_missing_coord_count
+        self.cache_hit_count += other.cache_hit_count
+        self.cache_negative_hit_count += other.cache_negative_hit_count
+        self.variant_limit_reached = self.variant_limit_reached or other.variant_limit_reached
+        if other.best_match_score > self.best_match_score:
+            self.best_match_score = other.best_match_score
+            self.best_candidate_title = other.best_candidate_title
+
+    def mark_status(self, status: str) -> None:
+        self.provider_status_counts[status] = self.provider_status_counts.get(status, 0) + 1
+
+    def as_log_extra(self) -> dict[str, Any]:
+        return {
+            "variants_tried": self.variants_tried,
+            "provider_status_counts": self.provider_status_counts,
+            "best_candidate_title": self.best_candidate_title,
+            "best_match_score": round(self.best_match_score, 4),
+            "candidate_count": self.candidate_count,
+            "rejected_bbox_count": self.rejected_bbox_count,
+            "rejected_score_count": self.rejected_score_count,
+            "rejected_missing_coord_count": self.rejected_missing_coord_count,
+            "cache_hit_count": self.cache_hit_count,
+            "cache_negative_hit_count": self.cache_negative_hit_count,
+            "variant_limit_reached": self.variant_limit_reached,
+        }
+
+
+@dataclass
+class _ResolveResult:
+    resolved: dict | None = None
+    diagnostics: _BackfillDiagnostics = field(default_factory=_BackfillDiagnostics)
+
+
+@dataclass
+class _QueryResult:
+    resolved: dict | None = None
+    diagnostics: _BackfillDiagnostics = field(default_factory=_BackfillDiagnostics)
 
 
 class LocationBackfillService:
@@ -140,22 +208,28 @@ class LocationBackfillService:
 
         semaphore = asyncio.Semaphore(self._max_concurrent_backfills)
 
-        async def resolve_job(place: str) -> dict | None:
+        async def resolve_job(place: str) -> _ResolveResult:
             async with semaphore:
                 remaining = self._remaining_budget(started)
                 if remaining <= 0:
-                    return None
+                    return _ResolveResult(
+                        diagnostics=_BackfillDiagnostics(fallback_reason="total_budget_exhausted")
+                    )
                 try:
                     return await asyncio.wait_for(
                         self._resolve_place(place, destination, started),
                         timeout=remaining,
                     )
                 except asyncio.TimeoutError:
-                    return None
+                    return _ResolveResult(
+                        diagnostics=_BackfillDiagnostics(fallback_reason="total_budget_exhausted")
+                    )
 
         results = await asyncio.gather(*(resolve_job(place) for _, place, _ in jobs))
 
-        for (slot, place, day_index), resolved in zip(jobs, results):
+        for (slot, place, day_index), result in zip(jobs, results):
+            resolved = result.resolved
+            diagnostics = result.diagnostics
             if not resolved:
                 report.unresolved.append(place)
                 self._log_location_backfill(
@@ -166,7 +240,8 @@ class LocationBackfillService:
                     day_index=day_index,
                     resolved=None,
                     elapsed_ms=self._elapsed_ms(started),
-                    fallback_reason="provider_empty_or_timeout",
+                    fallback_reason=diagnostics.fallback_reason or "provider_empty",
+                    diagnostics=diagnostics,
                 )
                 continue
 
@@ -183,6 +258,7 @@ class LocationBackfillService:
                 day_index=day_index,
                 resolved=resolved,
                 elapsed_ms=self._elapsed_ms(started),
+                diagnostics=diagnostics,
             )
 
         if report.filled:
@@ -231,28 +307,39 @@ class LocationBackfillService:
                 break
         return selected
 
-    async def _resolve_place(self, place: str, destination: str, started: float) -> dict | None:
-        variants = self._build_variants(place, destination)[: self._max_variants_per_place]
+    async def _resolve_place(self, place: str, destination: str, started: float) -> _ResolveResult:
+        all_variants = self._build_variants(place, destination)
+        variants = all_variants[: self._max_variants_per_place]
+        diagnostics = _BackfillDiagnostics(
+            variant_limit_reached=len(all_variants) > len(variants)
+        )
         for variant in variants:
             if time.perf_counter() - started >= self._total_budget_seconds:
-                return None
+                diagnostics.fallback_reason = "total_budget_exhausted"
+                return _ResolveResult(diagnostics=diagnostics)
 
             cache_key = f"{destination.lower()}|{variant.lower()}"
             cached = self._get_cache(cache_key)
-            if cached is not None:
-                if cached:
-                    return cached
+            diagnostics.variants_tried.append(variant)
+            if cached.found:
+                if cached.payload:
+                    diagnostics.cache_hit_count += 1
+                    return _ResolveResult(resolved=cached.payload, diagnostics=diagnostics)
+                diagnostics.cache_negative_hit_count += 1
                 continue
 
-            resolved = await self._query_best_candidate(place, destination, variant)
-            self._set_cache(cache_key, resolved)
-            if resolved:
-                return resolved
-        return None
+            query_result = await self._query_best_candidate(place, destination, variant)
+            diagnostics.merge(query_result.diagnostics)
+            self._set_cache(cache_key, query_result.resolved)
+            if query_result.resolved:
+                return _ResolveResult(resolved=query_result.resolved, diagnostics=diagnostics)
+        diagnostics.fallback_reason = self._choose_fallback_reason(diagnostics)
+        return _ResolveResult(diagnostics=diagnostics)
 
-    async def _query_best_candidate(self, place: str, destination: str, variant: str) -> dict | None:
+    async def _query_best_candidate(self, place: str, destination: str, variant: str) -> _QueryResult:
         best: dict | None = None
         best_score = 0.0
+        diagnostics = _BackfillDiagnostics()
         for provider in self._providers:
             try:
                 response = await asyncio.wait_for(
@@ -265,18 +352,35 @@ class LocationBackfillService:
                     timeout=self._provider_timeout_seconds,
                 )
             except asyncio.TimeoutError:
+                diagnostics.mark_status("timeout")
                 logger.warning("Location backfill provider %s timed out for %s", provider.name, variant)
                 continue
             except Exception as exc:  # noqa: BLE001
+                diagnostics.mark_status("error")
                 logger.warning("Location backfill provider %s failed for %s: %s", provider.name, variant, exc)
                 continue
 
+            if not response.candidates:
+                diagnostics.mark_status("empty")
+                continue
+
+            diagnostics.mark_status("success")
             for candidate in response.candidates:
+                diagnostics.candidate_count += 1
                 lat = self._to_float(candidate.extra.get("lat"))
                 lng = self._to_float(candidate.extra.get("lng"))
                 if lat is None or lng is None:
+                    diagnostics.rejected_missing_coord_count += 1
                     continue
+                score = max(
+                    self._match_score(place, candidate.title or "", candidate.extra.get("address", "")),
+                    self._match_score(variant, candidate.title or "", candidate.extra.get("address", "")),
+                )
+                if score > diagnostics.best_match_score:
+                    diagnostics.best_match_score = score
+                    diagnostics.best_candidate_title = candidate.title
                 if not is_coord_within_destination(destination, lat, lng):
+                    diagnostics.rejected_bbox_count += 1
                     logger.info(
                         "Location backfill rejected out-of-bounds candidate %s for %s: %s,%s",
                         candidate.title,
@@ -286,11 +390,8 @@ class LocationBackfillService:
                     )
                     continue
 
-                score = max(
-                    self._match_score(place, candidate.title or "", candidate.extra.get("address", "")),
-                    self._match_score(variant, candidate.title or "", candidate.extra.get("address", "")),
-                )
                 if score < self._min_match_score or score <= best_score:
+                    diagnostics.rejected_score_count += 1
                     continue
 
                 photos = candidate.extra.get("photos") or []
@@ -309,7 +410,26 @@ class LocationBackfillService:
                     "match_score": score,
                 }
                 best_score = score
-        return best
+        return _QueryResult(resolved=best, diagnostics=diagnostics)
+
+    @staticmethod
+    def _choose_fallback_reason(diagnostics: _BackfillDiagnostics) -> str:
+        statuses = diagnostics.provider_status_counts
+        if diagnostics.cache_negative_hit_count and not statuses:
+            return "cache_negative_hit"
+        if diagnostics.rejected_bbox_count:
+            return "bbox_rejected"
+        if diagnostics.rejected_score_count:
+            return "score_rejected"
+        if statuses.get("timeout") and not diagnostics.candidate_count:
+            return "provider_timeout"
+        if statuses.get("error") and not diagnostics.candidate_count:
+            return "provider_error"
+        if diagnostics.variant_limit_reached:
+            return "variant_limit_exhausted"
+        if statuses.get("empty") or not statuses:
+            return "provider_empty"
+        return "provider_empty"
 
     @staticmethod
     def _find_day_index(itinerary: ItineraryV1, target_slot) -> int | None:
@@ -333,6 +453,7 @@ class LocationBackfillService:
         resolved: dict | None,
         elapsed_ms: float,
         fallback_reason: str = "",
+        diagnostics: _BackfillDiagnostics | None = None,
     ) -> None:
         lat = resolved.get("lat") if resolved else None
         lng = resolved.get("lng") if resolved else None
@@ -342,25 +463,29 @@ class LocationBackfillService:
             else False
         )
         match_score = float(resolved.get("match_score") or 0.0) if resolved else 0.0
+        log_extra = {
+            "event_type": "location_backfill",
+            "itinerary_id": itinerary.itinerary_id,
+            "revision_id": itinerary.revision_id,
+            "day_index": day_index,
+            "slot_label": getattr(slot, "slot", None),
+            "activity": getattr(slot, "activity", None),
+            "place": place,
+            "destination": destination,
+            "candidate_title": resolved.get("title") if resolved else None,
+            "lat": lat,
+            "lng": lng,
+            "source": "provider" if resolved else "unresolved",
+            "confidence": self._confidence_label(match_score) if resolved else "low",
+            "elapsed_ms": elapsed_ms,
+            "fallback_reason": fallback_reason,
+            "bbox_valid": bbox_valid,
+        }
+        if diagnostics:
+            log_extra.update(diagnostics.as_log_extra())
         structured_logger.info(
             "location_backfill",
-            extra={
-                "event_type": "location_backfill",
-                "itinerary_id": itinerary.itinerary_id,
-                "revision_id": itinerary.revision_id,
-                "day_index": day_index,
-                "slot_label": getattr(slot, "slot", None),
-                "activity": getattr(slot, "activity", None),
-                "destination": destination,
-                "candidate_title": resolved.get("title") if resolved else None,
-                "lat": lat,
-                "lng": lng,
-                "source": "provider" if resolved else "unresolved",
-                "confidence": self._confidence_label(match_score) if resolved else "low",
-                "elapsed_ms": elapsed_ms,
-                "fallback_reason": fallback_reason,
-                "bbox_valid": bbox_valid,
-            },
+            extra=log_extra,
         )
 
     @staticmethod
@@ -509,15 +634,15 @@ class LocationBackfillService:
             return None
 
     @staticmethod
-    def _get_cache(key: str) -> dict | None:
+    def _get_cache(key: str) -> _CacheLookup:
         cached = _cache.get(key)
         if not cached:
-            return None
+            return _CacheLookup(found=False)
         ts, payload = cached
         if time.time() - ts >= _CACHE_TTL_SECONDS:
             del _cache[key]
-            return None
-        return payload
+            return _CacheLookup(found=False)
+        return _CacheLookup(found=True, payload=payload)
 
     @staticmethod
     def _set_cache(key: str, payload: dict | None) -> None:

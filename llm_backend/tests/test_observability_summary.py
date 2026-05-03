@@ -133,8 +133,10 @@ def test_summarize_events_groups_core_metrics():
         parse_log_line(
             "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
             "location_backfill {'event_type': 'location_backfill', 'source': 'unresolved', "
-            "'confidence': 'low', 'elapsed_ms': 33, 'fallback_reason': 'provider_empty_or_timeout', "
-            "'bbox_valid': False}"
+            "'confidence': 'low', 'elapsed_ms': 33, 'fallback_reason': 'score_rejected', "
+            "'bbox_valid': False, 'provider_status_counts': {'success': 1}, "
+            "'best_match_score': 0.61, 'rejected_score_count': 2, "
+            "'cache_negative_hit_count': 1, 'variant_limit_reached': True}"
         ),
         parse_log_line(
             "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
@@ -169,6 +171,12 @@ def test_summarize_events_groups_core_metrics():
     assert summary["providers"]["by_provider"]["serp:search"]["degraded_count"] == 1
     assert summary["backfill"]["attempted"] == 3
     assert summary["backfill"]["bbox_invalid_count"] == 1
+    assert summary["backfill"]["fallback_reasons"] == {"score_rejected": 1}
+    assert summary["backfill"]["provider_status_counts"] == {"success": 1}
+    assert summary["backfill"]["rejected_score_count"] == 2
+    assert summary["backfill"]["cache_negative_hit_count"] == 1
+    assert summary["backfill"]["variant_limit_reached_count"] == 1
+    assert summary["backfill"]["best_match_score"]["p50"] == 0.61
     assert summary["qp"]["source_counts"] == {"fallback": 1}
     assert summary["qa"]["events"] == 1
     assert summary["qa"]["source_counts"] == {"local_itinerary": 1}

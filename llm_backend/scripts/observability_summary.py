@@ -80,6 +80,17 @@ def _compact_counter(counter: Counter) -> dict[str, int]:
     return {str(key): count for key, count in counter.most_common() if key not in {None, ""}}
 
 
+def _merge_count_mappings(events: Iterable[ObservabilityEvent], field_name: str) -> dict[str, int]:
+    merged: Counter = Counter()
+    for event in events:
+        value = event.payload.get(field_name)
+        if not isinstance(value, dict):
+            continue
+        for key, count in value.items():
+            merged[str(key)] += int(_as_float(count) or 0)
+    return _compact_counter(merged)
+
+
 def _parse_mapping(text: str) -> dict[str, Any] | None:
     candidate = text.strip()
     if not candidate:
@@ -262,6 +273,7 @@ def _summarize_backfill(events: list[ObservabilityEvent]) -> dict[str, Any]:
     fills = [event for event in events if event.event_type == "location_backfill"]
     summaries = [event for event in events if event.event_type == "itinerary_quality_summary"]
     fill_latencies = [_as_float(event.payload.get("elapsed_ms")) for event in fills]
+    best_scores = [_as_float(event.payload.get("best_match_score")) for event in fills]
 
     return {
         "location_events": len(fills),
@@ -269,6 +281,16 @@ def _summarize_backfill(events: list[ObservabilityEvent]) -> dict[str, Any]:
         "source_counts": _compact_counter(Counter(event.payload.get("source") for event in fills)),
         "confidence_counts": _compact_counter(Counter(event.payload.get("confidence") for event in fills)),
         "fallback_reasons": _compact_counter(Counter(event.payload.get("fallback_reason") for event in fills)),
+        "provider_status_counts": _merge_count_mappings(fills, "provider_status_counts"),
+        "variant_limit_reached_count": sum(1 for event in fills if _as_bool(event.payload.get("variant_limit_reached"))),
+        "rejected_bbox_count": sum(int(_as_float(event.payload.get("rejected_bbox_count")) or 0) for event in fills),
+        "rejected_score_count": sum(int(_as_float(event.payload.get("rejected_score_count")) or 0) for event in fills),
+        "rejected_missing_coord_count": sum(
+            int(_as_float(event.payload.get("rejected_missing_coord_count")) or 0) for event in fills
+        ),
+        "cache_negative_hit_count": sum(
+            int(_as_float(event.payload.get("cache_negative_hit_count")) or 0) for event in fills
+        ),
         "bbox_invalid_count": sum(
             1
             for event in fills
@@ -281,6 +303,11 @@ def _summarize_backfill(events: list[ObservabilityEvent]) -> dict[str, Any]:
             "p50": _percentile([v for v in fill_latencies if v is not None], 50),
             "p95": _percentile([v for v in fill_latencies if v is not None], 95),
             "avg": _mean([v for v in fill_latencies if v is not None]),
+        },
+        "best_match_score": {
+            "p50": _percentile([v for v in best_scores if v is not None], 50),
+            "p95": _percentile([v for v in best_scores if v is not None], 95),
+            "avg": _mean([v for v in best_scores if v is not None]),
         },
     }
 
@@ -367,9 +394,14 @@ def render_markdown(summary: dict[str, Any]) -> str:
             f"- Source counts: `{json.dumps(summary['backfill']['source_counts'], ensure_ascii=False)}`",
             f"- Confidence counts: `{json.dumps(summary['backfill']['confidence_counts'], ensure_ascii=False)}`",
             f"- Fallback reasons: `{json.dumps(summary['backfill']['fallback_reasons'], ensure_ascii=False)}`",
+            f"- Provider status counts: `{json.dumps(summary['backfill']['provider_status_counts'], ensure_ascii=False)}`",
+            f"- Variant limit reached count: {summary['backfill']['variant_limit_reached_count']}",
+            f"- Rejected bbox/score/missing coord: {summary['backfill']['rejected_bbox_count']}/{summary['backfill']['rejected_score_count']}/{summary['backfill']['rejected_missing_coord_count']}",
+            f"- Cache negative hits: {summary['backfill']['cache_negative_hit_count']}",
             f"- BBox invalid count: {summary['backfill']['bbox_invalid_count']}",
             f"- Attempted/Filled/Unresolved: {summary['backfill']['attempted']}/{summary['backfill']['filled']}/{summary['backfill']['unresolved']}",
             f"- Elapsed ms: `{json.dumps(summary['backfill']['elapsed_ms'], ensure_ascii=False)}`",
+            f"- Best match score: `{json.dumps(summary['backfill']['best_match_score'], ensure_ascii=False)}`",
             "",
             "## QP",
             "",

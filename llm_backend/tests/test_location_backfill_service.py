@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from app.schemas.itinerary_v1 import BudgetSummary, ItineraryDay, ItinerarySlot, ItineraryV1, TripProfile
 from app.services.location_backfill_service import LocationBackfillService, _cache
@@ -64,6 +65,48 @@ class SlowTrackingMapProvider:
         ])
 
 
+class EmptyTrackingMapProvider:
+    name = "empty_tracking_map"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def nearby_poi(self, *, city, keywords, top_k=20, context=None):
+        self.calls += 1
+        return ProviderResponse()
+
+
+class BboxOnlyMapProvider:
+    name = "bbox_only_map"
+
+    async def nearby_poi(self, *, city, keywords, top_k=20, context=None):
+        keyword = keywords[0] if keywords else ""
+        return ProviderResponse(candidates=[
+            ProviderCandidate(
+                candidate_id=f"bbox-{keyword}",
+                source=self.name,
+                title=keyword,
+                snippet="wrong region",
+                extra={"lat": 43.948993, "lng": 125.535557, "address": "Changchun"},
+            )
+        ])
+
+
+class LowScoreMapProvider:
+    name = "low_score_map"
+
+    async def nearby_poi(self, *, city, keywords, top_k=20, context=None):
+        return ProviderResponse(candidates=[
+            ProviderCandidate(
+                candidate_id="low-score",
+                source=self.name,
+                title="Unrelated Museum",
+                snippet="in bounds but weak text match",
+                extra={"lat": 7.88, "lng": 98.39, "address": "Phuket"},
+            )
+        ])
+
+
 def _service_with_fake_provider() -> LocationBackfillService:
     svc = LocationBackfillService.__new__(LocationBackfillService)
     svc._providers = [FakeMapProvider()]
@@ -76,11 +119,16 @@ def _service_with_fake_provider() -> LocationBackfillService:
     return svc
 
 
-def _service_with_provider(provider, *, max_concurrent_backfills: int = 4) -> LocationBackfillService:
+def _service_with_provider(
+    provider,
+    *,
+    max_concurrent_backfills: int = 4,
+    max_variants_per_place: int = 2,
+) -> LocationBackfillService:
     svc = LocationBackfillService.__new__(LocationBackfillService)
     svc._providers = [provider]
     svc._max_slots_per_request = 12
-    svc._max_variants_per_place = 2
+    svc._max_variants_per_place = max_variants_per_place
     svc._provider_timeout_seconds = 1.0
     svc._total_budget_seconds = 5.0
     svc._min_match_score = 0.72
@@ -211,3 +259,62 @@ def test_backfill_runs_with_bounded_concurrency():
         for day in itinerary.days
         for slot in day.slots
     )
+
+
+def test_backfill_negative_cache_prevents_repeated_provider_miss():
+    _cache.clear()
+    provider = EmptyTrackingMapProvider()
+    itinerary = ItineraryV1(
+        itinerary_id="it-cache-miss",
+        revision_id="rev-cache-miss",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=1,
+            slots=[
+                ItinerarySlot(slot="morning", activity="visit", place="Unknown Place"),
+                ItinerarySlot(slot="afternoon", activity="visit", place="Unknown Place"),
+            ],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(
+        _service_with_provider(
+            provider,
+            max_concurrent_backfills=1,
+            max_variants_per_place=1,
+        ).backfill_itinerary(itinerary)
+    )
+
+    assert report.filled == 0
+    assert report.unresolved == ["Unknown Place", "Unknown Place"]
+    assert provider.calls == 1
+
+
+def test_backfill_diagnostics_distinguish_bbox_and_score_rejections():
+    _cache.clear()
+
+    bbox_result = asyncio.run(
+        _service_with_provider(BboxOnlyMapProvider())._resolve_place(
+            "Karon Beach",
+            "Phuket",
+            time.perf_counter(),
+        )
+    )
+    _cache.clear()
+    score_result = asyncio.run(
+        _service_with_provider(LowScoreMapProvider())._resolve_place(
+            "Karon Beach",
+            "Phuket",
+            time.perf_counter(),
+        )
+    )
+
+    assert bbox_result.resolved is None
+    assert bbox_result.diagnostics.fallback_reason == "bbox_rejected"
+    assert bbox_result.diagnostics.rejected_bbox_count == 2
+    assert bbox_result.diagnostics.best_candidate_title == "Karon Beach"
+    assert score_result.resolved is None
+    assert score_result.diagnostics.fallback_reason == "score_rejected"
+    assert score_result.diagnostics.rejected_score_count == 2
+    assert score_result.diagnostics.best_candidate_title == "Unrelated Museum"
