@@ -76,6 +76,17 @@ class EmptyTrackingMapProvider:
         return ProviderResponse()
 
 
+class CityRecordingMapProvider(FakeMapProvider):
+    name = "city_recording_map"
+
+    def __init__(self) -> None:
+        self.cities: list[str] = []
+
+    async def nearby_poi(self, *, city, keywords, top_k=20, context=None):
+        self.cities.append(city)
+        return await super().nearby_poi(city=city, keywords=keywords, top_k=top_k, context=context)
+
+
 class BboxOnlyMapProvider:
     name = "bbox_only_map"
 
@@ -189,6 +200,35 @@ def test_backfill_builds_phuket_old_town_aliases():
 
     assert "Old Phuket Town" in variants
     assert "Phuket Old Town" in variants
+
+
+def test_backfill_normalizes_noisy_destination_before_provider_call():
+    _cache.clear()
+    provider = CityRecordingMapProvider()
+    itinerary = ItineraryV1(
+        itinerary_id="it-phuket-relaxed",
+        revision_id="rev-phuket-relaxed",
+        trip_profile=TripProfile(destination_city="普吉岛轻松"),
+        days=[ItineraryDay(
+            day_index=1,
+            slots=[ItinerarySlot(slot="上午", activity="海滩散步", place="卡伦海滩")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_provider(provider, max_variants_per_place=4).backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert provider.cities == ["Phuket", "Phuket"]
+
+
+def test_backfill_destination_normalization_is_generic():
+    svc = _service_with_fake_provider()
+
+    assert svc._normalize_destination("普吉岛轻松") == "Phuket"
+    assert svc._normalize_destination("成都亲子三天") == "成都"
+    assert svc._normalize_destination("上海 4天 预算6000 情侣") == "上海"
+    assert svc._normalize_destination("东京美食游") == "Tokyo"
 
 
 def test_backfill_changed_days_only_updates_changed_slots():

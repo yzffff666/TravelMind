@@ -34,6 +34,7 @@ _PLACE_ALIASES = {
 }
 
 _DEST_ALIASES = {
+    "普吉": "Phuket",
     "普吉岛": "Phuket",
     "东京": "Tokyo",
     "大阪": "Osaka",
@@ -44,6 +45,29 @@ _DEST_ALIASES = {
     "巴黎": "Paris",
     "伦敦": "London",
 }
+
+_DESTINATION_SUFFIX_NOISE = (
+    "亲子",
+    "情侣",
+    "家庭",
+    "朋友",
+    "独自",
+    "轻松",
+    "慢节奏",
+    "不赶",
+    "悠闲",
+    "休闲",
+    "深度",
+    "经典",
+    "热门",
+    "小众",
+    "美食",
+    "文化",
+    "购物",
+    "自然",
+    "海岛",
+    "周末",
+)
 
 _TRIM_SUFFIXES = (
     "附近餐厅",
@@ -225,7 +249,7 @@ class LocationBackfillService:
         started = time.perf_counter()
 
         destination_raw = itinerary.trip_profile.destination_city or ""
-        destination = _DEST_ALIASES.get(destination_raw, destination_raw)
+        destination = self._normalize_destination(destination_raw)
 
         jobs: list[tuple[object, str, int | None]] = []
         for slot in pending_slots:
@@ -331,6 +355,38 @@ class LocationBackfillService:
         if any(marker in raw for marker in _SPECIFIC_PLACE_MARKERS):
             return False
         return any(marker in raw for marker in _GENERIC_ACTIVITY_MARKERS)
+
+    @staticmethod
+    def _normalize_destination(destination: str) -> str:
+        raw = re.sub(r"\s+", " ", (destination or "").strip(" ,，。；;"))
+        if not raw:
+            return raw
+
+        alias = LocationBackfillService._destination_alias(raw)
+        if alias:
+            return alias
+
+        cleaned = re.sub(r"[（(].*?[)）]", "", raw)
+        cleaned = re.sub(r"(?:预算|budget)\s*\d+(?:\.\d+)?\s*(?:元|块钱?|rmb|cny)?", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\d+(?:\.\d+)?\s*(?:元|块钱?|rmb|cny)", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"(?:\d+|[一二两三四五六七八九十]+)\s*(?:天|日|days?)", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\b\d+\s*(?:d|day|days)\b", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"(?:旅游|旅行|度假|游玩|自由行|亲子游|情侣游|家庭游|游)$", "", cleaned)
+        for suffix in _DESTINATION_SUFFIX_NOISE:
+            cleaned = re.sub(rf"{re.escape(suffix)}$", "", cleaned).strip()
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        cleaned = cleaned.strip(" ,，。；;")
+
+        alias = LocationBackfillService._destination_alias(cleaned)
+        return alias or cleaned or raw
+
+    @staticmethod
+    def _destination_alias(destination: str) -> str | None:
+        lowered = destination.lower()
+        for key, alias in sorted(_DEST_ALIASES.items(), key=lambda item: len(item[0]), reverse=True):
+            if key in destination or key.lower() in lowered:
+                return alias
+        return None
 
     def _remaining_budget(self, started: float) -> float:
         return max(0.0, self._total_budget_seconds - (time.perf_counter() - started))
