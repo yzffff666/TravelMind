@@ -133,8 +133,11 @@ def test_summarize_events_groups_core_metrics():
         parse_log_line(
             "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
             "location_backfill {'event_type': 'location_backfill', 'source': 'unresolved', "
+            "'place': 'Unknown Place', 'activity': 'Visit Unknown Place', 'destination': 'Phuket', "
+            "'day_index': 2, 'slot_label': 'afternoon', "
             "'confidence': 'low', 'elapsed_ms': 33, 'fallback_reason': 'score_rejected', "
             "'bbox_valid': False, 'provider_status_counts': {'success': 1}, "
+            "'candidate_count': 3, 'best_candidate_title': 'Wrong Place', "
             "'best_match_score': 0.61, 'rejected_score_count': 2, "
             "'cache_negative_hit_count': 1, 'variant_limit_reached': True}"
         ),
@@ -185,6 +188,21 @@ def test_summarize_events_groups_core_metrics():
     assert summary["backfill"]["cache_negative_hit_count"] == 1
     assert summary["backfill"]["variant_limit_reached_count"] == 1
     assert summary["backfill"]["best_match_score"]["p50"] == 0.61
+    assert summary["backfill"]["unresolved_samples"] == [
+        {
+            "place": "Unknown Place",
+            "activity": "Visit Unknown Place",
+            "destination": "Phuket",
+            "day_index": 2,
+            "slot_label": "afternoon",
+            "fallback_reason": "score_rejected",
+            "provider_status_counts": {"success": 1},
+            "candidate_count": 3,
+            "best_candidate_title": "Wrong Place",
+            "best_match_score": 0.61,
+            "elapsed_ms": 33.0,
+        }
+    ]
     assert summary["qp"]["source_counts"] == {"fallback": 1}
     assert summary["qa"]["events"] == 1
     assert summary["qa"]["source_counts"] == {"local_itinerary": 1}
@@ -208,3 +226,27 @@ def test_render_markdown_includes_major_sections():
     assert "# TravelMind Observability Summary" in markdown
     assert "## Semantic Cache" in markdown
     assert '"miss": 1' in markdown
+    assert "### Backfill Unresolved Samples" in markdown
+    assert "- No unresolved backfill samples." in markdown
+
+
+def test_render_markdown_includes_backfill_unresolved_samples_table():
+    summary = summarize_events(
+        [
+            parse_log_line(
+                "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
+                "location_backfill {'event_type': 'location_backfill', 'source': 'unresolved', "
+                "'place': 'Cafe | Alias', 'destination': 'Chengdu', 'day_index': 1, "
+                "'slot_label': 'morning', 'elapsed_ms': 1820.5, "
+                "'fallback_reason': 'provider_empty', 'provider_status_counts': {'empty': 2}, "
+                "'candidate_count': 0, 'best_match_score': 0.0}"
+            )
+        ]
+    )
+
+    markdown = render_markdown(summary)
+
+    assert "| Place | Day | Slot | Destination | Reason | Provider Status | Candidates | Best Candidate | Best Score | Elapsed ms |" in markdown
+    assert "Cafe \\| Alias" in markdown
+    assert "provider_empty" in markdown
+    assert '{"empty": 2}' in markdown

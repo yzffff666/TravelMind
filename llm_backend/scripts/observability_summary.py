@@ -29,6 +29,8 @@ KNOWN_EVENTS = {
     "qa_local_fast_path",
 }
 
+MAX_BACKFILL_SAMPLE_ROWS = 10
+
 
 def _normalize_event_type(event_type: str) -> str:
     normalized = event_type.strip()
@@ -78,6 +80,19 @@ def _mean(values: Iterable[float]) -> float | None:
 
 def _compact_counter(counter: Counter) -> dict[str, int]:
     return {str(key): count for key, count in counter.most_common() if key not in {None, ""}}
+
+
+def _compact_text(value: Any, *, max_length: int = 80) -> str:
+    text = "" if value is None else str(value)
+    text = " ".join(text.split())
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 1] + "..."
+
+
+def _markdown_cell(value: Any, *, max_length: int = 80) -> str:
+    text = _compact_text(value, max_length=max_length)
+    return text.replace("|", "\\|") if text else "-"
 
 
 def _merge_count_mappings(events: Iterable[ObservabilityEvent], field_name: str) -> dict[str, int]:
@@ -274,6 +289,7 @@ def _summarize_backfill(events: list[ObservabilityEvent]) -> dict[str, Any]:
     summaries = [event for event in events if event.event_type == "itinerary_quality_summary"]
     fill_latencies = [_as_float(event.payload.get("elapsed_ms")) for event in fills]
     best_scores = [_as_float(event.payload.get("best_match_score")) for event in fills]
+    unresolved_samples = _build_backfill_unresolved_samples(fills)
 
     return {
         "location_events": len(fills),
@@ -311,7 +327,37 @@ def _summarize_backfill(events: list[ObservabilityEvent]) -> dict[str, Any]:
             "p95": _percentile([v for v in best_scores if v is not None], 95),
             "avg": _mean([v for v in best_scores if v is not None]),
         },
+        "unresolved_samples": unresolved_samples,
     }
+
+
+def _build_backfill_unresolved_samples(events: list[ObservabilityEvent]) -> list[dict[str, Any]]:
+    unresolved = [event for event in events if event.payload.get("source") == "unresolved"]
+    sorted_events = sorted(
+        unresolved,
+        key=lambda event: _as_float(event.payload.get("elapsed_ms")) or 0.0,
+        reverse=True,
+    )
+    samples: list[dict[str, Any]] = []
+    for event in sorted_events[:MAX_BACKFILL_SAMPLE_ROWS]:
+        payload = event.payload
+        best_match_score = _as_float(payload.get("best_match_score"))
+        samples.append(
+            {
+                "place": payload.get("place") or payload.get("activity"),
+                "activity": payload.get("activity"),
+                "destination": payload.get("destination"),
+                "day_index": payload.get("day_index"),
+                "slot_label": payload.get("slot_label"),
+                "fallback_reason": payload.get("fallback_reason"),
+                "provider_status_counts": payload.get("provider_status_counts") or {},
+                "candidate_count": int(_as_float(payload.get("candidate_count")) or 0),
+                "best_candidate_title": payload.get("best_candidate_title"),
+                "best_match_score": round(best_match_score, 4) if best_match_score is not None else None,
+                "elapsed_ms": _as_float(payload.get("elapsed_ms")),
+            }
+        )
+    return samples
 
 
 def _summarize_qp(events: list[ObservabilityEvent]) -> dict[str, Any]:
@@ -406,6 +452,42 @@ def render_markdown(summary: dict[str, Any]) -> str:
             f"- Elapsed ms: `{json.dumps(summary['backfill']['elapsed_ms'], ensure_ascii=False)}`",
             f"- Best match score: `{json.dumps(summary['backfill']['best_match_score'], ensure_ascii=False)}`",
             "",
+        ]
+    )
+    if summary["backfill"]["unresolved_samples"]:
+        lines.extend(
+            [
+                "### Backfill Unresolved Samples",
+                "",
+                "| Place | Day | Slot | Destination | Reason | Provider Status | Candidates | Best Candidate | Best Score | Elapsed ms |",
+                "|-------|-----|------|-------------|--------|-----------------|------------|----------------|------------|------------|",
+            ]
+        )
+        for sample in summary["backfill"]["unresolved_samples"]:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _markdown_cell(sample.get("place")),
+                        _markdown_cell(sample.get("day_index")),
+                        _markdown_cell(sample.get("slot_label")),
+                        _markdown_cell(sample.get("destination")),
+                        _markdown_cell(sample.get("fallback_reason")),
+                        _markdown_cell(json.dumps(sample.get("provider_status_counts") or {}, ensure_ascii=False)),
+                        _markdown_cell(sample.get("candidate_count")),
+                        _markdown_cell(sample.get("best_candidate_title")),
+                        _markdown_cell(sample.get("best_match_score")),
+                        _markdown_cell(sample.get("elapsed_ms")),
+                    ]
+                )
+                + " |"
+            )
+        lines.append("")
+    else:
+        lines.extend(["### Backfill Unresolved Samples", "", "- No unresolved backfill samples.", ""])
+
+    lines.extend(
+        [
             "## QP",
             "",
             f"- Events: {summary['qp']['events']}",
