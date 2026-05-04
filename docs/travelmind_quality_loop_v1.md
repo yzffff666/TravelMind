@@ -1,6 +1,6 @@
-# TravelMind Agent Decision Quality Loop v1
+# TravelMind Product-grade Travel Decision Agent v1
 
-> 从 Backfill 长尾治理到 Agent 决策质量闭环
+> 从 Backfill 长尾治理到业务决策系统
 >
 > 版本：v1 | 日期：2026-05-04 | 状态：方案设计 / 下一阶段实施依据
 
@@ -26,7 +26,7 @@ QP -> Provider Recall -> Ranking -> Constraint Filter -> Evidence Builder
 | Backfill 观测 | `llm_backend/scripts/observability_summary.py` | 已有 P50/P95、unresolved samples、fallback reasons |
 | 性能/质量报告 | `docs/performance-analysis-report.md` | 已记录 unresolved 长尾治理历史 |
 
-下一阶段的重点不是继续堆更复杂模型，而是把这些能力收束为一个可度量、可回归、可门禁、可回滚的 Agent 质量闭环。
+下一阶段的重点不是继续堆更复杂模型，而是把这些能力收束为一个可度量、可回归、可门禁、可回滚的业务决策系统。
 
 从 Agent 系统视角看，TravelMind 当前链路已经具备一个完整的决策层：
 
@@ -40,13 +40,17 @@ QP -> Provider Recall -> Ranking -> Constraint Filter -> Evidence Builder
 
 这里会借鉴推荐/搜索里的 candidate ranking 与 rerank 思想，但它们服务的是 Agent 的候选决策质量，而不是独立的传统推荐系统目标。
 
+这里的 `quality loop` 很重要，但它应该是底座，而不是终点。TravelMind 的目标不是停在“做一套 Agent 评测指标”，而是继续往业务决策、约束规划、用户反馈和产品可靠性推进。
+
 核心叙事：
 
 ```text
-报告暴露长尾
--> checklist 定义不可上线底线
--> rerank 把高解析成功率、高证据质量的候选顶到前面
--> unresolved 与 P95 一起下降
+用户目标
+-> 候选决策
+-> 约束规划
+-> 行程版本
+-> 用户编辑反馈
+-> 质量闭环驱动下一轮策略优化
 ```
 
 ---
@@ -182,9 +186,30 @@ TravelMind 当前要解决的问题，不是“提升点击率”或“做个性
 
 这也是为什么本方案把 rule-based baseline 放在最前面。它不是终点，而是后续 semantic rerank、rubric scoring、post-training integration 的对照组。
 
+### 4.4 Travel Decision System 分层
+
+为了让 TravelMind 不像 CodeMind 的业务版子集，它的深度不应该只来自 eval，而应该来自一个完整的业务决策系统。
+
+建议把项目分成四层：
+
+| 层级 | 核心问题 | 当前基础 | 下一步方向 |
+|------|----------|----------|------------|
+| Candidate Decision Layer | 哪些候选值得送进 LLM | Provider recall、`RankingScorer`、`ConstraintFilter` | 候选决策对象、score breakdown、risk flags、accept/reject reason |
+| Constraint-aware Planner | 如何把候选组织成可执行 itinerary | QP constraints、Itinerary schema、postprocess | day/slot 规划、distance/budget/pace 校验、轻量 planner |
+| Revision / Diff Feedback Loop | 用户编辑如何变成策略更新 | `patch_engine.py`、revision model、conversation state | 偏好更新、局部重规划、feedback-to-state |
+| SSE Product Reliability | 长流程 Agent 如何稳定对用户可用 | SSE、retry、structured log、partial success | stage quality event、warning、fallback、resume/qa fast path |
+
+这一分层的意义是：
+
+- `CodeMind` 的深度主要来自 runtime、trace、eval 和 post-training data。
+- `TravelMind` 的深度主要来自业务决策、规划、编辑反馈和产品可靠性。
+- 两个项目都能做到 90 分，但不是同一个维度的 90 分。
+
 ---
 
 ## 5. Quality Loop 设计
+
+这一章描述的是底座能力。它仍然重要，但在 TravelMind 里，quality loop 的角色是支撑上面的决策系统，而不是替代它。
 
 ### Gate 1: POI Quality Report
 
@@ -343,9 +368,12 @@ final_e2e_p95 不上升
 | `providers/orchestrator.py` | 已有多路 provider 并行召回、timeout、degraded、cache | 补 `provider_confidence`、候选来源质量标记、destination/query 级 decision trace | 把 tool/provider 输出从“原始结果”提升为“可决策输入” |
 | `ranking_scorer.py` | 已有偏好、预算、评分、热度、证据质量 | 升级为 candidate quality scorer，新增 `resolvable_score`、`alias_score`、`poi_specificity`、`generic_activity_penalty` | 把排序目标从“看起来相关”改成“对 Agent 更可用” |
 | `constraint_filter.py` | 已有预算、节奏、距离规则 | 增加更明确的 reject reason、支持 decision gate 统计 | 把过滤从后处理规则变成可解释的决策门禁 |
+| `travel_draft_graph.py` | 已有 graph 主链路与 postprocess | 在 draft 前引入 planner-lite，先做 day/slot 级候选组织，再交给 LLM 表达 | 从“直接生成”升级到“先规划、后生成” |
+| `patch_engine.py` | 已有 Day N 局部编辑 | 把 edit 请求解析成偏好更新和局部约束变更，而不只是文本 patch | 让编辑功能进入反馈闭环 |
+| `conversation_service.py` | 已有会话与 revision 状态 | 保存 pace、budget、interest、fatigue 等可更新偏好状态 | 把用户反馈回写为长期决策上下文 |
 | `evidence_service.py` | 已有 evidence mapping 与 coverage 计算 | 输出更明确的 `evidence_coverage`、slot-to-evidence 失败原因 | 把 evidence 从展示层能力前移到决策质量指标 |
 | `observability_summary.py` | 已有 backfill/provider/llm 汇总与 unresolved samples | 增加 run 级 `unresolved_rate`、`generic_activity_ratio`、`constraint_violation_rate`、baseline vs candidate 报告 | 把观测从“日志汇总”升级为 Agent eval 闭环 |
-| `travel_draft_graph.py` / `travel.py` | 已有 graph 与 SSE 主链路 | 增加 decision summary、quality warning、fallback used 等事件 | 让 Agent 决策质量进入主链路可见范围 |
+| `travel.py` / `TravelPlanner.vue` | 已有 SSE 主链路和前端展示 | 增加 decision summary、quality warning、fallback used、partial success 事件及 UI 呈现 | 让 Agent 决策质量进入用户可感知体验 |
 
 这组改动的重点不是“再造一个模块”，而是把已经存在的召回、排序、过滤、evidence、观测串成统一的 Agent 决策层。
 
@@ -354,20 +382,128 @@ final_e2e_p95 不上升
 ```text
 Provider 负责拿到候选
 -> Candidate Quality Scorer 负责判断哪些候选更适合送进 LLM
+-> Planner-lite 负责把候选组织成 day/slot 决策草案
 -> Constraint Filter 负责阻止明显有问题的候选继续进入主链路
 -> Evidence / Checklist 负责决定结果是否足够可信
+-> Revision / Diff Loop 负责把用户编辑变成下一轮偏好和约束
 -> Observability / Eval 负责把 badcase 重新变成下一轮优化输入
 ```
 
 这正是我们希望体现的思路：
 
 - 不是把 LLM 当作唯一智能来源。
-- 而是把 Agent 做成一个由候选选择、约束过滤、质量门禁和 badcase 反馈共同驱动的系统。
+- 而是把 Agent 做成一个由候选选择、约束规划、质量门禁、编辑反馈和 badcase 反馈共同驱动的系统。
 - 后续如果进入 post-training，也不是凭空开始，而是基于这套闭环积累 rubric、badcase 和弱监督信号。
 
 ---
 
-## 6. Feature Schema
+## 6. Decision System 模块化目标
+
+为了避免 TravelMind 只停在 quality loop，可以把后续目标直接写成四个产品级模块。
+
+### 6.1 Candidate Decision Layer
+
+目标：让每个 POI 候选都成为一个可解释决策对象，而不是一条匿名候选记录。
+
+建议输出结构：
+
+```json
+{
+  "poi": "Akihabara",
+  "decision": "accepted",
+  "reason": ["matches anime preference", "high evidence coverage", "resolvable"],
+  "risk_flags": [],
+  "score_breakdown": {
+    "interest_match": 0.92,
+    "evidence_score": 0.85,
+    "resolvable_score": 0.95,
+    "distance_feasibility": 0.78
+  }
+}
+```
+
+项目价值：
+
+- 提升候选选择透明度。
+- 让 badcase 分析从“结果为什么差”前移到“候选为什么被接纳”。
+- 为后续 rubric scoring 和弱监督标签提供自然载体。
+
+### 6.2 Constraint-aware Planner
+
+目标：让 TravelMind 的独特性来自“规划”，而不只是“找到 POI”。
+
+建议先做 planner-lite，而不是重算法求解器：
+
+```text
+Day slots:
+morning / afternoon / evening
+
+Hard constraints:
+same city
+resolved POI
+no duplicate
+no generic activity
+budget not exceed
+max distance jump
+
+Soft constraints:
+interest match
+diversity
+pace
+evidence quality
+```
+
+项目价值：
+
+- 把项目重心从“LLM 一次性生成”推进到“先决策、后表达”。
+- 让 TravelMind 在技术叙事上明显区别于 CodeMind。
+
+### 6.3 Revision / Diff Feedback Loop
+
+目标：把编辑功能从“改文本”升级成“反馈驱动的局部重规划”。
+
+建议把用户编辑解析成结构化反馈，例如：
+
+```json
+{
+  "feedback_type": "pace_adjustment",
+  "target_day": 3,
+  "preference_update": {
+    "pace": "relaxed",
+    "max_poi_per_day": 3
+  }
+}
+```
+
+项目价值：
+
+- 让 Edit Day N 变成偏好学习和约束更新入口。
+- 让 revision 模型真正成为决策系统的一部分。
+
+### 6.4 SSE Product Reliability
+
+目标：把长流程 Agent 做成对用户稳定可用的产品，而不是只在日志里稳定。
+
+建议强化的事件：
+
+```text
+stage_start
+tool_result
+decision_summary
+quality_warning
+partial_itinerary
+fallback_used
+final_itinerary
+```
+
+项目价值：
+
+- 让 Agent 不稳定时也能部分成功。
+- 让“可恢复、可解释、可逐步交付”成为产品能力，而不是后端细节。
+
+---
+
+## 7. Feature Schema
 
 为避免特征散落在 provider extra、prompt、backfill result 和前端字段里，建议新增统一候选特征层。
 
@@ -416,7 +552,7 @@ class POIFeature(BaseModel):
 
 ---
 
-## 7. 评测集设计
+## 8. 评测集设计
 
 不要只做一个 synthetic eval set。建议三层评测集：
 
@@ -455,7 +591,7 @@ offline ranking metric -> unresolved_rate / evidence_coverage / constraint_viola
 
 ---
 
-## 8. Feature Flag 与回滚
+## 9. Feature Flag 与回滚
 
 所有 rerank 策略必须可关闭。
 
@@ -487,37 +623,37 @@ disable it and fall back to the last stable rule-based ranking configuration.
 
 ---
 
-## 9. 实施顺序
+## 10. 实施顺序
 
-### Stage 1: 文档与指标口径
-
-- 新增本文档。
-- 明确 `unresolved_rate`、`evidence_coverage`、`generic_activity_ratio`、`constraint_violation_rate` 的定义。
-- 在 `observability_summary.py` 中补 run 级质量指标。
-
-### Stage 2: POIFeature
+### Stage 1: Candidate Decision Baseline
 
 - 新增 `POIFeature` / `CandidateFeature` schema。
 - 从 `ProviderCandidate`、`ScoredCandidate`、backfill diagnostics 中抽取统一特征。
-- Ranker 逐步从直接吃 `ProviderCandidate.extra` 改为吃标准特征。
+- `RankingScorer` 升级为 candidate quality scorer，输出 score breakdown、risk flags、accept/reject reason。
+- 在 `observability_summary.py` 中补 run 级质量指标。
 
-### Stage 3: Checklist v1
+### Stage 2: Constraint-aware Planner Lite
+
+- 在 `travel_draft_graph.py` draft 前增加 day/slot 级候选组织。
+- 把 budget、distance、pace、duplicate、generic activity 检查前移成 planner 校验。
+- 保持 LLM 负责表达和补充，而不是独占决策。
+
+### Stage 3: Revision / Diff Feedback Loop
+
+- 在 `patch_engine.py` 中把编辑请求进一步抽象成结构化反馈。
+- 在 `conversation_service.py` 中回写 pace、budget、interest、fatigue 等偏好状态。
+- 支持局部重规划，而不是全量重生成。
+
+### Stage 4: Quality Gate & Observability
 
 - 实现 itinerary validation checklist。
 - 初期只 `log only`，不阻断 final output。
-- 在 extended report 中输出 pass/fail 和失败原因。
+- 同一批 extended cases 跑 baseline 与 candidate，输出质量 + 延迟对比表。
 
-### Stage 4: Candidate Quality Rerank v2
+### Stage 5: SSE Product Reliability
 
-- 增加 `resolvable_score`、`alias_score`、`poi_specificity`、`generic_activity_penalty`。
-- 权重配置化。
-- 输出 per-candidate breakdown，方便 badcase 分析。
-
-### Stage 5: Baseline vs Candidate Report
-
-- 同一批 extended cases 跑 baseline 与 candidate。
-- 输出质量 + 延迟对比表。
-- 只有 guardrail 通过才允许默认开启。
+- 在 `travel.py` / `TravelPlanner.vue` 中增加 `decision_summary`、`quality_warning`、`fallback_used`。
+- 前端清晰呈现阶段进度和部分成功，而不是只展示最终成品。
 
 ### Stage 6: Semantic Rerank v1
 
@@ -528,32 +664,18 @@ disable it and fall back to the last stable rule-based ranking configuration.
 
 ### Stage 7: Eval-driven Ranker / Rubric Scoring
 
-满足以下条件后再考虑：
-
-- Human Audit Set 稳定。
-- badcase 已分类。
-- rule rerank v2 收益进入平台期。
-- semantic rerank 的 P95 可控。
-- 每个离线指标都能映射到产品指标。
-
-建议起步方案：
-
-- pointwise：Logistic Regression / XGBoost，用显式特征预测 candidate quality。
-- rubric-style：用 checklist、人工 audit、badcase 标签构造弱监督评分。
-- 训练标签先从人工 audit、checklist 结果和弱标注 badcase 中构建，不急于追求大规模。
+- 在 Human Audit Set 稳定、badcase 已分类后，尝试 pointwise 或 rubric-style 评分。
+- 训练标签先从人工 audit、checklist 结果和弱标注 badcase 中构建。
+- 明确哪些错误适合靠训练优化，而不是靠系统规则修复。
 
 ### Stage 8: Post-training Integration
 
-只有在以下条件成立时再考虑把这一闭环接到训练或微调侧：
-
-- 有稳定 query 分布。
-- 有足够多的 badcase、rubric、偏好或弱标注数据。
-- 当前 rerank 已经把显式规则收益压到平台期。
-- 已经明确哪些错误适合靠训练优化，而不是靠系统规则修复。
+- 只有在有稳定 query 分布和足够多的 badcase、rubric、偏好数据后，才把闭环接到训练或微调侧。
+- 把 TravelMind 从“可评估 Agent”推进到“可为训练提供业务决策数据的 Agent”。
 
 ---
 
-## 10. 面试/简历表述
+## 11. 面试/简历表述
 
 质量闭环：
 
@@ -561,21 +683,21 @@ disable it and fall back to the last stable rule-based ranking configuration.
 针对 POI backfill unresolved 导致的质量长尾与尾延迟问题，构建 POI Quality Report 与 itinerary validation checklist，量化 unresolved rate、evidence coverage、generic activity ratio、constraint violation rate 和 backfill P95，将“生成结果不稳定”转化为可观测、可回归的质量指标。
 ```
 
-Agent 决策优化：
+业务决策系统：
 
 ```text
-设计 candidate quality rerank 策略，将可解析性、证据质量、alias 命中、Provider 置信度、兴趣匹配、距离与预算约束纳入 Agent 决策层，在 backfill 前优先提升高解析成功率与高证据质量候选，降低 unresolved 与尾延迟风险。
+设计 Candidate Decision Layer 与 constraint-aware planner，将可解析性、证据质量、alias 命中、Provider 置信度、兴趣匹配、距离与预算约束前置到 Agent 决策层，在 LLM draft 前完成候选筛选、day/slot 规划和局部约束校验，降低 unresolved 与不可执行 itinerary 风险。
 ```
 
 技术取舍：
 
 ```text
-没有把项目包装成独立推荐系统，而是基于 Agent 场景中的 tool/provider 候选选择问题，先搭建 Provider 召回 + 显式特征排序 + checklist 门禁 + fallback 的 Agent 决策 baseline；在 baseline、评测集和 guardrail 稳定后，再逐步演进到 semantic rerank、rubric scoring 与 post-training integration。
+没有把项目包装成独立推荐系统，而是基于 Agent 场景中的 tool/provider 候选选择、约束规划、编辑反馈和产品可靠性问题，先搭建 Product-grade Travel Decision Agent；在决策 baseline、评测集和 guardrail 稳定后，再逐步演进到 semantic rerank、rubric scoring 与 post-training integration。
 ```
 
 ---
 
-## 11. 参考
+## 12. 参考
 
 - Google for Developers: Recommendation systems overview
   - https://developers.google.com/machine-learning/recommendation/overview/types
