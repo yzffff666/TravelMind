@@ -30,7 +30,11 @@ _PLACE_ALIASES = {
     "芭东海滩": ["Patong Beach"],
     "卡塔海滩": ["Kata Beach"],
     "卡伦海滩": ["Karon Beach"],
+    "普吉老城": ["Old Phuket Town", "Phuket Old Town"],
     "普吉老镇": ["Old Phuket Town", "Phuket Old Town"],
+    "普吉周末夜市": ["Naka Weekend Market", "Phuket Weekend Night Market"],
+    "Phuket Weekend Market": ["Naka Weekend Market", "Naka Market"],
+    "The Boathouse Wine & Grill": ["The Boathouse Restaurant", "The Boathouse Phuket"],
 }
 
 _DEST_ALIASES = {
@@ -88,6 +92,25 @@ _GENERIC_ACTIVITY_MARKERS = (
     "随便逛",
     "体验",
 )
+
+_GENERIC_RELATIVE_PLACE_MARKERS = (
+    "酒店泳池",
+    "附近海滩",
+    "附近餐厅",
+    "附近区域",
+    "周边餐厅",
+    "周边区域",
+)
+
+_RELATIVE_PLACE_TOKENS = (
+    "酒店",
+    "附近",
+    "周边",
+    "区域",
+    "泳池",
+)
+
+_PLACE_ALTERNATIVE_SEPARATORS = ("/", "／", "或", "和")
 
 _SPECIFIC_PLACE_MARKERS = (
     "博物馆",
@@ -257,7 +280,7 @@ class LocationBackfillService:
                 report.assumptions.append("坐标回填已达到本次请求时延预算，剩余地点保留为空。")
                 break
 
-            place = (slot.place or slot.activity or "").strip()
+            place = self._clean_place_for_backfill(slot.place or slot.activity or "")
             if not place:
                 continue
             day_index = self._find_day_index(itinerary, slot)
@@ -352,9 +375,40 @@ class LocationBackfillService:
         normalized = LocationBackfillService._normalize(raw)
         if not normalized:
             return True
+        if LocationBackfillService._is_generic_relative_place(raw):
+            return True
         if any(marker in raw for marker in _SPECIFIC_PLACE_MARKERS):
             return False
         return any(marker in raw for marker in _GENERIC_ACTIVITY_MARKERS)
+
+    @staticmethod
+    def _clean_place_for_backfill(text: object) -> str:
+        raw = str(text or "").strip()
+        if not raw:
+            return ""
+
+        without_parenthetical = re.sub(r"[（(].*?[)）]", "", raw).strip()
+        candidates = [without_parenthetical or raw]
+        parts = re.split(r"\s*(?:/|／|或|和)\s*", without_parenthetical or raw)
+        candidates.extend(part for part in parts if part)
+
+        for candidate in candidates:
+            cleaned = candidate.strip(" ,，。；;")
+            if cleaned and not LocationBackfillService._is_generic_relative_place(cleaned):
+                return cleaned
+        return raw
+
+    @staticmethod
+    def _is_generic_relative_place(text: str) -> bool:
+        raw = (text or "").strip()
+        normalized = LocationBackfillService._normalize(raw)
+        if not normalized or raw in _PLACE_ALIASES:
+            return False
+        if any(marker in raw for marker in _GENERIC_RELATIVE_PLACE_MARKERS):
+            return True
+        has_relative_token = any(token in raw for token in _RELATIVE_PLACE_TOKENS)
+        has_alternative = any(separator in raw for separator in _PLACE_ALTERNATIVE_SEPARATORS)
+        return has_relative_token and has_alternative
 
     @staticmethod
     def _normalize_destination(destination: str) -> str:
@@ -733,7 +787,15 @@ class LocationBackfillService:
         return SequenceMatcher(None, p, t).ratio()
 
     @staticmethod
-    def _normalize(value: str) -> str:
+    def _normalize(value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (list, tuple, set)):
+            value = " ".join(str(item) for item in value if item is not None)
+        elif isinstance(value, dict):
+            value = " ".join(str(item) for item in value.values() if item is not None)
+        else:
+            value = str(value)
         value = value.lower().strip()
         value = re.sub(r"[（(].*?[)）]", "", value)
         value = re.sub(r"^(?:19|20)\d{2}\s*", "", value)

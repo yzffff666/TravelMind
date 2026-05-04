@@ -28,6 +28,36 @@ class FakeMapProvider:
                     extra={"lat": 7.8472, "lng": 98.2931, "address": "Karon, Phuket"},
                 ),
             ])
+        if keyword == "Old Phuket Town":
+            return ProviderResponse(candidates=[
+                ProviderCandidate(
+                    candidate_id="old-phuket-town",
+                    source=self.name,
+                    title="Old Phuket Town",
+                    snippet="Historic old town in Phuket",
+                    extra={"lat": 7.884, "lng": 98.389, "address": "Phuket Old Town"},
+                ),
+            ])
+        if keyword == "The Boathouse Restaurant":
+            return ProviderResponse(candidates=[
+                ProviderCandidate(
+                    candidate_id="boathouse-restaurant",
+                    source=self.name,
+                    title="The Boathouse Restaurant",
+                    snippet="Restaurant in Kata Beach, Phuket",
+                    extra={"lat": 7.818, "lng": 98.299, "address": "Kata Beach, Phuket"},
+                ),
+            ])
+        if keyword == "Naka Weekend Market":
+            return ProviderResponse(candidates=[
+                ProviderCandidate(
+                    candidate_id="naka-weekend-market",
+                    source=self.name,
+                    title="Naka Weekend Market",
+                    snippet="Weekend night market in Phuket",
+                    extra={"lat": 7.880, "lng": 98.366, "address": "Phuket"},
+                ),
+            ])
         if keyword != "上海外灘悦榕莊":
             return ProviderResponse()
         return ProviderResponse(candidates=[
@@ -118,6 +148,22 @@ class LowScoreMapProvider:
         ])
 
 
+class ListAddressMapProvider:
+    name = "list_address_map"
+
+    async def nearby_poi(self, *, city, keywords, top_k=20, context=None):
+        keyword = keywords[0] if keywords else ""
+        return ProviderResponse(candidates=[
+            ProviderCandidate(
+                candidate_id=f"list-address-{keyword}",
+                source=self.name,
+                title=keyword,
+                snippet="provider returned a structured address",
+                extra={"lat": 7.884, "lng": 98.389, "address": ["Phuket", "Old Town"]},
+            )
+        ])
+
+
 def _service_with_fake_provider() -> LocationBackfillService:
     svc = LocationBackfillService.__new__(LocationBackfillService)
     svc._providers = [FakeMapProvider()]
@@ -197,9 +243,86 @@ def test_backfill_builds_phuket_old_town_aliases():
     svc = _service_with_fake_provider()
 
     variants = svc._build_variants("普吉老镇", "Phuket")
+    city_variants = svc._build_variants("普吉老城", "Phuket")
 
     assert "Old Phuket Town" in variants
     assert "Phuket Old Town" in variants
+    assert "Old Phuket Town" in city_variants
+    assert "Phuket Old Town" in city_variants
+
+
+def test_backfill_resolves_phuket_old_town_via_alias():
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-old-town",
+        revision_id="rev-old-town",
+        trip_profile=TripProfile(destination_city="普吉岛轻松"),
+        days=[ItineraryDay(
+            day_index=1,
+            slots=[ItinerarySlot(slot="上午", activity="普吉老城漫步", place="普吉老城")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_fake_provider().backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert itinerary.days[0].slots[0].location is not None
+    assert itinerary.days[0].slots[0].evidence_refs == ["ev-old-phuket-town"]
+
+
+def test_backfill_resolves_boathouse_via_alias():
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-boathouse",
+        revision_id="rev-boathouse",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=2,
+            slots=[ItinerarySlot(slot="晚上", activity="海边晚餐", place="The Boathouse Wine & Grill")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_fake_provider().backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert itinerary.days[0].slots[0].location is not None
+    assert itinerary.days[0].slots[0].evidence_refs == ["ev-boathouse-restaurant"]
+
+
+def test_backfill_cleans_specific_place_from_generic_alternative():
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-naka-market",
+        revision_id="rev-naka-market",
+        trip_profile=TripProfile(destination_city="普吉岛轻松"),
+        days=[ItineraryDay(
+            day_index=2,
+            slots=[
+                ItinerarySlot(
+                    slot="晚上",
+                    activity="夜市闲逛",
+                    place="普吉周末夜市（如当天是周末）或酒店周边",
+                )
+            ],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_fake_provider().backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert itinerary.days[0].slots[0].location is not None
+    assert itinerary.days[0].slots[0].evidence_refs == ["ev-naka-weekend-market"]
+
+
+def test_backfill_place_cleaning_preserves_specific_alternative():
+    svc = _service_with_fake_provider()
+
+    assert svc._clean_place_for_backfill("普吉周末夜市（如当天是周末）或酒店周边") == "普吉周末夜市"
+    assert svc._clean_place_for_backfill("酒店泳池/附近海滩") == "酒店泳池/附近海滩"
+    assert svc._clean_place_for_backfill("Phuket Weekend Market (Naka Market)") == "Phuket Weekend Market"
 
 
 def test_backfill_normalizes_noisy_destination_before_provider_call():
@@ -360,6 +483,25 @@ def test_backfill_diagnostics_distinguish_bbox_and_score_rejections():
     assert score_result.diagnostics.best_candidate_title == "Unrelated Museum"
 
 
+def test_backfill_tolerates_provider_list_address():
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-list-address",
+        revision_id="rev-list-address",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=1,
+            slots=[ItinerarySlot(slot="上午", activity="普吉老城漫步", place="普吉老城")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_provider(ListAddressMapProvider()).backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert itinerary.days[0].slots[0].location is not None
+
+
 def test_backfill_skips_generic_activity_without_provider_call():
     _cache.clear()
     provider = EmptyTrackingMapProvider()
@@ -384,10 +526,36 @@ def test_backfill_skips_generic_activity_without_provider_call():
     assert itinerary.days[0].slots[0].location is None
 
 
+def test_backfill_skips_generic_relative_place_without_provider_call():
+    _cache.clear()
+    provider = EmptyTrackingMapProvider()
+    itinerary = ItineraryV1(
+        itinerary_id="it-relative-place",
+        revision_id="rev-relative-place",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=4,
+            slots=[ItinerarySlot(slot="上午", activity="放松", place="酒店泳池/附近海滩")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_provider(provider).backfill_itinerary(itinerary))
+
+    assert report.attempted == 0
+    assert report.filled == 0
+    assert report.skipped == 1
+    assert report.unresolved == []
+    assert provider.calls == 0
+    assert itinerary.days[0].slots[0].location is None
+
+
 def test_backfill_generic_activity_filter_keeps_specific_pois():
     svc = _service_with_fake_provider()
 
     assert svc._should_skip_generic_activity("更轻松的室内活动")
+    assert svc._should_skip_generic_activity("酒店泳池/附近海滩")
     assert not svc._should_skip_generic_activity("四川博物院")
     assert not svc._should_skip_generic_activity("九眼桥")
     assert not svc._should_skip_generic_activity("鹤鸣茶社")
+    assert not svc._should_skip_generic_activity("卡伦海滩")
