@@ -298,6 +298,8 @@ def _summarize_backfill(events: list[ObservabilityEvent]) -> dict[str, Any]:
         ),
         "attempted": sum(int(_as_float(event.payload.get("backfill_attempted")) or 0) for event in summaries),
         "filled": sum(int(_as_float(event.payload.get("backfill_filled")) or 0) for event in summaries),
+        "skipped": sum(int(_as_float(event.payload.get("backfill_skipped")) or 0) for event in summaries),
+        "skipped_events": sum(1 for event in fills if event.payload.get("source") == "skipped"),
         "unresolved": sum(int(_as_float(event.payload.get("backfill_unresolved")) or 0) for event in summaries),
         "elapsed_ms": {
             "p50": _percentile([v for v in fill_latencies if v is not None], 50),
@@ -399,7 +401,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
             f"- Rejected bbox/score/missing coord: {summary['backfill']['rejected_bbox_count']}/{summary['backfill']['rejected_score_count']}/{summary['backfill']['rejected_missing_coord_count']}",
             f"- Cache negative hits: {summary['backfill']['cache_negative_hit_count']}",
             f"- BBox invalid count: {summary['backfill']['bbox_invalid_count']}",
-            f"- Attempted/Filled/Unresolved: {summary['backfill']['attempted']}/{summary['backfill']['filled']}/{summary['backfill']['unresolved']}",
+            f"- Attempted/Filled/Skipped/Unresolved: {summary['backfill']['attempted']}/{summary['backfill']['filled']}/{summary['backfill']['skipped']}/{summary['backfill']['unresolved']}",
+            f"- Skipped events: {summary['backfill']['skipped_events']}",
             f"- Elapsed ms: `{json.dumps(summary['backfill']['elapsed_ms'], ensure_ascii=False)}`",
             f"- Best match score: `{json.dumps(summary['backfill']['best_match_score'], ensure_ascii=False)}`",
             "",

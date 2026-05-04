@@ -318,3 +318,36 @@ def test_backfill_diagnostics_distinguish_bbox_and_score_rejections():
     assert score_result.diagnostics.fallback_reason == "score_rejected"
     assert score_result.diagnostics.rejected_score_count == 2
     assert score_result.diagnostics.best_candidate_title == "Unrelated Museum"
+
+
+def test_backfill_skips_generic_activity_without_provider_call():
+    _cache.clear()
+    provider = EmptyTrackingMapProvider()
+    itinerary = ItineraryV1(
+        itinerary_id="it-generic-activity",
+        revision_id="rev-generic-activity",
+        trip_profile=TripProfile(destination_city="成都"),
+        days=[ItineraryDay(
+            day_index=2,
+            slots=[ItinerarySlot(slot="下午", activity="更轻松的室内活动", place="更轻松的室内活动")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=6000),
+    )
+
+    report = asyncio.run(_service_with_provider(provider).backfill_itinerary(itinerary))
+
+    assert report.attempted == 0
+    assert report.filled == 0
+    assert report.skipped == 1
+    assert report.unresolved == []
+    assert provider.calls == 0
+    assert itinerary.days[0].slots[0].location is None
+
+
+def test_backfill_generic_activity_filter_keeps_specific_pois():
+    svc = _service_with_fake_provider()
+
+    assert svc._should_skip_generic_activity("更轻松的室内活动")
+    assert not svc._should_skip_generic_activity("四川博物院")
+    assert not svc._should_skip_generic_activity("九眼桥")
+    assert not svc._should_skip_generic_activity("鹤鸣茶社")

@@ -145,8 +145,14 @@ def test_summarize_events_groups_core_metrics():
         ),
         parse_log_line(
             "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
+            "location_backfill {'event_type': 'location_backfill', 'source': 'skipped', "
+            "'confidence': 'low', 'elapsed_ms': 1, 'fallback_reason': 'generic_activity'}"
+        ),
+        parse_log_line(
+            "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
             "itinerary_quality_summary {'event_type': 'itinerary_quality_summary', "
-            "'backfill_attempted': 3, 'backfill_filled': 2, 'backfill_unresolved': 1}"
+            "'backfill_attempted': 3, 'backfill_filled': 2, 'backfill_skipped': 1, "
+            "'backfill_unresolved': 1}"
         ),
         parse_log_line(
             _loguru_json(
@@ -170,8 +176,10 @@ def test_summarize_events_groups_core_metrics():
     assert summary["cache"]["hit_rate"] == 1.0
     assert summary["providers"]["by_provider"]["serp:search"]["degraded_count"] == 1
     assert summary["backfill"]["attempted"] == 3
+    assert summary["backfill"]["skipped"] == 1
+    assert summary["backfill"]["skipped_events"] == 1
     assert summary["backfill"]["bbox_invalid_count"] == 1
-    assert summary["backfill"]["fallback_reasons"] == {"score_rejected": 1}
+    assert summary["backfill"]["fallback_reasons"] == {"score_rejected": 1, "generic_activity": 1}
     assert summary["backfill"]["provider_status_counts"] == {"success": 1}
     assert summary["backfill"]["rejected_score_count"] == 2
     assert summary["backfill"]["cache_negative_hit_count"] == 1

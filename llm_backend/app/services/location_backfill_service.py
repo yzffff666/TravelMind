@@ -55,11 +55,44 @@ _TRIM_SUFFIXES = (
     "码头集合点",
 )
 
+_GENERIC_ACTIVITY_MARKERS = (
+    "更轻松",
+    "室内活动",
+    "自由活动",
+    "休息",
+    "逛逛",
+    "随便逛",
+    "体验",
+)
+
+_SPECIFIC_PLACE_MARKERS = (
+    "博物馆",
+    "图书馆",
+    "美术馆",
+    "科技馆",
+    "茶社",
+    "机场",
+    "海滩",
+    "院",
+    "馆",
+    "社",
+    "桥",
+    "寺",
+    "庙",
+    "塔",
+    "园",
+    "街",
+    "巷",
+    "湖",
+    "山",
+)
+
 
 @dataclass
 class BackfillReport:
     attempted: int = 0
     filled: int = 0
+    skipped: int = 0
     unresolved: list[str] = field(default_factory=list)
     assumptions: list[str] = field(default_factory=list)
 
@@ -203,8 +236,24 @@ class LocationBackfillService:
             place = (slot.place or slot.activity or "").strip()
             if not place:
                 continue
+            day_index = self._find_day_index(itinerary, slot)
+            if self._should_skip_generic_activity(place):
+                report.skipped += 1
+                self._log_location_backfill(
+                    itinerary=itinerary,
+                    slot=slot,
+                    place=place,
+                    destination=destination,
+                    day_index=day_index,
+                    resolved=None,
+                    elapsed_ms=self._elapsed_ms(started),
+                    fallback_reason="generic_activity",
+                    diagnostics=_BackfillDiagnostics(fallback_reason="generic_activity"),
+                    source="skipped",
+                )
+                continue
             report.attempted += 1
-            jobs.append((slot, place, self._find_day_index(itinerary, slot)))
+            jobs.append((slot, place, day_index))
 
         semaphore = asyncio.Semaphore(self._max_concurrent_backfills)
 
@@ -272,6 +321,16 @@ class LocationBackfillService:
             )
         self._log_backfill_summary(itinerary, report, elapsed_ms=self._elapsed_ms(started))
         return report
+
+    @staticmethod
+    def _should_skip_generic_activity(text: str) -> bool:
+        raw = (text or "").strip()
+        normalized = LocationBackfillService._normalize(raw)
+        if not normalized:
+            return True
+        if any(marker in raw for marker in _SPECIFIC_PLACE_MARKERS):
+            return False
+        return any(marker in raw for marker in _GENERIC_ACTIVITY_MARKERS)
 
     def _remaining_budget(self, started: float) -> float:
         return max(0.0, self._total_budget_seconds - (time.perf_counter() - started))
@@ -454,6 +513,7 @@ class LocationBackfillService:
         elapsed_ms: float,
         fallback_reason: str = "",
         diagnostics: _BackfillDiagnostics | None = None,
+        source: str | None = None,
     ) -> None:
         lat = resolved.get("lat") if resolved else None
         lng = resolved.get("lng") if resolved else None
@@ -475,7 +535,7 @@ class LocationBackfillService:
             "candidate_title": resolved.get("title") if resolved else None,
             "lat": lat,
             "lng": lng,
-            "source": "provider" if resolved else "unresolved",
+            "source": "provider" if resolved else (source or "unresolved"),
             "confidence": self._confidence_label(match_score) if resolved else "low",
             "elapsed_ms": elapsed_ms,
             "fallback_reason": fallback_reason,
@@ -526,6 +586,7 @@ class LocationBackfillService:
                 "backfill_elapsed_ms": elapsed_ms,
                 "backfill_attempted": report.attempted,
                 "backfill_filled": report.filled,
+                "backfill_skipped": report.skipped,
                 "backfill_unresolved": len(report.unresolved),
                 "degraded": bool(report.unresolved),
             },
