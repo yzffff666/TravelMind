@@ -21,6 +21,7 @@ KNOWN_EVENTS = {
     "deepseek_llm_call",
     "deepseek_llm_call_failed",
     "llm_draft_call",
+    "llm_draft_call_failed",
     "semantic_cache_lookup",
     "provider_call",
     "location_backfill",
@@ -214,8 +215,16 @@ def _summarize_llm(events: list[ObservabilityEvent]) -> dict[str, Any]:
     relevant = [
         event
         for event in events
-        if event.event_type in {"deepseek_llm_call", "deepseek_llm_call_failed", "llm_draft_call"}
+        if event.event_type in {
+            "deepseek_llm_call",
+            "deepseek_llm_call_failed",
+            "llm_draft_call",
+            "llm_draft_call_failed",
+        }
         or event.payload.get("llm_status")
+    ]
+    draft_events = [
+        event for event in relevant if event.event_type in {"llm_draft_call", "llm_draft_call_failed"}
     ]
     latencies = [_as_float(event.payload.get("elapsed_ms") or event.payload.get("llm_ms")) for event in relevant]
     attempts = [_as_float(event.payload.get("attempt") or event.payload.get("llm_attempts")) for event in relevant]
@@ -234,6 +243,39 @@ def _summarize_llm(events: list[ObservabilityEvent]) -> dict[str, Any]:
             "p95": _percentile([v for v in latencies if v is not None], 95),
             "avg": _mean([v for v in latencies if v is not None]),
         },
+        "draft": _summarize_llm_draft(draft_events),
+    }
+
+
+def _summarize_llm_draft(events: list[ObservabilityEvent]) -> dict[str, Any]:
+    prompt_chars = [_as_float(event.payload.get("prompt_chars")) for event in events]
+    user_prompt_chars = [_as_float(event.payload.get("user_prompt_chars")) for event in events]
+    candidate_section_chars = [_as_float(event.payload.get("candidate_section_chars")) for event in events]
+    candidate_counts = [_as_float(event.payload.get("candidate_count")) for event in events]
+    output_chars = [_as_float(event.payload.get("output_chars")) for event in events]
+    days_counts = [_as_float(event.payload.get("days_count")) for event in events]
+
+    def stats(values: list[float | None]) -> dict[str, float | None]:
+        present = [v for v in values if v is not None]
+        return {
+            "p50": _percentile(present, 50),
+            "p95": _percentile(present, 95),
+            "avg": _mean(present),
+        }
+
+    return {
+        "calls": len(events),
+        "parse_status_counts": _compact_counter(Counter(event.payload.get("parse_status") for event in events)),
+        "destination_counts": _compact_counter(Counter(event.payload.get("destination") for event in events)),
+        "response_language_counts": _compact_counter(
+            Counter(event.payload.get("response_language") for event in events)
+        ),
+        "days_count": stats(days_counts),
+        "prompt_chars": stats(prompt_chars),
+        "user_prompt_chars": stats(user_prompt_chars),
+        "candidate_section_chars": stats(candidate_section_chars),
+        "candidate_count": stats(candidate_counts),
+        "output_chars": stats(output_chars),
     }
 
 
@@ -403,6 +445,15 @@ def render_markdown(summary: dict[str, Any]) -> str:
         f"- Error counts: `{json.dumps(summary['llm']['error_counts'], ensure_ascii=False)}`",
         f"- Retryable failures: {summary['llm']['retryable_failures']}",
         f"- Latency ms: `{json.dumps(summary['llm']['latency_ms'], ensure_ascii=False)}`",
+        f"- Draft parse status counts: `{json.dumps(summary['llm']['draft']['parse_status_counts'], ensure_ascii=False)}`",
+        f"- Draft destination counts: `{json.dumps(summary['llm']['draft']['destination_counts'], ensure_ascii=False)}`",
+        f"- Draft response language counts: `{json.dumps(summary['llm']['draft']['response_language_counts'], ensure_ascii=False)}`",
+        f"- Draft days count: `{json.dumps(summary['llm']['draft']['days_count'], ensure_ascii=False)}`",
+        f"- Draft prompt chars: `{json.dumps(summary['llm']['draft']['prompt_chars'], ensure_ascii=False)}`",
+        f"- Draft user prompt chars: `{json.dumps(summary['llm']['draft']['user_prompt_chars'], ensure_ascii=False)}`",
+        f"- Draft candidate section chars: `{json.dumps(summary['llm']['draft']['candidate_section_chars'], ensure_ascii=False)}`",
+        f"- Draft candidate count: `{json.dumps(summary['llm']['draft']['candidate_count'], ensure_ascii=False)}`",
+        f"- Draft output chars: `{json.dumps(summary['llm']['draft']['output_chars'], ensure_ascii=False)}`",
         "",
         "## Semantic Cache",
         "",

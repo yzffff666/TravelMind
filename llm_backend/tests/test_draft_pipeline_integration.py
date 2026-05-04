@@ -356,6 +356,46 @@ class TestLlmDraftNode:
         assert result["perf"]["llm_ttft_ms"] is not None
         assert result["perf"]["llm_ttft_ms"] >= 0
 
+    def test_llm_draft_logs_prompt_diagnostics(self):
+        from app.lg_agent.travel_draft_graph import llm_draft_node
+        state = {
+            "query": "Shanghai 3 days budget 5000",
+            "destination": "Shanghai",
+            "days_count": 3,
+            "total_budget": 5000.0,
+            "traveler_type": None,
+            "preferences": [],
+            "pace": None,
+            "assumptions": [],
+            "pipeline_result": None,
+            "perf": {},
+        }
+        with patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()), \
+             patch("app.lg_agent.travel_draft_graph.logger") as mock_logger:
+            _run(llm_draft_node(state))
+
+        draft_calls = [
+            call
+            for call in mock_logger.info.call_args_list
+            if call.args and call.args[0] == "llm_draft_call"
+        ]
+        assert len(draft_calls) == 1
+        payload = draft_calls[0].kwargs["extra"]
+        assert payload["destination"] == "Shanghai"
+        assert payload["days_count"] == 3
+        assert payload["response_language"] == "en"
+        assert payload["prompt_chars"] > payload["user_prompt_chars"]
+        assert payload["candidate_section_chars"] == 0
+        assert payload["candidate_count"] == 0
+        assert payload["output_chars"] == len(_MOCK_LLM_RESPONSE)
+        assert payload["parse_status"] == "parsed"
+
+    def test_response_language_detects_chinese(self):
+        from app.lg_agent.travel_draft_graph import _detect_response_language
+
+        assert _detect_response_language("帮我规划 3 天游") == "zh-CN"
+        assert _detect_response_language("Plan a 3 day trip") == "en"
+
     def test_llm_retry_recovers_from_transient_failure(self, monkeypatch):
         from app.core.config import settings
         from app.lg_agent.travel_draft_graph import llm_draft_node
@@ -512,6 +552,9 @@ class TestPromptInjection:
         user_msg = captured_messages[1]["content"]
         assert "推荐地点" in user_msg
         assert "place 字段请尽量使用上述推荐地点的原始名称" in user_msg
+        assert "输出语言：zh-CN" in user_msg
+        assert "cost_breakdown" not in user_msg
+        assert "transit" not in user_msg
 
     def test_no_candidates_no_injection(self):
         """When pipeline returns no candidates, prompt should not have candidate section."""

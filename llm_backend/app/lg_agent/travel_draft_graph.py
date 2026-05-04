@@ -112,6 +112,20 @@ def _format_candidates_for_prompt(pipeline_result: PipelineResult | None) -> str
     )
 
 
+def _count_prompt_candidates(pipeline_result: PipelineResult | None) -> int:
+    """Return how many recall candidates are eligible for prompt injection."""
+    if not pipeline_result or not pipeline_result.candidates:
+        return 0
+    return min(len(pipeline_result.candidates), _MAX_CANDIDATES_IN_PROMPT)
+
+
+def _detect_response_language(query: str) -> str:
+    """Infer the response language from the user's query for draft generation."""
+    if _re.search(r"[\u4e00-\u9fff]", query or ""):
+        return "zh-CN"
+    return "en"
+
+
 def _safe_coord(val: Any) -> float | None:
     """安全转换坐标值为 float，转换失败返回 None。"""
     if val is None:
@@ -425,12 +439,17 @@ def _get_llm():
     )
 
 
-async def _collect_llm_stream_with_retry(llm, messages: list[dict]) -> tuple[str, float | None, int]:
+async def _collect_llm_stream_with_retry(
+    llm,
+    messages: list[dict],
+    diagnostics: dict[str, Any] | None = None,
+) -> tuple[str, float | None, int, float, float | None]:
     """Collect streamed LLM content with a hard timeout and bounded retries."""
     max_attempts = max(1, settings.TRAVEL_DRAFT_LLM_MAX_ATTEMPTS)
     timeout_seconds = max(0.1, settings.TRAVEL_DRAFT_LLM_TIMEOUT_SECONDS)
     backoff_seconds = max(0.0, settings.TRAVEL_DRAFT_LLM_RETRY_BACKOFF_SECONDS)
     last_exc: Exception | None = None
+    diagnostics = diagnostics or {}
 
     for attempt in range(1, max_attempts + 1):
         attempt_started = time.perf_counter()
@@ -444,28 +463,21 @@ async def _collect_llm_stream_with_retry(llm, messages: list[dict]) -> tuple[str
                             first_token_at = time.perf_counter()
                         buffer += chunk.content
             elapsed_ms = (time.perf_counter() - attempt_started) * 1000
-            logger.info(
-                "llm_draft_call",
-                extra={
-                    "attempt": attempt,
-                    "max_attempts": max_attempts,
-                    "timeout_ms": int(timeout_seconds * 1000),
-                    "elapsed_ms": round(elapsed_ms, 2),
-                    "ttft_ms": round((first_token_at - attempt_started) * 1000, 2) if first_token_at else None,
-                    "status": "ok",
-                },
-            )
-            return buffer, first_token_at, attempt
+            ttft_ms = round((first_token_at - attempt_started) * 1000, 2) if first_token_at else None
+            return buffer, first_token_at, attempt, round(elapsed_ms, 2), ttft_ms
         except Exception as exc:  # noqa: BLE001
             elapsed_ms = (time.perf_counter() - attempt_started) * 1000
             last_exc = exc
             logger.warning(
                 "llm_draft_call_failed",
                 extra={
+                    **diagnostics,
                     "attempt": attempt,
                     "max_attempts": max_attempts,
                     "timeout_ms": int(timeout_seconds * 1000),
                     "elapsed_ms": round(elapsed_ms, 2),
+                    "output_chars": len(buffer),
+                    "parse_status": "stream_failed",
                     "status": "failed",
                     "error_type": type(exc).__name__,
                     "retryable": attempt < max_attempts,
@@ -746,6 +758,11 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
     t_first_token = None
     llm_attempts = 0
     llm_status = "not_called"
+    raw_content = None
+    stream_elapsed_ms = None
+    stream_ttft_ms = None
+    parse_status = "not_started"
+    draft_diagnostics: dict[str, Any] = {}
 
     destination = state["destination"]
     days_count = state["days_count"]
@@ -768,6 +785,7 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             traveler_type=traveler_type or "通用休闲",
             preferences="、".join(preferences) if preferences else "无特别偏好",
             pace=pace or "适中",
+            response_language=_detect_response_language(state.get("query", "")),
         )
 
         candidates_section = _format_candidates_for_prompt(pipeline_result)
@@ -779,9 +797,22 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             {"role": "system", "content": TRAVEL_DRAFT_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ]
+        draft_diagnostics = {
+            "destination": destination,
+            "days_count": days_count,
+            "prompt_chars": sum(len(str(message.get("content") or "")) for message in messages),
+            "user_prompt_chars": len(user_prompt),
+            "candidate_section_chars": len(candidates_section),
+            "candidate_count": _count_prompt_candidates(pipeline_result),
+            "response_language": _detect_response_language(state.get("query", "")),
+        }
         logger.info(f"Calling LLM for travel draft: {destination} {days_count}天 预算{int(total_budget)}")
 
-        raw_content, t_first_token, llm_attempts = await _collect_llm_stream_with_retry(llm, messages)
+        raw_content, t_first_token, llm_attempts, stream_elapsed_ms, stream_ttft_ms = await _collect_llm_stream_with_retry(
+            llm,
+            messages,
+            draft_diagnostics,
+        )
         llm_status = "ok"
 
         itinerary = _parse_llm_itinerary(
@@ -793,6 +824,7 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             preferences=preferences,
             assumptions=assumptions,
         )
+        parse_status = "parsed"
         explanation = (
             f"已为你生成 {destination} {days_count} 天行程草案"
             f"（预算 {int(total_budget)} 元"
@@ -801,10 +833,40 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             f"）。"
         )
         itinerary_dict = itinerary.model_dump(mode="json")
+        logger.info(
+            "llm_draft_call",
+            extra={
+                **draft_diagnostics,
+                "attempt": llm_attempts,
+                "max_attempts": max(1, settings.TRAVEL_DRAFT_LLM_MAX_ATTEMPTS),
+                "timeout_ms": int(max(0.1, settings.TRAVEL_DRAFT_LLM_TIMEOUT_SECONDS) * 1000),
+                "elapsed_ms": stream_elapsed_ms,
+                "ttft_ms": stream_ttft_ms,
+                "output_chars": len(raw_content),
+                "parse_status": parse_status,
+                "status": "ok",
+            },
+        )
         logger.info("LLM travel draft generated successfully")
 
     except Exception as e:
         llm_status = "fallback"
+        if raw_content is not None:
+            logger.info(
+                "llm_draft_call",
+                extra={
+                    **draft_diagnostics,
+                    "attempt": llm_attempts,
+                    "max_attempts": max(1, settings.TRAVEL_DRAFT_LLM_MAX_ATTEMPTS),
+                    "timeout_ms": int(max(0.1, settings.TRAVEL_DRAFT_LLM_TIMEOUT_SECONDS) * 1000),
+                    "elapsed_ms": stream_elapsed_ms,
+                    "ttft_ms": stream_ttft_ms,
+                    "output_chars": len(raw_content),
+                    "parse_status": "parse_failed" if parse_status == "not_started" else parse_status,
+                    "status": "fallback",
+                    "error_type": type(e).__name__,
+                },
+            )
         logger.warning(f"LLM draft generation failed, falling back to template: {e}")
         assumptions.append(f"LLM 生成失败（{type(e).__name__}），已降级为模板草案。")
         itinerary = _build_template_itinerary(

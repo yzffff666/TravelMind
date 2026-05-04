@@ -101,6 +101,16 @@ def test_summarize_events_groups_core_metrics():
                     "attempt": 2,
                     "max_attempts": 3,
                     "elapsed_ms": 1200,
+                    "ttft_ms": 300,
+                    "destination": "Phuket",
+                    "days_count": 3,
+                    "prompt_chars": 4200,
+                    "user_prompt_chars": 3200,
+                    "candidate_section_chars": 900,
+                    "candidate_count": 10,
+                    "response_language": "zh-CN",
+                    "output_chars": 1800,
+                    "parse_status": "parsed",
                     "status": "ok",
                     "stream": True,
                 },
@@ -115,6 +125,28 @@ def test_summarize_events_groups_core_metrics():
                     "elapsed_ms": 900,
                     "status": "failed",
                     "error_type": "TimeoutError",
+                    "retryable": True,
+                },
+            )
+        ),
+        parse_log_line(
+            _loguru_json(
+                "llm_draft_call_failed",
+                {
+                    "attempt": 1,
+                    "max_attempts": 3,
+                    "elapsed_ms": 800,
+                    "destination": "Chengdu",
+                    "days_count": 3,
+                    "prompt_chars": 2100,
+                    "user_prompt_chars": 1800,
+                    "candidate_section_chars": 300,
+                    "candidate_count": 3,
+                    "response_language": "en",
+                    "output_chars": 0,
+                    "parse_status": "stream_failed",
+                    "status": "failed",
+                    "error_type": "APIConnectionError",
                     "retryable": True,
                 },
             )
@@ -173,8 +205,16 @@ def test_summarize_events_groups_core_metrics():
 
     summary = summarize_events(event for event in events if event is not None)
 
-    assert summary["llm"]["status_counts"] == {"ok": 1, "failed": 1}
-    assert summary["llm"]["retryable_failures"] == 1
+    assert summary["llm"]["status_counts"] == {"failed": 2, "ok": 1}
+    assert summary["llm"]["retryable_failures"] == 2
+    assert summary["llm"]["draft"]["parse_status_counts"] == {"parsed": 1, "stream_failed": 1}
+    assert summary["llm"]["draft"]["destination_counts"] == {"Phuket": 1, "Chengdu": 1}
+    assert summary["llm"]["draft"]["response_language_counts"] == {"zh-CN": 1, "en": 1}
+    assert summary["llm"]["draft"]["prompt_chars"]["p50"] == 2100.0
+    assert summary["llm"]["draft"]["prompt_chars"]["p95"] == 4200.0
+    assert summary["llm"]["draft"]["candidate_section_chars"]["p50"] == 300.0
+    assert summary["llm"]["draft"]["candidate_count"]["p50"] == 3.0
+    assert summary["llm"]["draft"]["output_chars"]["p50"] == 0.0
     assert summary["cache"]["source_counts"] == {"exact": 1}
     assert summary["cache"]["hit_rate"] == 1.0
     assert summary["providers"]["by_provider"]["serp:search"]["degraded_count"] == 1
@@ -224,6 +264,7 @@ def test_render_markdown_includes_major_sections():
     markdown = render_markdown(summary)
 
     assert "# TravelMind Observability Summary" in markdown
+    assert "Draft prompt chars" in markdown
     assert "## Semantic Cache" in markdown
     assert '"miss": 1' in markdown
     assert "### Backfill Unresolved Samples" in markdown

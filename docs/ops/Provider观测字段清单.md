@@ -51,11 +51,22 @@
 | `candidate_title` | string | `东京晴空塔` | 匹配到的候选名 |
 | `lat` | number | `35.7101` | 最终纬度 |
 | `lng` | number | `139.8107` | 最终经度 |
-| `source` | string | `provider` / `geo_index` / `city_center_fallback` | 坐标来源 |
+| `source` | string | `provider` / `unresolved` / `skipped` | 坐标来源或处理结果 |
 | `confidence` | string | `high` / `medium` / `low` | 粗略置信度 |
 | `elapsed_ms` | number | `430` | 回填耗时 |
 | `fallback_reason` | string | `provider_empty` | fallback 原因 |
 | `bbox_valid` | boolean | `true` | 是否落在目标城市/国家范围 |
+| `variants_tried` | array | `["普吉老城", "Old Phuket Town"]` | 本次尝试过的查询变体 |
+| `provider_status_counts` | object | `{"success": 2, "empty": 1}` | 回填内部 provider 调用状态分布 |
+| `best_candidate_title` | string | `Old Phuket Town` | 未成功时也记录最接近候选，便于判断别名/打分问题 |
+| `best_match_score` | number | `0.6667` | 最佳候选文本匹配分 |
+| `candidate_count` | number | `9` | provider 返回并进入评估的候选数 |
+| `rejected_bbox_count` | number | `2` | 因目的地 bbox 不符被拒的候选数 |
+| `rejected_score_count` | number | `3` | 因文本匹配分不足被拒的候选数 |
+| `rejected_missing_coord_count` | number | `0` | 因缺坐标被拒的候选数 |
+| `cache_hit_count` | number | `1` | 回填缓存命中次数 |
+| `cache_negative_hit_count` | number | `1` | 负缓存命中次数 |
+| `variant_limit_reached` | boolean | `false` | 查询变体是否被数量上限截断 |
 
 ## 5. 行程质量摘要字段
 
@@ -74,6 +85,10 @@
 | `coverage_score` | number | `0.86` | 当前 coverage |
 | `provider_elapsed_ms` | number | `2800` | Provider 阶段总耗时 |
 | `backfill_elapsed_ms` | number | `900` | 坐标回填总耗时 |
+| `backfill_attempted` | number | `7` | 本轮实际进入 provider backfill 的 slot 数 |
+| `backfill_filled` | number | `4` | 本轮成功回填的 slot 数 |
+| `backfill_skipped` | number | `2` | 本轮因泛活动/相对地点跳过的 slot 数 |
+| `backfill_unresolved` | number | `3` | 本轮仍未解析的 slot 数 |
 | `degraded` | boolean | `false` | 是否整体降级 |
 
 ## 6. 日志示例
@@ -95,7 +110,18 @@
   "confidence": "high",
   "elapsed_ms": 430,
   "fallback_reason": "",
-  "bbox_valid": true
+  "bbox_valid": true,
+  "variants_tried": ["东京晴空塔"],
+  "provider_status_counts": {"success": 1},
+  "best_candidate_title": "东京晴空塔",
+  "best_match_score": 1.0,
+  "candidate_count": 1,
+  "rejected_bbox_count": 0,
+  "rejected_score_count": 0,
+  "rejected_missing_coord_count": 0,
+  "cache_hit_count": 0,
+  "cache_negative_hit_count": 0,
+  "variant_limit_reached": false
 }
 ```
 
@@ -104,8 +130,8 @@
 第一阶段不需要上复杂监控系统，建议先做三件事：
 
 1. 在 Provider 调用处打结构化日志，至少记录 `provider_name/status/elapsed_ms/result_count`。
-2. 在坐标回填处记录 `source/fallback_reason/bbox_valid/elapsed_ms`。
-3. 在 final itinerary 输出前记录一次质量摘要，便于人工评测时对照。
+2. 在坐标回填处记录 `source/fallback_reason/bbox_valid/elapsed_ms`，并保留 `best_candidate_title/best_match_score/provider_status_counts` 方便 unresolved 样例诊断。
+3. 在 final itinerary 输出前记录一次质量摘要，至少包含 `backfill_attempted/backfill_filled/backfill_skipped/backfill_unresolved`，便于人工评测时对照。
 
 ## 8. 后续扩展
 
@@ -113,6 +139,7 @@
 
 - Provider P50/P95。
 - fallback 触发率。
+- unresolved samples：按 `elapsed_ms` 排序展示 `place/reason/provider_status/best_candidate/best_score`。
 - 海外 bbox invalid 比例。
 - changed slot 坐标更新成功率。
 - evidence/source 缺失率。

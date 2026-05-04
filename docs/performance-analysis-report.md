@@ -1,6 +1,6 @@
 # TravelMind 性能优化与技术选型综合分析报告
 
-> 版本：v5.8（观测闭环、QA 本地复用） | 日期：2026-05-02 | 作者：TravelMind Dev Team
+> 版本：v5.10（LLM draft 输出瘦身、双语 response_language 铺路） | 日期：2026-05-04 | 作者：TravelMind Dev Team
 >
 > 说明：本文是“当前状态型”报告，保留核心数据、阶段演进和下一步判断；完整历史长文已归档到 [performance-analysis-report-v5.6-full-history.md](archive/performance-analysis-report-v5.6-full-history.md)。
 
@@ -22,7 +22,8 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 
 - LLM retry / timeout 的真实恢复率。
 - `cache_source=exact|faiss|semantic_scan|miss` 的命中分布。
-- Provider / backfill 的 P50/P95 与 fallback 原因。
+- Provider / backfill 的 P50/P95、fallback 原因和 unresolved 样例。
+- LLM draft prompt/output 规模与耗时之间的关系，以及输出瘦身后的收益。
 - QA `qa_source=local_itinerary` 的命中率与未命中原因。
 - Structured QP 从 30 条扩到 60-100 条后的稳定性。
 
@@ -48,8 +49,8 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 | FastAPI / SSE | 主链路可用，支持渐进事件                                  | 前端对 `tool_result`、错误态和进度细节展示仍可增强  |
 | LangGraph     | 四节点图，支持缺字段早退和节点级 perf                         | 仍未切到 `astream_events` 原生节点事件      |
 | QP            | 规则 baseline + Structured QP feature flag      | Structured QP 样例量仍小，生产默认开启需继续观察   |
-| DeepSeek LLM  | 已补 timeout/retry/latency logging              | 远程 API 仍是尾延迟核心来源                  |
-| Provider      | 并行调用、timeout、结构化日志                            | 长尾海外 POI、evidence URL 缺失仍需扩样      |
+| DeepSeek LLM  | 已补 timeout/retry/latency logging，并完成 draft 输出瘦身 | 远程 API 仍是尾延迟核心来源，后续继续验证更多真实样例 |
+| Provider      | 并行调用、timeout、结构化日志                            | Provider 调用已较快，剩余风险集中在长尾 POI 质量和 evidence URL |
 | Redis / FAISS | Redis 存 response/vector/meta，FAISS 做进程内 L2 检索 | 多进程下 FAISS index 不共享，后续可评估 Qdrant |
 | Embedding     | 仍使用 Ollama embedding                          | `EMBEDDING_TYPE` 配置尚未真正生效         |
 
@@ -68,6 +69,9 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 | Pipeline 检索 | ~12s      | ~3s 估算                  | Provider 并行化后下降明显     |
 | 缺字段早退       | ~75s      | <2ms                    | LangGraph 条件边 + QP 门槛 |
 | 已有行程 QA      | ~2.3-2.5s 单轮观测 | 23.5ms E2E / 6.04ms 本地回答 | 跳过 Structured QP LLM，直接复用 itinerary |
+| Extended backfill | attempted 8 / filled 3 / skipped 1 / unresolved 5 | attempted 7 / filled 4 / skipped 2 / unresolved 3 | 目的地清洗、POI alias、泛地点跳过后，unresolved 从 5 降到 3 |
+| Extended LLM latency | N/A | P50 16.15s / P95 18.53s / avg 12.16s | 2026-05-03 extended smoke，当前主耗时来源 |
+| LLM draft 输出瘦身 | output p50 3370 / p95 4535，LLM P50 15112ms / P95 20091ms | output p50 1327 / p95 1787，LLM P50 6007ms / P95 8066ms | slot 输出仅保留 `slot/activity/place`，预算/证据/校验交给后处理 |
 | mock 图节点开销  | N/A       | ~6ms                    | 说明本地图执行不是瓶颈           |
 | 完全重复 query  | 原无缓存      | exact hit 可跳过 embedding | Redis response key 命中 |
 | 相似 query    | Python 全扫 | FAISS L2 检索             | Redis 仍是真源，FAISS 可重建  |
@@ -101,6 +105,8 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 | v5.6 LLM 稳定性       | 降低远程 API 失败影响    | timeout、bounded retry、latency logging、请求去重                | 后端回归通过，具备观测重试恢复率能力           |
 | v5.7 缓存稳定性         | 降低重复/相似 query 成本 | Redis SCAN、L1 exact、FAISS L2、cache_source 日志              | 消除 `KEYS`，相似检索不再常规 Python 全扫 |
 | v5.8 观测闭环与 QA 复用   | 用真实观测驱动下一步优化      | observability smoke/summary、QA local fast path              | QA 从约 2.3s 降至 23.5ms E2E |
+| v5.9 Backfill 诊断与 POI 清洗 | 用 unresolved 样例驱动质量优化 | Backfill unresolved samples、目的地清洗、POI alias、泛地点跳过、provider list/dict 字段兼容 | Extended backfill 从 `8/3/1/5` 改善到 `7/4/2/3`，海外 create smoke 通过 |
+| v5.10 LLM draft 输出瘦身 | 降低远程 LLM 生成成本 | draft prompt 增加 output 约束，slot 只让 LLM 生成 `slot/activity/place`，补 `response_language` 诊断字段 | Extended create 明显下降：国内约 18.0s -> 10.2s，海外约 33.8s -> 16.0s |
 
 
 ---
@@ -136,6 +142,23 @@ Provider 层已从串行调用改为有限预算下的并行调用，并补齐�
 | 大阪：环球影城 / 大阪城公园 / 道顿堀    | 0/3 | 3/3 | 精确地点查询恢复有效坐标                            |
 | 普吉岛：芭东海滩 / 普吉老镇 / 普吉国际机场 | 2/3 | 3/3 | 增加 Old Phuket Town / Phuket Old Town 别名 |
 
+近期基于 `observability-summary.md` 的 `Backfill Unresolved Samples` 表继续补齐了 backfill 闭环：
+
+- `location_backfill_service.py` 在 provider 前清洗目的地，避免 `普吉岛轻松`、`成都亲子三天` 这类污染文本进入地图查询。
+- 对 `普吉老城`、`普吉周末夜市`、`Phuket Weekend Market`、`The Boathouse Wine & Grill` 增加稳定别名。
+- 对 `酒店泳池/附近海滩` 等相对泛地点跳过 provider，避免无意义查询拖慢尾延迟。
+- 对 provider 返回 `address` 为 list/dict 的情况做防御性归一化，避免候选打分阶段异常。
+
+最新 extended smoke（2026-05-03，本地真实链路）：
+
+| 指标 | 优化前诊断轮 | POI 清洗后 |
+| --- | --- | --- |
+| 海外创建 | 通过 / 曾暴露一次 provider 字段类型异常 | 通过，11 个 SSE 事件完整返回 |
+| Backfill | attempted 8 / filled 3 / skipped 1 / unresolved 5 | attempted 7 / filled 4 / skipped 2 / unresolved 3 |
+| 主要剩余样例 | `普吉老城`、`The Boathouse`、`酒店泳池/附近海滩` 等 | `Central Phuket Florist`、`普吉周末夜市 或 Chillva Market`、`查龙寺` |
+
+结论：Backfill 已从“看不清失败原因”推进到“可按样例定点修复”。剩余 3 个 unresolved 仍可继续优化，但相对 LLM draft 主耗时，优先级已下降。
+
 
 ### 5.3 Structured QP
 
@@ -165,6 +188,20 @@ Structured QP 解决的是规则 intent router 过硬、上下文编辑和模糊
 - 澄清/闲聊 LLM 的 timeout / retry。
 - `llm_attempts`、`llm_status`、latency logging。
 - `/travel/query` 和 `/travel/resume` 的进程内 5s 请求指纹去重。
+- `llm_draft_call` 已补 `prompt_chars`、`candidate_section_chars`、`candidate_count`、`output_chars`、`days_count`、`destination`、`parse_status`、`response_language`。
+- draft 输出已瘦身：LLM 只生成核心行程骨架和 POI，预算细分、证据、校验、坐标由后处理补齐。
+
+输出瘦身验证（2026-05-03，本地 extended smoke）：
+
+| 指标 | 瘦身前 | 瘦身后 |
+| --- | --- | --- |
+| 国内创建 E2E | 17993.36 ms | 10191.42 ms |
+| 海外创建 E2E | 33845.56 ms | 15956.85 ms |
+| LLM latency | P50 15112.07 ms / P95 20091.28 ms | P50 6006.58 ms / P95 8066.29 ms |
+| Draft output chars | P50 3370 / P95 4535 | P50 1327 / P95 1787 |
+| Draft prompt chars | P50 2005 / P95 2200 | P50 1482 / P95 1677 |
+
+结论：当前 LLM 主耗时更受输出生成长度影响，而不是 prompt 或候选注入体积。先瘦身输出比继续压 prompt 更有效。
 
 注意：文档里的 `tenacity` 是已安装依赖，但当前实现没有强依赖 tenacity，而是使用显式 bounded retry 和 `asyncio` timeout。后续可以保留现状，除非需要更复杂的 retry policy。
 
@@ -197,10 +234,11 @@ lookup(messages)
 | 优先级 | Gap                   | 原因                                   | 推荐动作                                                             |
 | --- | --------------------- | ------------------------------------ | ---------------------------------------------------------------- |
 | 高   | 真实流量观测不足              | 已有日志但缺少汇总统计                          | 汇总 LLM P50/P95、retry 恢复率、cache hit 分布                            |
+| 中   | LLM draft 长尾仍需更多真实样例 | 已完成输出瘦身，但样本仍少，远程 LLM 波动存在 | 持续记录 `prompt_chars/output_chars/response_language`，扩展中英混合 extended smoke |
 | 高   | EmbeddingProvider 未解耦 | `EMBEDDING_TYPE` 声明尚未接入缓存路径          | 抽象 embedding provider，支持 Ollama / sentence-transformers fallback |
 | 中   | FAISS 多进程不共享          | 当前是进程内索引                             | 个人项目可接受；多实例部署时评估 Qdrant                                          |
 | 中   | 请求去重非分布式              | 进程内 TTL guard                        | 多 worker 时改 Redis `SET NX`                                       |
-| 中   | Provider 长尾样例不足       | 核心样例已过，长尾城市未统计                       | 扩展巴黎、伦敦、新加坡、纽约等样例集                                               |
+| 中   | Provider / Backfill 长尾样例不足 | 核心样例已过，普吉 extended 已降到 3 个 unresolved | 扩展巴黎、伦敦、新加坡、纽约等样例集；继续用 unresolved samples 表定点修复 |
 | 中   | 前端进度透明度不足             | SSE 事件有了，但 UI 未充分展示 tool/provider 过程 | 展示 tool_result、阶段耗时、低置信度提示                                       |
 | 中   | Structured QP 样例量不足   | 30 条不足以默认开启                          | 扩展到 60-100 条再决定默认策略                                              |
 | 低   | QA fast path 覆盖面有限     | 当前优先覆盖 itinerary 结构内的天数、预算、某天安排        | 扩展交通/住宿/证据类本地回答，未命中再走 LLM                                      |
@@ -212,22 +250,26 @@ lookup(messages)
 
 推荐顺序：
 
-1. **观测型性能分析测试**
-   - 已新增 `llm_backend/scripts/observability_summary.py`，从 `logs/structured.log` 或兼容的 `logs/app.log` 文本日志统计 `llm_status`、`llm_attempts`、`cache_source`、Provider `elapsed_ms`。
-   - 已新增 `llm_backend/scripts/observability_smoke.py`，按 `mini/extended` 用例集调用 `/travel/query` 并保存 SSE 事件。
-   - 推荐命令：`python -m scripts.observability_smoke --base-url http://127.0.0.1:8000 --user-id 1 --case-set mini`，默认调用 `/api/travel/query`。
+1. **扩展中英双语观测样例**
+   - 在 `observability_smoke.py` 的 extended 或新 case-set 中加入英文 query、中英混合 query、英文 QA/edit。
+   - 继续观察 `response_language`、`output_chars`、Backfill alias 和 Provider 命中。
+2. **继续观测型性能分析测试**
+   - `observability_summary.py` 已能统计 LLM、Provider、Backfill、QP、QA，并展示 `Backfill Unresolved Samples`。
+   - `observability_smoke.py` 已能按 `mini/extended` 调用 `/travel/query` 并保存 SSE 事件与单次 structured log 窗口。
+   - 推荐命令：`python -m scripts.observability_smoke --base-url http://127.0.0.1:8000 --user-id 1 --case-set extended`。
    - 详细说明见 [观测型性能分析测试](evaluation/观测型性能分析测试.md)。
-   - 目标是从“功能完成”进入“真实数据驱动”。
-2. **EmbeddingProvider 解耦**
+3. **Backfill 长尾样例小修**
+   - 优先修 `查龙寺/Wat Chalong`、`Maya Bay/玛雅湾` 等明确 POI alias 和 bbox 拒绝样例。
+4. **EmbeddingProvider 解耦**
   - 让 `EMBEDDING_TYPE` 真正生效。
   - Ollama 不可用时可走 `sentence-transformers` fallback。
-3. **前端进度与错误态优化**
+5. **前端进度与错误态优化**
   - 展示“正在理解需求 / 检索资料 / 生成行程 / 坐标回填”。
   - 错误发生时避免旧 itinerary 让用户误以为成功。
-4. **Structured QP 扩样**
+6. **Structured QP 扩样**
   - 从 30 条扩到 60-100 条。
   - 加入中英混合、反悔表达、多城市、弱约束。
-5. **再考虑 Qdrant / 分布式缓存**
+7. **再考虑 Qdrant / 分布式缓存**
   - 只有当缓存规模、多 worker、持久化索引需求出现时再做。
 
 ---
@@ -285,7 +327,7 @@ lookup(messages)
 ## 9. 快速引用
 
 ```text
-核心结论：TravelMind 已从“完整生成但等待长”优化到“可渐进展示、可观测、可缓存复用”的阶段。
+核心结论：TravelMind 已从“完整生成但等待长”优化到“可渐进展示、可观测、可缓存复用、可按样例修复 backfill 质量、可控制 LLM 输出成本”的阶段；下一阶段重点是中英双语观测样例和海外 POI 长尾。
 
 已完成：
 - 四节点 LangGraph + 条件边早退
@@ -294,8 +336,13 @@ lookup(messages)
 - Structured QP MVP + 真实中文评测 + 灰度 smoke
 - LLM timeout/retry + 请求去重
 - Redis L1 exact + FAISS L2 语义缓存
+- Backfill unresolved samples 诊断表
+- 目的地清洗、POI alias、泛地点跳过与 provider 字段健壮性修复
+- LLM draft prompt/output 诊断与输出瘦身
+- `response_language` 诊断字段，为中英双语输入输出铺路
 
 剩余重点：
+- 扩展中英双语 smoke 样例，验证英文输入/输出与中英混合 POI
 - 用日志统计真实 P50/P95、retry 恢复率、cache hit 分布
 - 解耦 EmbeddingProvider
 - 扩展 Structured QP 和 Provider 真实样例
