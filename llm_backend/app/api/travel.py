@@ -20,7 +20,11 @@ from app.domain.travel.sse_envelope import (
     build_event_line,
 )
 from app.domain.travel.query_processor import TravelQueryProcessor
-from app.lg_agent.travel_draft_graph import _apply_city_center_fallback, travel_draft_graph
+from app.lg_agent.travel_draft_graph import (
+    _apply_city_center_fallback,
+    _detect_response_language,
+    travel_draft_graph,
+)
 from app.lg_agent.utils import new_uuid
 from app.models.user import User
 from app.services.conversation_service import ConversationService
@@ -373,6 +377,7 @@ async def _stream_clarification_events(
 async def _stream_minimal_itinerary(
     *,
     query_text: str,
+    original_query: str | None = None,
     thread_config: dict,
     conversation_id: str,
     request_id: str,
@@ -391,7 +396,7 @@ async def _stream_minimal_itinerary(
 
     try:
         result = await travel_draft_graph.ainvoke(
-            input={"query": query_text},
+            input={"query": query_text, "original_query": original_query or query_text},
             config=thread_config,
         )
         final_itinerary = result.get("final_itinerary")
@@ -521,25 +526,46 @@ async def _stream_minimal_itinerary(
         yield _build_sse_line(fallback_text)
 
 
-def _answer_itinerary_qa(query: str, itinerary: dict) -> str:
+def _answer_itinerary_qa(
+    query: str,
+    itinerary: dict,
+    response_language: str | None = None,
+) -> str:
     """基于当前行程回答用户问答（规则 baseline，不依赖 LLM）。"""
+    language = response_language or _detect_response_language(query)
+    is_english = language == "en"
     days = itinerary.get("days", [])
     profile = itinerary.get("trip_profile", {})
     budget = itinerary.get("budget_summary", {})
     dest = profile.get("destination_city", "未知")
 
-    if "几天" in query or "天数" in query:
+    import re as _re
+
+    if "几天" in query or "天数" in query or _re.search(r"\bhow\s+many\s+days\b", query, _re.I):
+        if is_english:
+            return f"The current itinerary is {len(days)} days in {dest}."
         return f"当前行程共 {len(days)} 天，目的地为 {dest}。"
-    if "预算" in query or "花费" in query or "多少钱" in query:
+    if (
+        "预算" in query
+        or "花费" in query
+        or "多少钱" in query
+        or _re.search(r"\b(budget|cost|price|spend|expense|money)\b", query, _re.I)
+    ):
         total = budget.get("total_estimate", 0)
         by_cat = budget.get("by_category", {})
+        if is_english:
+            parts = [f"Total budget is about {int(total)} CNY"]
+            for k, v in by_cat.items():
+                if v:
+                    parts.append(f"{k}: {int(v)} CNY")
+            return ". ".join(parts) + "."
         parts = [f"总预算约 {int(total)} 元"]
         for k, v in by_cat.items():
             if v:
                 parts.append(f"{k}: {int(v)} 元")
         return "。".join(parts) + "。"
+    day_match = None
     if "第" in query and "天" in query:
-        import re as _re
         cn_day_map = {
             "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
             "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
@@ -547,17 +573,40 @@ def _answer_itinerary_qa(query: str, itinerary: dict) -> str:
         m = _re.search(r"第\s*(\d+|[一二两三四五六七八九十])\s*天", query)
         if m:
             raw_idx = m.group(1)
-            idx = int(raw_idx) if raw_idx.isdigit() else cn_day_map.get(raw_idx, 0)
-            for d in days:
-                if d.get("day_index") == idx:
-                    slots_desc = []
-                    for s in d.get("slots", []):
-                        slots_desc.append(f"{s.get('slot', '')}：{s.get('activity', '')}（{s.get('place', '未定')}）")
-                    theme = d.get("theme", "")
-                    return f"第{idx}天{' - ' + theme if theme else ''}：{'；'.join(slots_desc)}。"
-            return f"行程中没有第{idx}天的安排。"
+            day_match = int(raw_idx) if raw_idx.isdigit() else cn_day_map.get(raw_idx, 0)
+    if day_match is None:
+        m = _re.search(r"\bday\s*(\d+)\b", query, _re.I)
+        if m:
+            day_match = int(m.group(1))
+    if day_match:
+        idx = day_match
+        for d in days:
+            if d.get("day_index") == idx:
+                slots_desc = []
+                for s in d.get("slots", []):
+                    slot = s.get("slot", "")
+                    activity = s.get("activity", "")
+                    place = s.get("place", "未定")
+                    if is_english:
+                        slots_desc.append(f"{slot}: {activity} ({place})")
+                    else:
+                        slots_desc.append(f"{slot}：{activity}（{place}）")
+                theme = d.get("theme", "")
+                if is_english:
+                    theme_part = f" - {theme}" if theme else ""
+                    return f"Day {idx}{theme_part}: {'; '.join(slots_desc)}."
+                return f"第{idx}天{' - ' + theme if theme else ''}：{'；'.join(slots_desc)}。"
+        if is_english:
+            return f"There is no day {idx} in the current itinerary."
+        return f"行程中没有第{idx}天的安排。"
 
     slot_count = sum(len(d.get("slots", [])) for d in days)
+    if is_english:
+        total = int(budget.get("total_estimate", 0))
+        return (
+            f"Current itinerary: {dest}, {len(days)} days, {slot_count} scheduled time slots, "
+            f"total budget {total} CNY. Ask about a specific day, for example: 'What is the plan for day N?'"
+        )
     return f"当前行程：{dest} {len(days)} 天，共 {slot_count} 个时段安排，总预算 {int(budget.get('total_estimate', 0))} 元。如需了解具体某天，可以问'第N天安排是什么'。"
 
 
@@ -584,7 +633,8 @@ async def _build_local_qa_fast_response(
     if not qp_output:
         return None
 
-    text = _answer_itinerary_qa(query_text, itinerary)
+    response_language = _detect_response_language(query_text)
+    text = _answer_itinerary_qa(query_text, itinerary, response_language=response_language)
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     logger.info(
         "qa_local_fast_path",
@@ -595,6 +645,7 @@ async def _build_local_qa_fast_response(
             "intent_detail": qp_output.get("intent_detail"),
             "qa_source": "local_itinerary",
             "qa_elapsed_ms": elapsed_ms,
+            "response_language": response_language,
         },
     )
     await ConversationService.upsert_travel_conversation_state(
@@ -609,7 +660,11 @@ async def _build_local_qa_fast_response(
             intent="qa",
             intent_detail=qp_output.get("intent_detail") or "qa_local",
             text=text,
-            payload_extra={"qa_source": "local_itinerary", "qa_elapsed_ms": elapsed_ms},
+            payload_extra={
+                "qa_source": "local_itinerary",
+                "qa_elapsed_ms": elapsed_ms,
+                "response_language": response_language,
+            },
         ),
         media_type="text/event-stream",
     )
@@ -788,7 +843,12 @@ async def _build_edit_qa_response(
             ),
             media_type="text/event-stream",
         )
-    text = _answer_itinerary_qa(query_text, state["current_itinerary"])
+    response_language = _detect_response_language(query_text)
+    text = _answer_itinerary_qa(
+        query_text,
+        state["current_itinerary"],
+        response_language=response_language,
+    )
     return StreamingResponse(
         _stream_intent_text_response(
             request_id=request_id,
@@ -796,6 +856,7 @@ async def _build_edit_qa_response(
             intent=intent,
             intent_detail=intent_detail,
             text=text,
+            payload_extra={"response_language": response_language},
         ),
         media_type="text/event-stream",
     )
@@ -968,6 +1029,7 @@ async def langgraph_query(
                         yield line
                     async for line in _stream_minimal_itinerary(
                         query_text=combined_recall,
+                        original_query=combined_query,
                         thread_config=thread_config,
                         conversation_id=thread_id,
                         request_id=request_id,
@@ -1044,6 +1106,7 @@ async def langgraph_query(
                 yield line
             async for line in _stream_minimal_itinerary(
                 query_text=recall_query,
+                original_query=query,
                 thread_config=thread_config,
                 conversation_id=thread_id,
                 request_id=request_id,
@@ -1196,6 +1259,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                     yield line
                 async for line in _stream_minimal_itinerary(
                     query_text=combined_recall_query,
+                    original_query=combined_query,
                     thread_config=thread_config,
                     conversation_id=thread_id,
                     request_id=request_id,
@@ -1230,6 +1294,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 yield line
             async for line in _stream_minimal_itinerary(
                 query_text=recall_query,
+                original_query=request.query,
                 thread_config=thread_config,
                 conversation_id=thread_id,
                 request_id=request_id,

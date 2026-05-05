@@ -143,6 +143,50 @@ def test_answer_itinerary_qa_supports_chinese_day_number():
     assert "四川科技馆" in text
 
 
+def test_answer_itinerary_qa_uses_english_for_english_day_question():
+    from app.api.travel import _answer_itinerary_qa
+
+    itinerary = {
+        "trip_profile": {"destination_city": "Phuket"},
+        "days": [
+            {
+                "day_index": 2,
+                "theme": "Beach and food",
+                "slots": [
+                    {"slot": "morning", "activity": "Relax on Kata Beach", "place": "Kata Beach"},
+                    {"slot": "afternoon", "activity": "Thai cooking class", "place": "Cooking Academy"},
+                ],
+            }
+        ],
+        "budget_summary": {"total_estimate": 6000},
+    }
+
+    text = _answer_itinerary_qa("What is the plan for day 2?", itinerary)
+
+    assert text.startswith("Day 2")
+    assert "Kata Beach" in text
+    assert "Cooking Academy" in text
+    assert "当前行程" not in text
+
+
+def test_answer_itinerary_qa_uses_english_for_english_budget_question():
+    from app.api.travel import _answer_itinerary_qa
+
+    itinerary = {
+        "trip_profile": {"destination_city": "Phuket"},
+        "days": [],
+        "budget_summary": {
+            "total_estimate": 6000,
+            "by_category": {"food": 1200, "tickets": 800},
+        },
+    }
+
+    text = _answer_itinerary_qa("What is the budget?", itinerary)
+
+    assert "Total budget is about 6000 CNY" in text
+    assert "food: 1200 CNY" in text
+
+
 def test_classify_local_qa_fast_path_only_accepts_qa():
     from app.api.travel import _classify_local_qa_fast_path
 
@@ -206,3 +250,52 @@ def test_build_local_qa_fast_response_returns_sse_without_structured_qp(monkeypa
     assert data_2["payload"]["qa_source"] == "local_itinerary"
     assert "亲子乐园" in data_2["payload"]["text"]
 
+
+def test_build_local_qa_fast_response_preserves_english_language(monkeypatch):
+    import asyncio
+
+    from app.api import travel
+
+    itinerary = {
+        "trip_profile": {"destination_city": "Phuket"},
+        "days": [
+            {
+                "day_index": 2,
+                "theme": "Beach day",
+                "slots": [{"slot": "morning", "activity": "Relax on Kata Beach", "place": "Kata Beach"}],
+            }
+        ],
+        "budget_summary": {"total_estimate": 6000},
+    }
+
+    async def fake_get_state(conversation_id: str):
+        assert conversation_id == "conv_qa_en"
+        return {"current_itinerary": itinerary}
+
+    async def fake_upsert(**kwargs):
+        assert kwargs["conversation_id"] == "conv_qa_en"
+        assert kwargs["last_user_query"] == "What is the plan for day 2?"
+        return kwargs
+
+    monkeypatch.setattr(travel.ConversationService, "get_travel_conversation_state", fake_get_state)
+    monkeypatch.setattr(travel.ConversationService, "upsert_travel_conversation_state", fake_upsert)
+
+    async def collect():
+        response = await travel._build_local_qa_fast_response(
+            request_id="req_qa_en",
+            conversation_id="conv_qa_en",
+            query_text="What is the plan for day 2?",
+            user_id=1,
+        )
+        assert response is not None
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk)
+        return chunks
+
+    chunks = asyncio.run(collect())
+    event_2, data_2 = _parse_sse_chunk(chunks[1])
+
+    assert event_2 == "final_text"
+    assert data_2["payload"]["response_language"] == "en"
+    assert data_2["payload"]["text"].startswith("Day 2")

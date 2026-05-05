@@ -390,6 +390,35 @@ class TestLlmDraftNode:
         assert payload["output_chars"] == len(_MOCK_LLM_RESPONSE)
         assert payload["parse_status"] == "parsed"
 
+    def test_llm_draft_language_uses_original_query_not_recall_labels(self):
+        from app.lg_agent.travel_draft_graph import llm_draft_node
+
+        state = {
+            "query": "Plan a 3 day trip to Phuket with budget 6000 CNY | 目的地:Phuket | 天数:3 | 预算:6000",
+            "original_query": "Plan a 3 day trip to Phuket with budget 6000 CNY",
+            "destination": "Phuket",
+            "days_count": 3,
+            "total_budget": 6000.0,
+            "traveler_type": None,
+            "preferences": [],
+            "pace": None,
+            "assumptions": [],
+            "pipeline_result": None,
+            "perf": {},
+        }
+        with patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()), \
+             patch("app.lg_agent.travel_draft_graph.logger") as mock_logger:
+            result = _run(llm_draft_node(state))
+
+        draft_calls = [
+            call
+            for call in mock_logger.info.call_args_list
+            if call.args and call.args[0] == "llm_draft_call"
+        ]
+        assert len(draft_calls) == 1
+        assert draft_calls[0].kwargs["extra"]["response_language"] == "en"
+        assert result["explanation"].startswith("Generated a 3-day itinerary for Phuket")
+
     def test_response_language_detects_chinese(self):
         from app.lg_agent.travel_draft_graph import _detect_response_language
 
@@ -1064,6 +1093,38 @@ class TestSSEEventSequence:
         first_type, first_data = events[0]
         assert first_type == "stage_start"
         assert first_data["payload"]["stage"] == "draft_plan"
+
+    def test_stream_minimal_itinerary_passes_original_query_to_graph(self):
+        from app.api.travel import _stream_minimal_itinerary
+
+        captured_input = {}
+
+        async def mock_ainvoke(input, config=None):
+            captured_input.update(input)
+            return _make_graph_result()
+
+        async def collect():
+            chunks = []
+            with patch("app.api.travel.travel_draft_graph") as mock_graph, \
+                 patch("app.api.travel.ConversationService") as mock_cs:
+                mock_graph.ainvoke = AsyncMock(side_effect=mock_ainvoke)
+                mock_cs.upsert_travel_conversation_state = AsyncMock()
+                gen = _stream_minimal_itinerary(
+                    query_text="Plan a 3 day trip to Phuket | 目的地:Phuket | 天数:3 | 预算:6000",
+                    original_query="Plan a 3 day trip to Phuket",
+                    thread_config={"configurable": {"thread_id": "t1"}},
+                    conversation_id="conv-001",
+                    request_id="req-001",
+                    user_id=1,
+                )
+                async for chunk in gen:
+                    chunks.append(chunk)
+            return chunks
+
+        asyncio.run(collect())
+
+        assert captured_input["query"].endswith("预算:6000")
+        assert captured_input["original_query"] == "Plan a 3 day trip to Phuket"
 
     def test_event_order_is_correct(self):
         """Full sequence: stage_start → pipeline_complete → tool_result → day_ready → stage_progress → final_itinerary."""

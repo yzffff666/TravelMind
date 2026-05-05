@@ -126,6 +126,34 @@ def _detect_response_language(query: str) -> str:
     return "en"
 
 
+def _format_draft_explanation(
+    *,
+    destination: str,
+    days_count: int,
+    total_budget: float,
+    traveler_type: str | None = None,
+    preferences: list[str] | None = None,
+    response_language: str = "zh-CN",
+) -> str:
+    """Format the final draft summary in the user's response language."""
+    preferences = preferences or []
+    if response_language == "en":
+        details = [f"budget {int(total_budget)} CNY"]
+        if traveler_type:
+            details.append(f"traveler type {traveler_type}")
+        if preferences:
+            details.append(f"preferences {', '.join(preferences)}")
+        return f"Generated a {days_count}-day itinerary for {destination} ({'; '.join(details)})."
+
+    return (
+        f"已为你生成 {destination} {days_count} 天行程草案"
+        f"（预算 {int(total_budget)} 元"
+        f"{'，' + traveler_type if traveler_type else ''}"
+        f"{'，偏好 ' + '、'.join(preferences) if preferences else ''}"
+        f"）。"
+    )
+
+
 def _safe_coord(val: Any) -> float | None:
     """安全转换坐标值为 float，转换失败返回 None。"""
     if val is None:
@@ -386,6 +414,7 @@ def _append_budget_validation(
 
 class TravelDraftInput(TypedDict):
     query: str
+    original_query: str
 
 
 class TravelDraftState(TravelDraftInput):
@@ -772,6 +801,8 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
     pace = state.get("pace")
     assumptions = list(state.get("assumptions", []))
     pipeline_result = state.get("pipeline_result")
+    response_language_query = state.get("original_query") or state.get("query", "")
+    response_language = _detect_response_language(response_language_query)
 
     itinerary_dict = None
     explanation = None
@@ -785,7 +816,7 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             traveler_type=traveler_type or "通用休闲",
             preferences="、".join(preferences) if preferences else "无特别偏好",
             pace=pace or "适中",
-            response_language=_detect_response_language(state.get("query", "")),
+            response_language=response_language,
         )
 
         candidates_section = _format_candidates_for_prompt(pipeline_result)
@@ -804,7 +835,7 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             "user_prompt_chars": len(user_prompt),
             "candidate_section_chars": len(candidates_section),
             "candidate_count": _count_prompt_candidates(pipeline_result),
-            "response_language": _detect_response_language(state.get("query", "")),
+            "response_language": response_language,
         }
         logger.info(f"Calling LLM for travel draft: {destination} {days_count}天 预算{int(total_budget)}")
 
@@ -825,12 +856,13 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             assumptions=assumptions,
         )
         parse_status = "parsed"
-        explanation = (
-            f"已为你生成 {destination} {days_count} 天行程草案"
-            f"（预算 {int(total_budget)} 元"
-            f"{'，' + traveler_type if traveler_type else ''}"
-            f"{'，偏好 ' + '、'.join(preferences) if preferences else ''}"
-            f"）。"
+        explanation = _format_draft_explanation(
+            destination=destination,
+            days_count=days_count,
+            total_budget=total_budget,
+            traveler_type=traveler_type,
+            preferences=preferences,
+            response_language=response_language,
         )
         itinerary_dict = itinerary.model_dump(mode="json")
         logger.info(
@@ -876,7 +908,14 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             traveler_type=traveler_type,
             assumptions=assumptions,
         )
-        explanation = DRAFT_CONFIG.explanation_template.format(days=days_count)
+        explanation = _format_draft_explanation(
+            destination=destination,
+            days_count=days_count,
+            total_budget=total_budget,
+            traveler_type=traveler_type,
+            preferences=preferences,
+            response_language=response_language,
+        )
         if assumptions:
             explanation = f"{explanation} {' '.join(assumptions)}".strip()
         itinerary_dict = itinerary.model_dump(mode="json")
@@ -925,7 +964,7 @@ async def postprocess_node(state: TravelDraftState) -> dict:
         pipeline_result,
         eb,
         recall_geo,
-        original_query=state.get("query", ""),
+        original_query=state.get("original_query") or state.get("query", ""),
         requested_budget=state.get("total_budget"),
         requested_days=state.get("days_count"),
     )

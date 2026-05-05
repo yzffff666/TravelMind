@@ -99,6 +99,34 @@ CASE_SETS: dict[str, list[SmokeCase]] = {
             expect_events=("intent_routed", "final_text"),
         ),
     ],
+    "bilingual": [
+        SmokeCase(
+            name="english_create",
+            query="Plan a 3 day trip to Phuket with budget 6000 CNY, relaxed food and beaches",
+            conversation_alias="english",
+            reset_conversation=True,
+            expect_events=("intent_routed", "final_itinerary"),
+        ),
+        SmokeCase(
+            name="english_qa",
+            query="What is the plan for day 2?",
+            conversation_alias="english",
+            expect_events=("intent_routed", "final_text"),
+        ),
+        SmokeCase(
+            name="english_edit",
+            query="Change day 2 afternoon to an indoor activity",
+            conversation_alias="english",
+            expect_events=("intent_routed", "final_itinerary"),
+        ),
+        SmokeCase(
+            name="mixed_poi_create",
+            query="帮我规划 3 天 Phuket Old Town + 查龙寺 + Maya Bay 的轻松行程，预算 6000，偏好美食",
+            conversation_alias="mixed",
+            reset_conversation=True,
+            expect_events=("intent_routed", "final_itinerary"),
+        ),
+    ],
 }
 
 

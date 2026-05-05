@@ -1,6 +1,7 @@
 import json
 
 from scripts.observability_smoke import (
+    CASE_SETS,
     _conversation_id_from_events,
     _event_names,
     _file_size,
@@ -8,6 +9,24 @@ from scripts.observability_smoke import (
     _parse_sse_events,
     render_run_report,
 )
+
+
+def test_case_sets_include_bilingual_language_coverage():
+    cases = {case.name: case for case in CASE_SETS["bilingual"]}
+
+    assert set(cases) == {
+        "english_create",
+        "english_qa",
+        "english_edit",
+        "mixed_poi_create",
+    }
+    assert cases["english_create"].reset_conversation is True
+    assert cases["english_create"].conversation_alias == cases["english_qa"].conversation_alias
+    assert cases["english_create"].conversation_alias == cases["english_edit"].conversation_alias
+    assert "Phuket" in cases["english_create"].query
+    assert "What is the plan" in cases["english_qa"].query
+    assert "Phuket Old Town" in cases["mixed_poi_create"].query
+    assert "查龙寺" in cases["mixed_poi_create"].query
 
 
 def test_parse_sse_events_handles_named_and_data_events():
