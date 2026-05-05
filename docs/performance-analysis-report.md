@@ -1,6 +1,6 @@
 # TravelMind 性能优化与技术选型综合分析报告
 
-> 版本：v5.10（LLM draft 输出瘦身、双语 response_language 铺路） | 日期：2026-05-04 | 作者：TravelMind Dev Team
+> 版本：v5.11（双语输入输出观测闭环） | 日期：2026-05-05 | 作者：TravelMind Dev Team
 >
 > 说明：本文是“当前状态型”报告，保留核心数据、阶段演进和下一步判断；完整历史长文已归档到 [performance-analysis-report-v5.6-full-history.md](archive/performance-analysis-report-v5.6-full-history.md)。
 
@@ -17,15 +17,17 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 - LLM 调用已补 timeout、bounded retry 和 latency logging。
 - Redis 语义缓存已从 `KEYS + Python 全扫` 升级为 `L1 exact + L2 FAISS + SCAN fallback`。
 - 基于已有行程的 QA 已增加本地 fast path，明确问“第 N 天安排”时可跳过 Structured QP LLM。
+- 双语链路已完成首轮闭环：`observability_smoke.py` 增加 `bilingual` 用例集，`original_query` 与 `recall_query` 分层，英文 create / QA 可按英文输出并进入 `response_language` 观测。
 
 当前最重要的后续工作不是继续大幅改架构，而是用真实样例和日志验证：
 
 - LLM retry / timeout 的真实恢复率。
 - `cache_source=exact|faiss|semantic_scan|miss` 的命中分布。
 - Provider / backfill 的 P50/P95、fallback 原因和 unresolved 样例。
-- LLM draft prompt/output 规模与耗时之间的关系，以及输出瘦身后的收益。
+- LLM draft prompt/output 规模、`response_language` 与耗时之间的关系，以及输出瘦身后的收益。
 - QA `qa_source=local_itinerary` 的命中率与未命中原因。
 - Structured QP 从 30 条扩到 60-100 条后的稳定性。
+- 海外/双语 POI 的 unresolved 率、bbox/score 拒绝原因和 negative cache 命中。
 
 ---
 
@@ -107,6 +109,7 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 | v5.8 观测闭环与 QA 复用   | 用真实观测驱动下一步优化      | observability smoke/summary、QA local fast path              | QA 从约 2.3s 降至 23.5ms E2E |
 | v5.9 Backfill 诊断与 POI 清洗 | 用 unresolved 样例驱动质量优化 | Backfill unresolved samples、目的地清洗、POI alias、泛地点跳过、provider list/dict 字段兼容 | Extended backfill 从 `8/3/1/5` 改善到 `7/4/2/3`，海外 create smoke 通过 |
 | v5.10 LLM draft 输出瘦身 | 降低远程 LLM 生成成本 | draft prompt 增加 output 约束，slot 只让 LLM 生成 `slot/activity/place`，补 `response_language` 诊断字段 | Extended create 明显下降：国内约 18.0s -> 10.2s，海外约 33.8s -> 16.0s |
+| v5.11 双语观测闭环 | 验证英文/中英混合输入输出 | 新增 `bilingual` smoke，传递 `original_query` 保护语言判断，QA fast path 和 draft explanation 支持英文输出 | bilingual smoke 4/4 通过，draft language `{"en": 1, "zh-CN": 1}`，英文 QA 约 17ms |
 
 
 ---
@@ -238,7 +241,7 @@ lookup(messages)
 | 高   | EmbeddingProvider 未解耦 | `EMBEDDING_TYPE` 声明尚未接入缓存路径          | 抽象 embedding provider，支持 Ollama / sentence-transformers fallback |
 | 中   | FAISS 多进程不共享          | 当前是进程内索引                             | 个人项目可接受；多实例部署时评估 Qdrant                                          |
 | 中   | 请求去重非分布式              | 进程内 TTL guard                        | 多 worker 时改 Redis `SET NX`                                       |
-| 中   | Provider / Backfill 长尾样例不足 | 核心样例已过，普吉 extended 已降到 3 个 unresolved | 扩展巴黎、伦敦、新加坡、纽约等样例集；继续用 unresolved samples 表定点修复 |
+| 中   | Provider / Backfill 双语长尾仍明显 | 最新 bilingual smoke 中 backfill attempted 10 / filled 4 / unresolved 6 | 优先修英文/混合 POI 的 alias、bbox/score 拒绝和 negative cache 误伤 |
 | 中   | 前端进度透明度不足             | SSE 事件有了，但 UI 未充分展示 tool/provider 过程 | 展示 tool_result、阶段耗时、低置信度提示                                       |
 | 中   | Structured QP 样例量不足   | 30 条不足以默认开启                          | 扩展到 60-100 条再决定默认策略                                              |
 | 低   | QA fast path 覆盖面有限     | 当前优先覆盖 itinerary 结构内的天数、预算、某天安排        | 扩展交通/住宿/证据类本地回答，未命中再走 LLM                                      |
@@ -250,16 +253,18 @@ lookup(messages)
 
 推荐顺序：
 
-1. **扩展中英双语观测样例**
-   - 在 `observability_smoke.py` 的 extended 或新 case-set 中加入英文 query、中英混合 query、英文 QA/edit。
-   - 继续观察 `response_language`、`output_chars`、Backfill alias 和 Provider 命中。
+1. **Backfill 双语长尾样例小修**
+   - 最新 bilingual smoke 中，语言链路已闭环，但 backfill 仍为 attempted 10 / filled 4 / unresolved 6。
+   - 优先分析 `Phuket Weekend Market`、`Big Buddha Phuket`、`Patong Beach`、`Kan Eang@Pier` 等英文 POI 的 `bbox_rejected`、`score_rejected` 和 `cache_negative_hit`。
+   - 先做 alias / 查询词拆分 / negative cache key 策略的小步修复，再用 `bilingual` smoke 复测。
 2. **继续观测型性能分析测试**
    - `observability_summary.py` 已能统计 LLM、Provider、Backfill、QP、QA，并展示 `Backfill Unresolved Samples`。
-   - `observability_smoke.py` 已能按 `mini/extended` 调用 `/travel/query` 并保存 SSE 事件与单次 structured log 窗口。
-   - 推荐命令：`python -m scripts.observability_smoke --base-url http://127.0.0.1:8000 --user-id 1 --case-set extended`。
+   - `observability_smoke.py` 已能按 `mini/extended/bilingual` 调用 `/travel/query` 并保存 SSE 事件与单次 structured log 窗口。
+   - 推荐命令：`python -m scripts.observability_smoke --base-url http://127.0.0.1:8000 --user-id 1 --case-set bilingual`。
    - 详细说明见 [观测型性能分析测试](evaluation/观测型性能分析测试.md)。
-3. **Backfill 长尾样例小修**
+3. **扩展更多城市的双语 Provider 样例**
    - 优先修 `查龙寺/Wat Chalong`、`Maya Bay/玛雅湾` 等明确 POI alias 和 bbox 拒绝样例。
+   - 在普吉岛外扩展巴黎、伦敦、新加坡、纽约等英文/中英混合目的地，避免只对单城过拟合。
 4. **EmbeddingProvider 解耦**
   - 让 `EMBEDDING_TYPE` 真正生效。
   - Ollama 不可用时可走 `sentence-transformers` fallback。
@@ -327,7 +332,7 @@ lookup(messages)
 ## 9. 快速引用
 
 ```text
-核心结论：TravelMind 已从“完整生成但等待长”优化到“可渐进展示、可观测、可缓存复用、可按样例修复 backfill 质量、可控制 LLM 输出成本”的阶段；下一阶段重点是中英双语观测样例和海外 POI 长尾。
+核心结论：TravelMind 已从“完整生成但等待长”优化到“可渐进展示、可观测、可缓存复用、可按样例修复 backfill 质量、可控制 LLM 输出成本、可观测双语输入输出”的阶段；下一阶段重点是双语/海外 POI 长尾和更大样例评测。
 
 已完成：
 - 四节点 LangGraph + 条件边早退
@@ -339,10 +344,11 @@ lookup(messages)
 - Backfill unresolved samples 诊断表
 - 目的地清洗、POI alias、泛地点跳过与 provider 字段健壮性修复
 - LLM draft prompt/output 诊断与输出瘦身
-- `response_language` 诊断字段，为中英双语输入输出铺路
+- `response_language` 诊断字段与 `original_query` 语言链路
+- bilingual smoke 样例覆盖英文 create / QA / edit 和中英混合 POI
 
 剩余重点：
-- 扩展中英双语 smoke 样例，验证英文输入/输出与中英混合 POI
+- 优化双语/海外 POI backfill 长尾，降低 unresolved 和 negative cache 误伤
 - 用日志统计真实 P50/P95、retry 恢复率、cache hit 分布
 - 解耦 EmbeddingProvider
 - 扩展 Structured QP 和 Provider 真实样例
