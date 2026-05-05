@@ -395,6 +395,10 @@ def _build_backfill_unresolved_samples(events: list[ObservabilityEvent]) -> list
                 "provider_status_counts": payload.get("provider_status_counts") or {},
                 "candidate_count": int(_as_float(payload.get("candidate_count")) or 0),
                 "best_candidate_title": payload.get("best_candidate_title"),
+                "best_candidate_provider": payload.get("best_candidate_provider"),
+                "best_candidate_lat": _as_float(payload.get("best_candidate_lat")),
+                "best_candidate_lng": _as_float(payload.get("best_candidate_lng")),
+                "best_candidate_address": payload.get("best_candidate_address"),
                 "best_match_score": round(best_match_score, 4) if best_match_score is not None else None,
                 "elapsed_ms": _as_float(payload.get("elapsed_ms")),
             }
@@ -510,11 +514,20 @@ def render_markdown(summary: dict[str, Any]) -> str:
             [
                 "### Backfill Unresolved Samples",
                 "",
-                "| Place | Day | Slot | Destination | Reason | Provider Status | Candidates | Best Candidate | Best Score | Elapsed ms |",
-                "|-------|-----|------|-------------|--------|-----------------|------------|----------------|------------|------------|",
+                "| Place | Day | Slot | Destination | Reason | Provider Status | Candidates | Best Candidate | Candidate Geo | Candidate Address | Best Score | Elapsed ms |",
+                "|-------|-----|------|-------------|--------|-----------------|------------|----------------|---------------|-------------------|------------|------------|",
             ]
         )
         for sample in summary["backfill"]["unresolved_samples"]:
+            lat = sample.get("best_candidate_lat")
+            lng = sample.get("best_candidate_lng")
+            provider = sample.get("best_candidate_provider")
+            geo_parts = []
+            if lat is not None and lng is not None:
+                geo_parts.append(f"{lat},{lng}")
+            if provider:
+                geo_parts.append(str(provider))
+            candidate_geo = " / ".join(geo_parts)
             lines.append(
                 "| "
                 + " | ".join(
@@ -527,6 +540,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
                         _markdown_cell(json.dumps(sample.get("provider_status_counts") or {}, ensure_ascii=False)),
                         _markdown_cell(sample.get("candidate_count")),
                         _markdown_cell(sample.get("best_candidate_title")),
+                        _markdown_cell(candidate_geo),
+                        _markdown_cell(sample.get("best_candidate_address")),
                         _markdown_cell(sample.get("best_match_score")),
                         _markdown_cell(sample.get("elapsed_ms")),
                     ]

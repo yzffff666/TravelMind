@@ -171,6 +171,10 @@ class _BackfillDiagnostics:
     variants_tried: list[str] = field(default_factory=list)
     provider_status_counts: dict[str, int] = field(default_factory=dict)
     best_candidate_title: str | None = None
+    best_candidate_provider: str | None = None
+    best_candidate_lat: float | None = None
+    best_candidate_lng: float | None = None
+    best_candidate_address: Any = None
     best_match_score: float = 0.0
     candidate_count: int = 0
     rejected_bbox_count: int = 0
@@ -194,6 +198,10 @@ class _BackfillDiagnostics:
         if other.best_match_score > self.best_match_score:
             self.best_match_score = other.best_match_score
             self.best_candidate_title = other.best_candidate_title
+            self.best_candidate_provider = other.best_candidate_provider
+            self.best_candidate_lat = other.best_candidate_lat
+            self.best_candidate_lng = other.best_candidate_lng
+            self.best_candidate_address = other.best_candidate_address
 
     def mark_status(self, status: str) -> None:
         self.provider_status_counts[status] = self.provider_status_counts.get(status, 0) + 1
@@ -203,6 +211,10 @@ class _BackfillDiagnostics:
             "variants_tried": self.variants_tried,
             "provider_status_counts": self.provider_status_counts,
             "best_candidate_title": self.best_candidate_title,
+            "best_candidate_provider": self.best_candidate_provider,
+            "best_candidate_lat": self.best_candidate_lat,
+            "best_candidate_lng": self.best_candidate_lng,
+            "best_candidate_address": self.best_candidate_address,
             "best_match_score": round(self.best_match_score, 4),
             "candidate_count": self.candidate_count,
             "rejected_bbox_count": self.rejected_bbox_count,
@@ -563,6 +575,10 @@ class LocationBackfillService:
                 if score > diagnostics.best_match_score:
                     diagnostics.best_match_score = score
                     diagnostics.best_candidate_title = candidate.title
+                    diagnostics.best_candidate_provider = candidate.source
+                    diagnostics.best_candidate_lat = lat
+                    diagnostics.best_candidate_lng = lng
+                    diagnostics.best_candidate_address = candidate.extra.get("address")
                 if not is_coord_within_destination(destination, lat, lng):
                     diagnostics.rejected_bbox_count += 1
                     logger.info(
