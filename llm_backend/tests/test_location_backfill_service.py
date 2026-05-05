@@ -58,6 +58,26 @@ class FakeMapProvider:
                     extra={"lat": 7.880, "lng": 98.366, "address": "Phuket"},
                 ),
             ])
+        if keyword in {"Phuket Big Buddha", "Big Buddha Temple"}:
+            return ProviderResponse(candidates=[
+                ProviderCandidate(
+                    candidate_id="big-buddha-temple",
+                    source=self.name,
+                    title="Big Buddha Temple",
+                    snippet="Hilltop Buddha temple in Phuket",
+                    extra={"lat": 7.8276, "lng": 98.3128, "address": "Karon, Phuket"},
+                ),
+            ])
+        if keyword == "Kan Eang Restaurant":
+            return ProviderResponse(candidates=[
+                ProviderCandidate(
+                    candidate_id="kan-eang-restaurant",
+                    source=self.name,
+                    title="Kan Eang Restaurant - ร้านกันเอง",
+                    snippet="Seafood restaurant near Chalong Pier",
+                    extra={"lat": 7.8213, "lng": 98.3389, "address": "Chalong, Phuket"},
+                ),
+            ])
         if keyword != "上海外灘悦榕莊":
             return ProviderResponse()
         return ProviderResponse(candidates=[
@@ -251,6 +271,23 @@ def test_backfill_builds_phuket_old_town_aliases():
     assert "Phuket Old Town" in city_variants
 
 
+def test_backfill_builds_english_phuket_poi_aliases():
+    svc = _service_with_fake_provider()
+
+    big_buddha_variants = svc._build_variants("Big Buddha Phuket", "Phuket")
+    weekend_market_variants = svc._build_variants("Phuket Weekend Market", "Phuket")
+    kan_eang_variants = svc._build_variants("Kan Eang@Pier", "Phuket")
+    bangla_variants = svc._build_variants("Bangla Road", "Phuket")
+
+    assert "Phuket Big Buddha" in big_buddha_variants[:3]
+    assert "Big Buddha Temple" in big_buddha_variants
+    assert "Naka Weekend Market Phuket" in weekend_market_variants[:3]
+    assert "Naka Market Phuket" in weekend_market_variants
+    assert "Phuket Weekend Night Market" in weekend_market_variants
+    assert "Kan Eang Restaurant" in kan_eang_variants
+    assert "Bangla Road Patong" in bangla_variants
+
+
 def test_backfill_resolves_phuket_old_town_via_alias():
     _cache.clear()
     itinerary = ItineraryV1(
@@ -289,6 +326,46 @@ def test_backfill_resolves_boathouse_via_alias():
     assert report.filled == 1
     assert itinerary.days[0].slots[0].location is not None
     assert itinerary.days[0].slots[0].evidence_refs == ["ev-boathouse-restaurant"]
+
+
+def test_backfill_resolves_big_buddha_via_english_alias():
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-big-buddha",
+        revision_id="rev-big-buddha",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=3,
+            slots=[ItinerarySlot(slot="morning", activity="Visit the Big Buddha", place="Big Buddha Phuket")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_fake_provider().backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert itinerary.days[0].slots[0].location is not None
+    assert itinerary.days[0].slots[0].evidence_refs == ["ev-big-buddha-temple"]
+
+
+def test_backfill_resolves_kan_eang_via_english_alias():
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-kan-eang",
+        revision_id="rev-kan-eang",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=1,
+            slots=[ItinerarySlot(slot="evening", activity="Seafood dinner", place="Kan Eang@Pier")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_fake_provider().backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert itinerary.days[0].slots[0].location is not None
+    assert itinerary.days[0].slots[0].evidence_refs == ["ev-kan-eang-restaurant"]
 
 
 def test_backfill_cleans_specific_place_from_generic_alternative():
@@ -481,6 +558,13 @@ def test_backfill_diagnostics_distinguish_bbox_and_score_rejections():
     assert score_result.diagnostics.fallback_reason == "score_rejected"
     assert score_result.diagnostics.rejected_score_count == 2
     assert score_result.diagnostics.best_candidate_title == "Unrelated Museum"
+
+
+def test_backfill_english_token_subset_score_handles_canonical_titles():
+    svc = _service_with_fake_provider()
+
+    assert svc._match_score("Big Buddha Phuket", "Big Buddha Temple", "Karon, Phuket") >= 0.8
+    assert svc._match_score("Kan Eang@Pier", "Kan Eang Restaurant - ร้านกันเอง", "Chalong, Phuket") >= 0.8
 
 
 def test_backfill_tolerates_provider_list_address():

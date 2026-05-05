@@ -33,7 +33,22 @@ _PLACE_ALIASES = {
     "普吉老城": ["Old Phuket Town", "Phuket Old Town"],
     "普吉老镇": ["Old Phuket Town", "Phuket Old Town"],
     "普吉周末夜市": ["Naka Weekend Market", "Phuket Weekend Night Market"],
-    "Phuket Weekend Market": ["Naka Weekend Market", "Naka Market"],
+    "Phuket Weekend Market": [
+        "Naka Weekend Market Phuket",
+        "Naka Weekend Market",
+        "Naka Market",
+        "Naka Market Phuket",
+        "Phuket Weekend Night Market",
+        "Phuket Indy Night Market",
+    ],
+    "Big Buddha Phuket": [
+        "Phuket Big Buddha",
+        "The Big Buddha Phuket",
+        "Big Buddha Phuket Thailand",
+        "Big Buddha Temple",
+    ],
+    "Bangla Road": ["Bangla Road Patong", "Soi Bangla", "Bangla Walking Street"],
+    "Kan Eang@Pier": ["Kan Eang Restaurant", "Kan Eang at Pier", "Kan Eang @ Pier"],
     "The Boathouse Wine & Grill": ["The Boathouse Restaurant", "The Boathouse Phuket"],
 }
 
@@ -784,7 +799,34 @@ class LocationBackfillService:
             return 0.92
         if a and (p in a or t in a):
             return 0.8
+        token_score = LocationBackfillService._english_token_subset_score(place, title)
+        if token_score:
+            return token_score
         return SequenceMatcher(None, p, t).ratio()
+
+    @staticmethod
+    def _english_token_subset_score(place: str, title: str) -> float:
+        def tokens(value: str) -> set[str]:
+            stopwords = {"the", "at", "in", "on", "of", "and", "phuket"}
+            return {
+                token
+                for token in re.findall(r"[a-z0-9]+", (value or "").lower())
+                if token not in stopwords
+            }
+
+        place_tokens = tokens(place)
+        title_tokens = tokens(title)
+        if not place_tokens or not title_tokens:
+            return 0.0
+        overlap = place_tokens & title_tokens
+        if not overlap:
+            return 0.0
+        coverage = len(overlap) / min(len(place_tokens), len(title_tokens))
+        if coverage >= 1.0:
+            return 0.86
+        if coverage >= 2 / 3:
+            return 0.8
+        return 0.0
 
     @staticmethod
     def _normalize(value: object) -> str:
