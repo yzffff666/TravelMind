@@ -8,6 +8,7 @@ from scripts.observability_smoke import (
     _iter_log_events_since,
     _parse_sse_events,
     render_run_report,
+    write_candidate_decision_artifact,
 )
 
 
@@ -179,3 +180,52 @@ def test_iter_log_events_since_respects_end_offset(tmp_path):
     events = list(_iter_log_events_since(log_path, start, end))
 
     assert [event.event_type for event in events] == ["llm_draft_call"]
+
+
+def test_write_candidate_decision_artifact_exports_window_backfill_samples(tmp_path):
+    log_path = tmp_path / "structured.log"
+    old_line = json.dumps(
+        {
+            "record": {
+                "message": "location_backfill",
+                "extra": {"extra": {"event_type": "location_backfill", "source": "provider"}},
+            }
+        }
+    )
+    in_window = json.dumps(
+        {
+            "record": {
+                "message": "location_backfill",
+                "extra": {
+                    "extra": {
+                        "event_type": "location_backfill",
+                        "source": "unresolved",
+                        "place": "Big Buddha Phuket",
+                        "fallback_reason": "score_rejected",
+                        "best_candidate_title": "Big Buddha Temple",
+                        "best_match_score": 0.61,
+                    }
+                },
+            }
+        }
+    )
+    log_path.write_text(old_line + "\n", encoding="utf-8")
+    offset = _file_size(log_path)
+    with log_path.open("a", encoding="utf-8", newline="\n") as file:
+        file.write(in_window + "\n")
+
+    events = list(_iter_log_events_since(log_path, offset))
+    output_path = tmp_path / "candidate-decisions.jsonl"
+    summary_path = tmp_path / "candidate-decisions-summary.json"
+    count = write_candidate_decision_artifact(events, output_path, summary_path)
+
+    assert count == 1
+    rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
+    assert rows[0]["schema_version"] == "candidate_decision_v1"
+    assert rows[0]["decision"] == "rejected"
+    assert rows[0]["place"] == "Big Buddha Phuket"
+    assert rows[0]["risk_flags"] == ["score_rejected"]
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["total_samples"] == 1
+    assert summary["decision_counts"] == {"rejected": 1}
+    assert summary["risk_flag_counts"] == {"score_rejected": 1}

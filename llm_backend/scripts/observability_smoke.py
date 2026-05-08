@@ -18,6 +18,12 @@ from uuid import uuid4
 
 import httpx
 
+from scripts.export_candidate_decisions import (
+    export_candidate_decisions,
+    summarize_candidate_decisions,
+    write_json,
+    write_jsonl,
+)
 from scripts.observability_summary import parse_log_line, render_markdown, summarize_events
 
 
@@ -213,6 +219,18 @@ def _iter_log_events_since(path: Path, offset: int, end_offset: int | None = Non
                 yield event
 
 
+def write_candidate_decision_artifact(
+    events: list[Any],
+    output_path: Path,
+    summary_path: Path | None = None,
+) -> int:
+    samples = export_candidate_decisions(events)
+    count = write_jsonl(output_path, samples)
+    if summary_path:
+        write_json(summary_path, summarize_candidate_decisions(samples))
+    return count
+
+
 def run_case(
     client: httpx.Client,
     case: SmokeCase,
@@ -356,17 +374,23 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.structured_log.exists():
         structured_log_end_offset = _file_size(args.structured_log)
-        summary = summarize_events(
+        run_events = list(
             _iter_log_events_since(
                 args.structured_log,
                 structured_log_offset,
                 structured_log_end_offset,
             )
         )
+        summary = summarize_events(run_events)
         (run_dir / "observability-summary.md").write_text(
             render_markdown(summary),
             encoding="utf-8",
             newline="\n",
+        )
+        write_candidate_decision_artifact(
+            run_events,
+            run_dir / "candidate-decisions.jsonl",
+            run_dir / "candidate-decisions-summary.json",
         )
         (run_dir / "structured-log-window.json").write_text(
             json.dumps(

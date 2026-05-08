@@ -627,10 +627,22 @@ disable it and fall back to the last stable rule-based ranking configuration.
 
 ### Stage 1: Candidate Decision Baseline
 
+- 已新增 `scripts/export_candidate_decisions.py`，先从 `location_backfill` 结构化日志导出 `candidate_decision_v1` JSONL 样本，作为后续规则权重、badcase 分析和模型化前的数据资产。
+- `scripts/observability_smoke.py` 会在每次真实 smoke run 的日志窗口内自动生成 `candidate-decisions.jsonl`，避免全量日志重复导出，也让 extended/bilingual run 自然沉淀数据。
 - 新增 `POIFeature` / `CandidateFeature` schema。
 - 从 `ProviderCandidate`、`ScoredCandidate`、backfill diagnostics 中抽取统一特征。
 - `RankingScorer` 升级为 candidate quality scorer，输出 score breakdown、risk flags、accept/reject reason。
 - 在 `observability_summary.py` 中补 run 级质量指标。
+
+手动导出命令：
+
+```bash
+cd llm_backend
+python -m scripts.export_candidate_decisions \
+  --log logs/app.log \
+  --output reports/candidate-decisions.jsonl \
+  --summary-output reports/candidate-decisions-summary.json
+```
 
 ### Stage 2: Constraint-aware Planner Lite
 
