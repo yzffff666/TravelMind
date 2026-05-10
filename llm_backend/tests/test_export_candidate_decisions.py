@@ -177,16 +177,26 @@ def test_summarize_candidate_decisions_counts_quality_dimensions():
 
     assert summary["total_samples"] == 3
     assert summary["decision_counts"] == {"accepted": 1, "rejected": 1, "skipped": 1}
+    assert summary["decision_rates"] == {"accepted": 0.3333, "rejected": 0.3333, "skipped": 0.3333}
     assert summary["label_counts"] == {"rejected": 2, "accepted": 1}
+    assert summary["label_rates"] == {"rejected": 0.6667, "accepted": 0.3333}
     assert summary["risk_flag_counts"] == {
         "low_confidence": 2,
         "score_rejected": 1,
         "generic_activity": 1,
     }
+    assert summary["risk_flag_rates"] == {
+        "low_confidence": 0.6667,
+        "score_rejected": 0.3333,
+        "generic_activity": 0.3333,
+    }
     assert summary["destination_counts"] == {"Phuket": 2, "Chengdu": 1}
     assert summary["fallback_reason_counts"] == {"score_rejected": 1, "generic_activity": 1}
+    assert summary["fallback_reason_rates"] == {"score_rejected": 0.3333, "generic_activity": 0.3333}
     assert summary["match_score_avg"] == 0.765
+    assert summary["match_score_avg_by_decision"] == {"accepted": 0.92, "rejected": 0.61}
     assert summary["elapsed_ms_avg"] == 100.0
+    assert summary["elapsed_ms_avg_by_decision"] == {"accepted": 120.0, "rejected": 80.0}
 
 
 def test_write_json_creates_parent_and_writes_payload(tmp_path):

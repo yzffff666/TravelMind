@@ -124,12 +124,43 @@ def _compact_counter(counter: Counter) -> dict[str, int]:
     return {str(key): count for key, count in counter.most_common() if key not in {None, ""}}
 
 
+def _counter_rates(counter: Counter, total: int) -> dict[str, float]:
+    if total <= 0:
+        return {}
+    return {
+        str(key): round(count / total, 4)
+        for key, count in counter.most_common()
+        if key not in {None, ""}
+    }
+
+
+def _avg_by(samples: list[dict[str, Any]], *, key: str, value_key: str) -> dict[str, float]:
+    groups: dict[str, list[float]] = {}
+    for sample in samples:
+        group_key = sample.get(key)
+        value = _as_float(sample.get(value_key))
+        if group_key in {None, ""} or value is None:
+            continue
+        groups.setdefault(str(group_key), []).append(value)
+    return {
+        group_key: round(sum(values) / len(values), 4)
+        for group_key, values in sorted(groups.items())
+        if values
+    }
+
+
 def summarize_candidate_decisions(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
     sample_list = list(samples)
     risk_flags: Counter = Counter()
     for sample in sample_list:
         for flag in sample.get("risk_flags") or []:
             risk_flags[flag] += 1
+    total_samples = len(sample_list)
+    decision_counts = Counter(sample.get("decision") for sample in sample_list)
+    label_counts = Counter(sample.get("label") for sample in sample_list)
+    destination_counts = Counter(sample.get("destination") for sample in sample_list)
+    provider_counts = Counter(sample.get("candidate_provider") for sample in sample_list)
+    fallback_counts = Counter(sample.get("fallback_reason") for sample in sample_list)
 
     match_scores = [
         score
@@ -144,19 +175,21 @@ def summarize_candidate_decisions(samples: Iterable[dict[str, Any]]) -> dict[str
 
     return {
         "schema_version": SCHEMA_VERSION,
-        "total_samples": len(sample_list),
-        "decision_counts": _compact_counter(Counter(sample.get("decision") for sample in sample_list)),
-        "label_counts": _compact_counter(Counter(sample.get("label") for sample in sample_list)),
+        "total_samples": total_samples,
+        "decision_counts": _compact_counter(decision_counts),
+        "decision_rates": _counter_rates(decision_counts, total_samples),
+        "label_counts": _compact_counter(label_counts),
+        "label_rates": _counter_rates(label_counts, total_samples),
         "risk_flag_counts": _compact_counter(risk_flags),
-        "destination_counts": _compact_counter(Counter(sample.get("destination") for sample in sample_list)),
-        "candidate_provider_counts": _compact_counter(
-            Counter(sample.get("candidate_provider") for sample in sample_list)
-        ),
-        "fallback_reason_counts": _compact_counter(
-            Counter(sample.get("fallback_reason") for sample in sample_list)
-        ),
+        "risk_flag_rates": _counter_rates(risk_flags, total_samples),
+        "destination_counts": _compact_counter(destination_counts),
+        "candidate_provider_counts": _compact_counter(provider_counts),
+        "fallback_reason_counts": _compact_counter(fallback_counts),
+        "fallback_reason_rates": _counter_rates(fallback_counts, total_samples),
         "match_score_avg": round(sum(match_scores) / len(match_scores), 4) if match_scores else None,
+        "match_score_avg_by_decision": _avg_by(sample_list, key="decision", value_key="match_score"),
         "elapsed_ms_avg": round(sum(elapsed_values) / len(elapsed_values), 2) if elapsed_values else None,
+        "elapsed_ms_avg_by_decision": _avg_by(sample_list, key="decision", value_key="elapsed_ms"),
     }
 
 
