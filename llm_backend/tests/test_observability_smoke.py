@@ -219,12 +219,21 @@ def test_write_candidate_decision_artifact_exports_window_backfill_samples(tmp_p
     events = list(_iter_log_events_since(log_path, offset))
     output_path = tmp_path / "candidate-decisions.jsonl"
     summary_path = tmp_path / "candidate-decisions-summary.json"
+    badcase_markdown_path = tmp_path / "candidate-badcase-report.md"
+    badcase_json_path = tmp_path / "candidate-badcase-report.json"
     run_metadata = {
         "run_id": "20260509-211839",
         "case_set": "bilingual",
         "structured_log_start_offset": offset,
     }
-    count = write_candidate_decision_artifact(events, output_path, summary_path, run_metadata=run_metadata)
+    count = write_candidate_decision_artifact(
+        events,
+        output_path,
+        summary_path,
+        run_metadata=run_metadata,
+        badcase_markdown_path=badcase_markdown_path,
+        badcase_json_path=badcase_json_path,
+    )
 
     assert count == 1
     rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
@@ -237,6 +246,10 @@ def test_write_candidate_decision_artifact_exports_window_backfill_samples(tmp_p
     assert summary["decision_counts"] == {"rejected": 1}
     assert summary["risk_flag_counts"] == {"score_rejected": 1}
     assert summary["run_metadata"] == run_metadata
+    badcase_summary = json.loads(badcase_json_path.read_text(encoding="utf-8"))
+    assert badcase_summary["total_badcases"] == 1
+    assert badcase_summary["badcases"][0]["place"] == "Big Buddha Phuket"
+    assert "Candidate Badcase Report" in badcase_markdown_path.read_text(encoding="utf-8")
 
 
 def test_build_run_metadata_captures_dataset_provenance(tmp_path):

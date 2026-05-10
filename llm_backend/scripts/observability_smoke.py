@@ -23,6 +23,11 @@ from scripts.candidate_dataset_manifest import (
     write_json as write_manifest_json,
     write_markdown as write_manifest_markdown,
 )
+from scripts.candidate_badcase_report import (
+    build_badcase_report,
+    write_json as write_badcase_json,
+    write_markdown as write_badcase_markdown,
+)
 from scripts.export_candidate_decisions import (
     export_candidate_decisions,
     summarize_candidate_decisions,
@@ -229,6 +234,9 @@ def write_candidate_decision_artifact(
     output_path: Path,
     summary_path: Path | None = None,
     run_metadata: dict[str, Any] | None = None,
+    badcase_markdown_path: Path | None = None,
+    badcase_json_path: Path | None = None,
+    badcase_limit: int = 20,
 ) -> int:
     samples = export_candidate_decisions(events)
     count = write_jsonl(output_path, samples)
@@ -237,6 +245,12 @@ def write_candidate_decision_artifact(
         if run_metadata:
             summary["run_metadata"] = run_metadata
         write_candidate_json(summary_path, summary)
+    if badcase_markdown_path or badcase_json_path:
+        badcase_report = build_badcase_report(samples, limit=badcase_limit)
+        if badcase_markdown_path:
+            write_badcase_markdown(badcase_markdown_path, badcase_report)
+        if badcase_json_path:
+            write_badcase_json(badcase_json_path, badcase_report)
     return count
 
 
@@ -462,6 +476,8 @@ def main(argv: list[str] | None = None) -> int:
             run_dir / "candidate-decisions.jsonl",
             run_dir / "candidate-decisions-summary.json",
             run_metadata=run_metadata,
+            badcase_markdown_path=run_dir / "candidate-badcase-report.md",
+            badcase_json_path=run_dir / "candidate-badcase-report.json",
         )
         (run_dir / "structured-log-window.json").write_text(
             json.dumps(

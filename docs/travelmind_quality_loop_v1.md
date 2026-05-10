@@ -636,6 +636,7 @@ disable it and fall back to the last stable rule-based ranking configuration.
 - 新增 `scripts/candidate_dataset_manifest.py`，可扫描多个 `candidate-decisions-summary.json` 并生成 run 级 manifest，用于跨 smoke run 比较样本量、accepted/rejected rate、低置信度比例、bbox 通过率和 top risk flags。
 - `scripts/observability_smoke.py` 会在每次 run 结束后自动刷新当前 `--output-dir` 下的 `candidate-dataset-manifest.json/md`，让数据集索引随真实观测自然增长。
 - `candidate-dataset-manifest` 已补充相邻 run 的 `deltas`，用于快速观察 accepted/rejected rate、低置信度、bbox 通过率、match score 和耗时是否相对上一批样本改善。
+- 新增 `scripts/candidate_badcase_report.py`，并由 smoke run 自动生成 `candidate-badcase-report.md/json`，把 rejected/skipped/risky 样本按可行动优先级排序，方便人工 audit 后决定 alias、bbox、query rewrite 或 provider timeout 的下一步优化。
 - 新增 `POIFeature` / `CandidateFeature` schema。
 - 从 `ProviderCandidate`、`ScoredCandidate`、backfill diagnostics 中抽取统一特征。
 - `RankingScorer` 升级为 candidate quality scorer，输出 score breakdown、risk flags、accept/reject reason。
