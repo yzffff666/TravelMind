@@ -11,7 +11,7 @@ import argparse
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -223,12 +223,55 @@ def write_candidate_decision_artifact(
     events: list[Any],
     output_path: Path,
     summary_path: Path | None = None,
+    run_metadata: dict[str, Any] | None = None,
 ) -> int:
     samples = export_candidate_decisions(events)
     count = write_jsonl(output_path, samples)
     if summary_path:
-        write_json(summary_path, summarize_candidate_decisions(samples))
+        summary = summarize_candidate_decisions(samples)
+        if run_metadata:
+            summary["run_metadata"] = run_metadata
+        write_json(summary_path, summary)
     return count
+
+
+def build_run_metadata(
+    *,
+    run_dir: Path,
+    base_url: str,
+    query_path: str,
+    case_set: str,
+    user_id: int,
+    timeout_seconds: float,
+    structured_log: Path,
+    structured_log_start_offset: int,
+    structured_log_end_offset: int | None,
+    results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "run_id": run_dir.name,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "base_url": base_url,
+        "query_path": query_path,
+        "case_set": case_set,
+        "user_id": user_id,
+        "timeout_seconds": timeout_seconds,
+        "structured_log": str(structured_log),
+        "structured_log_start_offset": structured_log_start_offset,
+        "structured_log_end_offset": structured_log_end_offset,
+        "case_count": len(results),
+        "cases": [
+            {
+                "name": result.get("name"),
+                "conversation_alias": result.get("conversation_alias"),
+                "conversation_id": result.get("conversation_id"),
+                "elapsed_ms": result.get("elapsed_ms"),
+                "event_count": result.get("event_count"),
+                "missing_expected_events": result.get("missing_expected_events") or [],
+            }
+            for result in results
+        ],
+    }
 
 
 def run_case(
@@ -372,8 +415,23 @@ def main(argv: list[str] | None = None) -> int:
         newline="\n",
     )
 
+    structured_log_end_offset: int | None = None
+    run_metadata = build_run_metadata(
+        run_dir=run_dir,
+        base_url=args.base_url,
+        query_path=args.query_path,
+        case_set=args.case_set,
+        user_id=args.user_id,
+        timeout_seconds=args.timeout,
+        structured_log=args.structured_log,
+        structured_log_start_offset=structured_log_offset,
+        structured_log_end_offset=None,
+        results=results,
+    )
+
     if args.structured_log.exists():
         structured_log_end_offset = _file_size(args.structured_log)
+        run_metadata["structured_log_end_offset"] = structured_log_end_offset
         run_events = list(
             _iter_log_events_since(
                 args.structured_log,
@@ -391,6 +449,7 @@ def main(argv: list[str] | None = None) -> int:
             run_events,
             run_dir / "candidate-decisions.jsonl",
             run_dir / "candidate-decisions-summary.json",
+            run_metadata=run_metadata,
         )
         (run_dir / "structured-log-window.json").write_text(
             json.dumps(
@@ -406,6 +465,12 @@ def main(argv: list[str] | None = None) -> int:
             encoding="utf-8",
             newline="\n",
         )
+
+    (run_dir / "run-metadata.json").write_text(
+        json.dumps(run_metadata, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
     print(f"Observation smoke artifacts written to: {run_dir}")
     return 0

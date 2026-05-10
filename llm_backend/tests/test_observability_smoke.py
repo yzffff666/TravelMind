@@ -7,6 +7,7 @@ from scripts.observability_smoke import (
     _file_size,
     _iter_log_events_since,
     _parse_sse_events,
+    build_run_metadata,
     render_run_report,
     write_candidate_decision_artifact,
 )
@@ -217,7 +218,12 @@ def test_write_candidate_decision_artifact_exports_window_backfill_samples(tmp_p
     events = list(_iter_log_events_since(log_path, offset))
     output_path = tmp_path / "candidate-decisions.jsonl"
     summary_path = tmp_path / "candidate-decisions-summary.json"
-    count = write_candidate_decision_artifact(events, output_path, summary_path)
+    run_metadata = {
+        "run_id": "20260509-211839",
+        "case_set": "bilingual",
+        "structured_log_start_offset": offset,
+    }
+    count = write_candidate_decision_artifact(events, output_path, summary_path, run_metadata=run_metadata)
 
     assert count == 1
     rows = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
@@ -229,3 +235,46 @@ def test_write_candidate_decision_artifact_exports_window_backfill_samples(tmp_p
     assert summary["total_samples"] == 1
     assert summary["decision_counts"] == {"rejected": 1}
     assert summary["risk_flag_counts"] == {"score_rejected": 1}
+    assert summary["run_metadata"] == run_metadata
+
+
+def test_build_run_metadata_captures_dataset_provenance(tmp_path):
+    run_dir = tmp_path / "reports" / "20260509-211839"
+    metadata = build_run_metadata(
+        run_dir=run_dir,
+        base_url="http://127.0.0.1:8028",
+        query_path="/api/travel/query",
+        case_set="bilingual",
+        user_id=1,
+        timeout_seconds=300,
+        structured_log=tmp_path / "logs" / "structured.log",
+        structured_log_start_offset=10,
+        structured_log_end_offset=99,
+        results=[
+            {
+                "name": "english_create",
+                "conversation_alias": "english",
+                "conversation_id": "conv-1",
+                "elapsed_ms": 123.4,
+                "event_count": 10,
+                "missing_expected_events": [],
+                "event_names": ["intent_routed", "final_itinerary"],
+            }
+        ],
+    )
+
+    assert metadata["run_id"] == "20260509-211839"
+    assert metadata["case_set"] == "bilingual"
+    assert metadata["structured_log_start_offset"] == 10
+    assert metadata["structured_log_end_offset"] == 99
+    assert metadata["cases"] == [
+        {
+            "name": "english_create",
+            "conversation_alias": "english",
+            "conversation_id": "conv-1",
+            "elapsed_ms": 123.4,
+            "event_count": 10,
+            "missing_expected_events": [],
+        }
+    ]
+    assert "generated_at" in metadata
