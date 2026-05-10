@@ -62,6 +62,21 @@ def test_exports_accepted_provider_backfill_sample():
     assert sample["candidate_provider"] == "serp_map"
     assert sample["bbox_valid"] is True
     assert sample["match_score"] == 0.92
+    assert sample["quality_breakdown"] == {
+        "decision": "accepted",
+        "match_score": 0.92,
+        "title_similarity": 1.0,
+        "english_token_overlap": 1.0,
+        "title_contains_place": True,
+        "place_contains_title": True,
+        "address_contains_destination": True,
+        "has_candidate_geo": True,
+        "bbox_valid": True,
+        "confidence": "high",
+        "is_low_confidence": False,
+        "fallback_reason": None,
+        "candidate_provider": "serp_map",
+    }
     assert sample["source_log"] == "logs/structured.log"
 
 
@@ -105,6 +120,9 @@ def test_exports_rejected_unresolved_sample_with_risk_flags():
         "cache_negative_hit",
         "variant_limit_reached",
     ]
+    assert sample["quality_breakdown"]["address_contains_destination"] is True
+    assert sample["quality_breakdown"]["has_candidate_geo"] is True
+    assert sample["quality_breakdown"]["is_low_confidence"] is True
 
 
 def test_exports_skipped_generic_activity_sample():
@@ -151,6 +169,12 @@ def test_summarize_candidate_decisions_counts_quality_dimensions():
                 "destination": "Phuket",
                 "candidate_provider": "serp_map",
                 "risk_flags": [],
+                "quality_breakdown": {
+                    "title_similarity": 0.9,
+                    "has_candidate_geo": True,
+                    "bbox_valid": True,
+                    "is_low_confidence": False,
+                },
                 "match_score": 0.92,
                 "elapsed_ms": 120,
             },
@@ -161,6 +185,12 @@ def test_summarize_candidate_decisions_counts_quality_dimensions():
                 "candidate_provider": "serp_map",
                 "fallback_reason": "score_rejected",
                 "risk_flags": ["score_rejected", "low_confidence"],
+                "quality_breakdown": {
+                    "title_similarity": 0.4,
+                    "has_candidate_geo": True,
+                    "bbox_valid": False,
+                    "is_low_confidence": True,
+                },
                 "match_score": 0.61,
                 "elapsed_ms": 80,
             },
@@ -171,6 +201,10 @@ def test_summarize_candidate_decisions_counts_quality_dimensions():
                 "candidate_provider": "skipped",
                 "fallback_reason": "generic_activity",
                 "risk_flags": ["generic_activity", "low_confidence"],
+                "quality_breakdown": {
+                    "has_candidate_geo": False,
+                    "is_low_confidence": True,
+                },
             },
         ]
     )
@@ -197,6 +231,12 @@ def test_summarize_candidate_decisions_counts_quality_dimensions():
     assert summary["match_score_avg_by_decision"] == {"accepted": 0.92, "rejected": 0.61}
     assert summary["elapsed_ms_avg"] == 100.0
     assert summary["elapsed_ms_avg_by_decision"] == {"accepted": 120.0, "rejected": 80.0}
+    assert summary["quality_breakdown_avg"] == {
+        "title_similarity": 0.65,
+        "has_candidate_geo": 0.6667,
+        "bbox_valid": 0.5,
+        "is_low_confidence": 0.6667,
+    }
 
 
 def test_write_json_creates_parent_and_writes_payload(tmp_path):

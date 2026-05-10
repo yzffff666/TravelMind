@@ -630,6 +630,7 @@ disable it and fall back to the last stable rule-based ranking configuration.
 - 已新增 `scripts/export_candidate_decisions.py`，先从 `location_backfill` 结构化日志导出 `candidate_decision_v1` JSONL 样本，作为后续规则权重、badcase 分析和模型化前的数据资产。
 - `scripts/observability_smoke.py` 会在每次真实 smoke run 的日志窗口内自动生成 `candidate-decisions.jsonl`，避免全量日志重复导出，也让 extended/bilingual run 自然沉淀数据。
 - `candidate-decisions-summary.json` 已补充 `decision_rates`、`label_rates`、`risk_flag_rates`、`fallback_reason_rates`，以及按 `decision` 分组的 `match_score` / `elapsed_ms` 均值，便于跨 smoke run 对比候选决策质量。
+- `candidate_decision_v1` 样本已补充 `quality_breakdown`，包括 `title_similarity`、`english_token_overlap`、`address_contains_destination`、`has_candidate_geo`、`bbox_valid`、`is_low_confidence` 等 log-only 特征；summary 同步输出 `quality_breakdown_avg`，让数据集积累从“结果标签”推进到“可解释特征”。
 - 新增 `POIFeature` / `CandidateFeature` schema。
 - 从 `ProviderCandidate`、`ScoredCandidate`、backfill diagnostics 中抽取统一特征。
 - `RankingScorer` 升级为 candidate quality scorer，输出 score breakdown、risk flags、accept/reject reason。

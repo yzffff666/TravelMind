@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import Counter
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -19,6 +21,91 @@ from scripts.observability_summary import ObservabilityEvent, _as_bool, _as_floa
 
 
 SCHEMA_VERSION = "candidate_decision_v1"
+
+
+def _normalize_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple, set)):
+        value = " ".join(str(item) for item in value if item is not None)
+    elif isinstance(value, dict):
+        value = " ".join(str(item) for item in value.values() if item is not None)
+    else:
+        value = str(value)
+    value = value.lower().strip()
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", value)
+
+
+def _english_tokens(value: object) -> set[str]:
+    stopwords = {"the", "at", "in", "on", "of", "and", "phuket"}
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", str(value or "").lower())
+        if token not in stopwords
+    }
+
+
+def _ratio(left: object, right: object) -> float | None:
+    left_norm = _normalize_text(left)
+    right_norm = _normalize_text(right)
+    if not left_norm or not right_norm:
+        return None
+    return round(SequenceMatcher(None, left_norm, right_norm).ratio(), 4)
+
+
+def _token_overlap_ratio(place: object, title: object) -> float | None:
+    place_tokens = _english_tokens(place)
+    title_tokens = _english_tokens(title)
+    if not place_tokens or not title_tokens:
+        return None
+    return round(len(place_tokens & title_tokens) / len(place_tokens | title_tokens), 4)
+
+
+def _contains_normalized(container: object, needle: object) -> bool | None:
+    container_norm = _normalize_text(container)
+    needle_norm = _normalize_text(needle)
+    if not container_norm or not needle_norm:
+        return None
+    return needle_norm in container_norm
+
+
+def _quality_breakdown(
+    *,
+    payload: dict[str, Any],
+    decision: str,
+    place: object,
+    candidate_title: object,
+    candidate_lat: float | None,
+    candidate_lng: float | None,
+    candidate_address: object,
+    bbox_valid: bool,
+    match_score: float | None,
+) -> dict[str, Any]:
+    destination = payload.get("destination")
+    confidence = payload.get("confidence")
+    title_similarity = _ratio(place, candidate_title)
+    address_contains_destination = _contains_normalized(candidate_address, destination)
+    title_contains_place = _contains_normalized(candidate_title, place)
+    place_contains_title = _contains_normalized(place, candidate_title)
+    token_overlap = _token_overlap_ratio(place, candidate_title)
+
+    return {
+        "decision": decision,
+        "match_score": match_score,
+        "title_similarity": title_similarity,
+        "english_token_overlap": token_overlap,
+        "title_contains_place": title_contains_place,
+        "place_contains_title": place_contains_title,
+        "address_contains_destination": address_contains_destination,
+        "has_candidate_geo": candidate_lat is not None and candidate_lng is not None,
+        "bbox_valid": bbox_valid,
+        "confidence": confidence,
+        "is_low_confidence": confidence == "low",
+        "fallback_reason": payload.get("fallback_reason"),
+        "candidate_provider": payload.get("provider")
+        or payload.get("best_candidate_provider")
+        or payload.get("source"),
+    }
 
 
 def _risk_flags(payload: dict[str, Any], decision: str) -> list[str]:
@@ -72,6 +159,13 @@ def event_to_candidate_decision(event: ObservabilityEvent) -> dict[str, Any] | N
     decision = _decision_from_source(payload)
     best_match_score = _as_float(payload.get("best_match_score"))
     match_score = _as_float(payload.get("match_score"))
+    place = payload.get("place") or payload.get("activity")
+    candidate_title = payload.get("candidate_title") or payload.get("best_candidate_title")
+    candidate_lat = _as_float(payload.get("lat") or payload.get("best_candidate_lat"))
+    candidate_lng = _as_float(payload.get("lng") or payload.get("best_candidate_lng"))
+    candidate_address = payload.get("address") or payload.get("best_candidate_address")
+    bbox_valid = _as_bool(payload.get("bbox_valid"))
+    sample_match_score = match_score if match_score is not None else best_match_score
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -86,17 +180,28 @@ def event_to_candidate_decision(event: ObservabilityEvent) -> dict[str, Any] | N
         "day_index": payload.get("day_index"),
         "slot_label": payload.get("slot_label"),
         "activity": payload.get("activity"),
-        "place": payload.get("place") or payload.get("activity"),
-        "candidate_title": payload.get("candidate_title") or payload.get("best_candidate_title"),
+        "place": place,
+        "candidate_title": candidate_title,
         "candidate_provider": payload.get("provider")
         or payload.get("best_candidate_provider")
         or payload.get("source"),
-        "candidate_lat": _as_float(payload.get("lat") or payload.get("best_candidate_lat")),
-        "candidate_lng": _as_float(payload.get("lng") or payload.get("best_candidate_lng")),
-        "candidate_address": payload.get("address") or payload.get("best_candidate_address"),
-        "bbox_valid": _as_bool(payload.get("bbox_valid")),
+        "candidate_lat": candidate_lat,
+        "candidate_lng": candidate_lng,
+        "candidate_address": candidate_address,
+        "bbox_valid": bbox_valid,
         "confidence": payload.get("confidence"),
-        "match_score": match_score if match_score is not None else best_match_score,
+        "match_score": sample_match_score,
+        "quality_breakdown": _quality_breakdown(
+            payload=payload,
+            decision=decision,
+            place=place,
+            candidate_title=candidate_title,
+            candidate_lat=candidate_lat,
+            candidate_lng=candidate_lng,
+            candidate_address=candidate_address,
+            bbox_valid=bbox_valid,
+            match_score=sample_match_score,
+        ),
         "fallback_reason": payload.get("fallback_reason"),
         "provider_status_counts": payload.get("provider_status_counts") or {},
         "candidate_count": int(_as_float(payload.get("candidate_count")) or 0),
@@ -149,6 +254,33 @@ def _avg_by(samples: list[dict[str, Any]], *, key: str, value_key: str) -> dict[
     }
 
 
+def _breakdown_averages(samples: list[dict[str, Any]]) -> dict[str, float]:
+    fields = (
+        "title_similarity",
+        "english_token_overlap",
+        "title_contains_place",
+        "place_contains_title",
+        "address_contains_destination",
+        "has_candidate_geo",
+        "bbox_valid",
+        "is_low_confidence",
+    )
+    values_by_field: dict[str, list[float]] = {field: [] for field in fields}
+    for sample in samples:
+        breakdown = sample.get("quality_breakdown") or {}
+        for field in fields:
+            value = breakdown.get(field)
+            if isinstance(value, bool):
+                values_by_field[field].append(1.0 if value else 0.0)
+            elif (number := _as_float(value)) is not None:
+                values_by_field[field].append(number)
+    return {
+        field: round(sum(values) / len(values), 4)
+        for field, values in values_by_field.items()
+        if values
+    }
+
+
 def summarize_candidate_decisions(samples: Iterable[dict[str, Any]]) -> dict[str, Any]:
     sample_list = list(samples)
     risk_flags: Counter = Counter()
@@ -190,6 +322,7 @@ def summarize_candidate_decisions(samples: Iterable[dict[str, Any]]) -> dict[str
         "match_score_avg_by_decision": _avg_by(sample_list, key="decision", value_key="match_score"),
         "elapsed_ms_avg": round(sum(elapsed_values) / len(elapsed_values), 2) if elapsed_values else None,
         "elapsed_ms_avg_by_decision": _avg_by(sample_list, key="decision", value_key="elapsed_ms"),
+        "quality_breakdown_avg": _breakdown_averages(sample_list),
     }
 
 
