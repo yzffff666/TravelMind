@@ -631,6 +631,7 @@ disable it and fall back to the last stable rule-based ranking configuration.
 - `scripts/observability_smoke.py` 会在每次真实 smoke run 的日志窗口内自动生成 `candidate-decisions.jsonl`，避免全量日志重复导出，也让 extended/bilingual run 自然沉淀数据。
 - `candidate-decisions-summary.json` 已补充 `decision_rates`、`label_rates`、`risk_flag_rates`、`fallback_reason_rates`，以及按 `decision` 分组的 `match_score` / `elapsed_ms` 均值，便于跨 smoke run 对比候选决策质量。
 - `candidate_decision_v1` 样本已补充 `quality_breakdown`，包括 `title_similarity`、`english_token_overlap`、`address_contains_destination`、`has_candidate_geo`、`bbox_valid`、`is_low_confidence` 等 log-only 特征；summary 同步输出 `quality_breakdown_avg`，让数据集积累从“结果标签”推进到“可解释特征”。
+- Backfill diagnostics 会记录第一个可定位候选，即使其文本匹配分为 0，避免 `score_rejected` 样本缺失 `candidate_title/provider/geo`，便于后续人工 audit。
 - 每次 smoke run 会额外生成 `run-metadata.json`，并把同一份 `run_metadata` 写入 `candidate-decisions-summary.json`，记录 `case_set`、请求路径、日志窗口 offset、case 耗时和 conversation id，避免后续多批 JSONL 合并时丢失数据来源。
 - 新增 `scripts/candidate_dataset_manifest.py`，可扫描多个 `candidate-decisions-summary.json` 并生成 run 级 manifest，用于跨 smoke run 比较样本量、accepted/rejected rate、低置信度比例、bbox 通过率和 top risk flags。
 - `scripts/observability_smoke.py` 会在每次 run 结束后自动刷新当前 `--output-dir` 下的 `candidate-dataset-manifest.json/md`，让数据集索引随真实观测自然增长。

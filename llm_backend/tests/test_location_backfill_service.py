@@ -168,6 +168,21 @@ class LowScoreMapProvider:
         ])
 
 
+class ZeroScoreMapProvider:
+    name = "zero_score_map"
+
+    async def nearby_poi(self, *, city, keywords, top_k=20, context=None):
+        return ProviderResponse(candidates=[
+            ProviderCandidate(
+                candidate_id="zero-score",
+                source=self.name,
+                title="xyz",
+                snippet="in bounds but no text overlap",
+                extra={"lat": 7.88, "lng": 98.39, "address": "Phuket"},
+            )
+        ])
+
+
 class ListAddressMapProvider:
     name = "list_address_map"
 
@@ -558,6 +573,26 @@ def test_backfill_diagnostics_distinguish_bbox_and_score_rejections():
     assert score_result.diagnostics.fallback_reason == "score_rejected"
     assert score_result.diagnostics.rejected_score_count == 2
     assert score_result.diagnostics.best_candidate_title == "Unrelated Museum"
+
+
+def test_backfill_diagnostics_records_zero_score_candidate_for_audit():
+    _cache.clear()
+
+    result = asyncio.run(
+        _service_with_provider(ZeroScoreMapProvider(), max_variants_per_place=1)._resolve_place(
+            "abc",
+            "Phuket",
+            time.perf_counter(),
+        )
+    )
+
+    assert result.resolved is None
+    assert result.diagnostics.fallback_reason == "score_rejected"
+    assert result.diagnostics.best_candidate_title == "xyz"
+    assert result.diagnostics.best_candidate_provider == "zero_score_map"
+    assert result.diagnostics.best_candidate_lat == 7.88
+    assert result.diagnostics.best_candidate_lng == 98.39
+    assert result.diagnostics.best_match_score == 0.0
 
 
 def test_backfill_english_token_subset_score_handles_canonical_titles():

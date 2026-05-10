@@ -195,7 +195,7 @@ class _BackfillDiagnostics:
         self.cache_hit_count += other.cache_hit_count
         self.cache_negative_hit_count += other.cache_negative_hit_count
         self.variant_limit_reached = self.variant_limit_reached or other.variant_limit_reached
-        if other.best_match_score > self.best_match_score:
+        if other.best_match_score > self.best_match_score or self.best_candidate_title is None:
             self.best_match_score = other.best_match_score
             self.best_candidate_title = other.best_candidate_title
             self.best_candidate_provider = other.best_candidate_provider
@@ -572,7 +572,7 @@ class LocationBackfillService:
                     self._match_score(place, candidate.title or "", candidate.extra.get("address", "")),
                     self._match_score(variant, candidate.title or "", candidate.extra.get("address", "")),
                 )
-                if score > diagnostics.best_match_score:
+                if score > diagnostics.best_match_score or diagnostics.best_candidate_title is None:
                     diagnostics.best_match_score = score
                     diagnostics.best_candidate_title = candidate.title
                     diagnostics.best_candidate_provider = candidate.source
