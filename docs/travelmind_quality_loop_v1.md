@@ -633,6 +633,7 @@ disable it and fall back to the last stable rule-based ranking configuration.
 - `candidate_decision_v1` 样本已补充 `quality_breakdown`，包括 `title_similarity`、`english_token_overlap`、`address_contains_destination`、`has_candidate_geo`、`bbox_valid`、`is_low_confidence` 等 log-only 特征；summary 同步输出 `quality_breakdown_avg`，让数据集积累从“结果标签”推进到“可解释特征”。
 - 每次 smoke run 会额外生成 `run-metadata.json`，并把同一份 `run_metadata` 写入 `candidate-decisions-summary.json`，记录 `case_set`、请求路径、日志窗口 offset、case 耗时和 conversation id，避免后续多批 JSONL 合并时丢失数据来源。
 - 新增 `scripts/candidate_dataset_manifest.py`，可扫描多个 `candidate-decisions-summary.json` 并生成 run 级 manifest，用于跨 smoke run 比较样本量、accepted/rejected rate、低置信度比例、bbox 通过率和 top risk flags。
+- `scripts/observability_smoke.py` 会在每次 run 结束后自动刷新当前 `--output-dir` 下的 `candidate-dataset-manifest.json/md`，让数据集索引随真实观测自然增长。
 - 新增 `POIFeature` / `CandidateFeature` schema。
 - 从 `ProviderCandidate`、`ScoredCandidate`、backfill diagnostics 中抽取统一特征。
 - `RankingScorer` 升级为 candidate quality scorer，输出 score breakdown、risk flags、accept/reject reason。

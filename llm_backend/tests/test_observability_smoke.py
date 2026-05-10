@@ -9,6 +9,7 @@ from scripts.observability_smoke import (
     _parse_sse_events,
     build_run_metadata,
     render_run_report,
+    write_candidate_dataset_manifest_artifacts,
     write_candidate_decision_artifact,
 )
 
@@ -278,3 +279,29 @@ def test_build_run_metadata_captures_dataset_provenance(tmp_path):
         }
     ]
     assert "generated_at" in metadata
+
+
+def test_write_candidate_dataset_manifest_artifacts_indexes_output_dir(tmp_path):
+    summary_path = tmp_path / "20260509-211839" / "candidate-decisions-summary.json"
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text(
+        json.dumps(
+            {
+                "total_samples": 13,
+                "decision_rates": {"accepted": 0.5385, "rejected": 0.4615},
+                "risk_flag_counts": {"score_rejected": 11},
+                "run_metadata": {"run_id": "20260509-211839", "case_set": "bilingual"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = write_candidate_dataset_manifest_artifacts(tmp_path)
+
+    assert manifest["total_runs"] == 1
+    assert manifest["total_samples"] == 13
+    assert (tmp_path / "candidate-dataset-manifest.json").exists()
+    markdown = (tmp_path / "candidate-dataset-manifest.md").read_text(encoding="utf-8")
+    assert "20260509-211839" in markdown
+    assert "score_rejected:11" in markdown

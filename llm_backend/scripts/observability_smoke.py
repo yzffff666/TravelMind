@@ -18,10 +18,15 @@ from uuid import uuid4
 
 import httpx
 
+from scripts.candidate_dataset_manifest import (
+    collect_manifest,
+    write_json as write_manifest_json,
+    write_markdown as write_manifest_markdown,
+)
 from scripts.export_candidate_decisions import (
     export_candidate_decisions,
     summarize_candidate_decisions,
-    write_json,
+    write_json as write_candidate_json,
     write_jsonl,
 )
 from scripts.observability_summary import parse_log_line, render_markdown, summarize_events
@@ -231,8 +236,15 @@ def write_candidate_decision_artifact(
         summary = summarize_candidate_decisions(samples)
         if run_metadata:
             summary["run_metadata"] = run_metadata
-        write_json(summary_path, summary)
+        write_candidate_json(summary_path, summary)
     return count
+
+
+def write_candidate_dataset_manifest_artifacts(root: Path) -> dict[str, Any]:
+    manifest = collect_manifest(root)
+    write_manifest_json(root / "candidate-dataset-manifest.json", manifest)
+    write_manifest_markdown(root / "candidate-dataset-manifest.md", manifest)
+    return manifest
 
 
 def build_run_metadata(
@@ -471,6 +483,7 @@ def main(argv: list[str] | None = None) -> int:
         encoding="utf-8",
         newline="\n",
     )
+    write_candidate_dataset_manifest_artifacts(args.output_dir)
 
     print(f"Observation smoke artifacts written to: {run_dir}")
     return 0
