@@ -39,7 +39,6 @@ _PLACE_ALIASES = {
         "Naka Market",
         "Naka Market Phuket",
         "Phuket Weekend Night Market",
-        "Phuket Indy Night Market",
     ],
     "Big Buddha Phuket": [
         "Phuket Big Buddha",
@@ -48,6 +47,8 @@ _PLACE_ALIASES = {
         "Big Buddha Temple",
     ],
     "Bangla Road": ["Bangla Road Patong", "Soi Bangla", "Bangla Walking Street"],
+    "Thalang Road": ["Thanon Talang", "Thalang Road Phuket"],
+    "Racha Island": ["Goh Raja Yai", "Ko Racha Yai", "Koh Racha Yai", "Racha Yai Island"],
     "Kan Eang@Pier": ["Kan Eang Restaurant", "Kan Eang at Pier", "Kan Eang @ Pier"],
     "The Boathouse Wine & Grill": ["The Boathouse Restaurant", "The Boathouse Phuket"],
 }

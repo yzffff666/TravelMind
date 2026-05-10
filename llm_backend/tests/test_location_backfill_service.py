@@ -58,6 +58,26 @@ class FakeMapProvider:
                     extra={"lat": 7.880, "lng": 98.366, "address": "Phuket"},
                 ),
             ])
+        if keyword == "Thanon Talang":
+            return ProviderResponse(candidates=[
+                ProviderCandidate(
+                    candidate_id="thanon-talang",
+                    source=self.name,
+                    title="Thanon Talang",
+                    snippet="Historic street in Phuket Old Town",
+                    extra={"lat": 7.8847, "lng": 98.3898, "address": "Talat Yai, Phuket"},
+                ),
+            ])
+        if keyword == "Goh Raja Yai":
+            return ProviderResponse(candidates=[
+                ProviderCandidate(
+                    candidate_id="goh-raja-yai",
+                    source=self.name,
+                    title="Goh Raja Yai",
+                    snippet="Racha Yai island day trip from Phuket",
+                    extra={"lat": 7.6038, "lng": 98.3664, "address": "Rawai, Phuket"},
+                ),
+            ])
         if keyword in {"Phuket Big Buddha", "Big Buddha Temple"}:
             return ProviderResponse(candidates=[
                 ProviderCandidate(
@@ -293,14 +313,20 @@ def test_backfill_builds_english_phuket_poi_aliases():
     weekend_market_variants = svc._build_variants("Phuket Weekend Market", "Phuket")
     kan_eang_variants = svc._build_variants("Kan Eang@Pier", "Phuket")
     bangla_variants = svc._build_variants("Bangla Road", "Phuket")
+    thalang_variants = svc._build_variants("Thalang Road", "Phuket")
+    racha_variants = svc._build_variants("Racha Island", "Phuket")
 
     assert "Phuket Big Buddha" in big_buddha_variants[:3]
     assert "Big Buddha Temple" in big_buddha_variants
     assert "Naka Weekend Market Phuket" in weekend_market_variants[:3]
     assert "Naka Market Phuket" in weekend_market_variants
     assert "Phuket Weekend Night Market" in weekend_market_variants
+    assert "Phuket Indy Night Market" not in weekend_market_variants
     assert "Kan Eang Restaurant" in kan_eang_variants
     assert "Bangla Road Patong" in bangla_variants
+    assert "Thanon Talang" in thalang_variants
+    assert "Goh Raja Yai" in racha_variants
+    assert "Koh Racha Yai" in racha_variants
 
 
 def test_backfill_resolves_phuket_old_town_via_alias():
@@ -361,6 +387,46 @@ def test_backfill_resolves_big_buddha_via_english_alias():
     assert report.filled == 1
     assert itinerary.days[0].slots[0].location is not None
     assert itinerary.days[0].slots[0].evidence_refs == ["ev-big-buddha-temple"]
+
+
+def test_backfill_resolves_thalang_road_via_romanized_alias():
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-thalang-road",
+        revision_id="rev-thalang-road",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=1,
+            slots=[ItinerarySlot(slot="morning", activity="Walk through Old Town", place="Thalang Road")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_fake_provider().backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert itinerary.days[0].slots[0].location is not None
+    assert itinerary.days[0].slots[0].evidence_refs == ["ev-thanon-talang"]
+
+
+def test_backfill_resolves_racha_island_via_local_alias():
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-racha-island",
+        revision_id="rev-racha-island",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=3,
+            slots=[ItinerarySlot(slot="morning", activity="Take a boat to Racha Island", place="Racha Island")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_fake_provider().backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert itinerary.days[0].slots[0].location is not None
+    assert itinerary.days[0].slots[0].evidence_refs == ["ev-goh-raja-yai"]
 
 
 def test_backfill_resolves_kan_eang_via_english_alias():
