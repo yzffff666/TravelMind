@@ -17,6 +17,15 @@ def test_build_badcase_report_prioritizes_actionable_rejections():
             "risk_flags": [],
         },
         {
+            "decision": "accepted",
+            "destination": "Phuket",
+            "place": "Kata Viewpoint",
+            "candidate_title": "Kata Beach Viewpoint",
+            "risk_flags": ["bbox_rejected", "score_rejected"],
+            "match_score": 0.92,
+            "quality_breakdown": {"has_candidate_geo": True, "bbox_valid": True},
+        },
+        {
             "decision": "skipped",
             "place": "relaxed indoor activity",
             "fallback_reason": "generic_activity",
@@ -47,16 +56,19 @@ def test_build_badcase_report_prioritizes_actionable_rejections():
     report = build_badcase_report(samples, limit=10)
 
     assert report["schema_version"] == "candidate_badcase_report_v1"
-    assert report["total_input_samples"] == 3
+    assert report["total_input_samples"] == 4
     assert report["total_badcases"] == 2
+    assert report["total_watchlist"] == 1
     assert report["top_fallback_reasons"] == {"score_rejected": 1, "generic_activity": 1}
     assert report["top_risk_flags"] == {
         "low_confidence": 2,
         "score_rejected": 1,
         "generic_activity": 1,
     }
+    assert report["watchlist_risk_flags"] == {"bbox_rejected": 1, "score_rejected": 1}
     assert report["badcases"][0]["place"] == "Big Buddha Phuket"
     assert report["badcases"][0]["candidate_geo"] == "7.827,98.312"
+    assert report["watchlist"][0]["place"] == "Kata Viewpoint"
 
 
 def test_render_markdown_escapes_table_cells_and_includes_guidance():
@@ -81,7 +93,37 @@ def test_render_markdown_escapes_table_cells_and_includes_guidance():
     assert "Candidate \\| Name" in markdown
     assert "`bbox_rejected`: 1" in markdown
     assert "bbox_rejected, bbox_rejected" not in markdown
+    assert "Accepted Watchlist" in markdown
+    assert "not direct failures" in markdown
     assert "How To Use" in markdown
+
+
+def test_render_markdown_separates_accepted_watchlist_from_badcases():
+    report = build_badcase_report(
+        [
+            {
+                "decision": "accepted",
+                "place": "Phi Phi Islands",
+                "candidate_title": "Phi Phi Island Tour",
+                "risk_flags": ["bbox_rejected"],
+                "quality_breakdown": {"has_candidate_geo": True, "bbox_valid": True},
+            },
+            {
+                "decision": "rejected",
+                "place": "Patong Beach",
+                "fallback_reason": "score_rejected",
+                "risk_flags": ["score_rejected"],
+            },
+        ]
+    )
+
+    markdown = render_markdown(report)
+    badcase_section = markdown.split("## Accepted Watchlist", 1)[0]
+    watchlist_section = markdown.split("## Accepted Watchlist", 1)[1]
+
+    assert "Patong Beach" in badcase_section
+    assert "Phi Phi Islands" not in badcase_section
+    assert "Phi Phi Islands" in watchlist_section
 
 
 def test_read_jsonl_and_writers_roundtrip(tmp_path):

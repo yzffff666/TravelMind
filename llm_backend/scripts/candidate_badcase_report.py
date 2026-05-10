@@ -78,9 +78,13 @@ def _risk_priority(sample: dict[str, Any]) -> int:
     return score
 
 
-def _should_include(sample: dict[str, Any]) -> bool:
-    if sample.get("decision") in {"rejected", "skipped"}:
-        return True
+def _is_badcase(sample: dict[str, Any]) -> bool:
+    return sample.get("decision") in {"rejected", "skipped"}
+
+
+def _is_watchlist(sample: dict[str, Any]) -> bool:
+    if sample.get("decision") != "accepted":
+        return False
     risk_flags = sample.get("risk_flags")
     return isinstance(risk_flags, list) and bool(risk_flags)
 
@@ -121,7 +125,8 @@ def _candidate_geo(sample: dict[str, Any]) -> str | None:
 
 
 def build_badcase_report(samples: list[dict[str, Any]], limit: int = 20) -> dict[str, Any]:
-    badcases = [_to_badcase(sample) for sample in samples if _should_include(sample)]
+    badcases = [_to_badcase(sample) for sample in samples if _is_badcase(sample)]
+    watchlist = [_to_badcase(sample) for sample in samples if _is_watchlist(sample)]
     badcases.sort(
         key=lambda item: (
             item["priority"],
@@ -130,19 +135,33 @@ def build_badcase_report(samples: list[dict[str, Any]], limit: int = 20) -> dict
         ),
         reverse=True,
     )
+    watchlist.sort(
+        key=lambda item: (
+            item["priority"],
+            _bool_score(item.get("has_candidate_geo")),
+            item.get("match_score") if item.get("match_score") is not None else -1,
+        ),
+        reverse=True,
+    )
     selected = badcases[:limit]
+    selected_watchlist = watchlist[:limit]
     risk_counts = Counter(flag for item in badcases for flag in item.get("risk_flags", []))
     fallback_counts = Counter(
         str(item["fallback_reason"]) for item in badcases if item.get("fallback_reason")
     )
+    watchlist_risk_counts = Counter(flag for item in watchlist for flag in item.get("risk_flags", []))
     return {
         "schema_version": SCHEMA_VERSION,
         "total_input_samples": len(samples),
         "total_badcases": len(badcases),
         "reported_badcases": len(selected),
+        "total_watchlist": len(watchlist),
+        "reported_watchlist": len(selected_watchlist),
         "top_risk_flags": dict(risk_counts.most_common()),
         "top_fallback_reasons": dict(fallback_counts.most_common()),
+        "watchlist_risk_flags": dict(watchlist_risk_counts.most_common()),
         "badcases": selected,
+        "watchlist": selected_watchlist,
     }
 
 
@@ -166,6 +185,38 @@ def _unique_reason_text(item: dict[str, Any]) -> str:
     return ", ".join(reasons)
 
 
+def _append_candidate_table(lines: list[str], rows: list[dict[str, Any]]) -> None:
+    lines.extend(
+        [
+            "| Priority | Decision | Place | Candidate | Destination | Reason | Score | Title Sim | BBox | Geo | Elapsed ms |",
+            "|----------|----------|-------|-----------|-------------|--------|-------|-----------|------|-----|------------|",
+        ]
+    )
+    for item in rows:
+        reason = _unique_reason_text(item)
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _md(item.get("priority")),
+                    _md(item.get("decision")),
+                    _md(item.get("place")),
+                    _md(item.get("candidate_title")),
+                    _md(item.get("destination")),
+                    _md(reason),
+                    _md(item.get("match_score")),
+                    _md(item.get("title_similarity")),
+                    _md(item.get("bbox_valid")),
+                    _md(item.get("candidate_geo")),
+                    _md(item.get("elapsed_ms")),
+                ]
+            )
+            + " |"
+        )
+    if not rows:
+        lines.append("| - | - | - | - | - | - | - | - | - | - | - |")
+
+
 def render_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Candidate Badcase Report",
@@ -174,6 +225,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Input samples: {report['total_input_samples']}",
         f"- Badcases: {report['total_badcases']}",
         f"- Reported: {report['reported_badcases']}",
+        f"- Accepted watchlist: {report.get('total_watchlist', 0)}",
         "",
         "## Top Fallback Reasons",
         "",
@@ -198,33 +250,22 @@ def render_markdown(report: dict[str, Any]) -> str:
             "",
             "## Prioritized Badcases",
             "",
-            "| Priority | Decision | Place | Candidate | Destination | Reason | Score | Title Sim | BBox | Geo | Elapsed ms |",
-            "|----------|----------|-------|-----------|-------------|--------|-------|-----------|------|-----|------------|",
         ]
     )
-    for item in report.get("badcases", []):
-        reason = _unique_reason_text(item)
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    _md(item.get("priority")),
-                    _md(item.get("decision")),
-                    _md(item.get("place")),
-                    _md(item.get("candidate_title")),
-                    _md(item.get("destination")),
-                    _md(reason),
-                    _md(item.get("match_score")),
-                    _md(item.get("title_similarity")),
-                    _md(item.get("bbox_valid")),
-                    _md(item.get("candidate_geo")),
-                    _md(item.get("elapsed_ms")),
-                ]
-            )
-            + " |"
+    _append_candidate_table(lines, report.get("badcases", []))
+
+    lines.extend(["", "## Accepted Watchlist", ""])
+    if report.get("watchlist_risk_flags"):
+        risk_text = ", ".join(
+            f"`{flag}`:{count}" for flag, count in report["watchlist_risk_flags"].items()
         )
-    if not report.get("badcases"):
-        lines.append("| - | - | - | - | - | - | - | - | - | - | - |")
+        lines.append(f"- Risk flags: {risk_text}")
+        lines.append("")
+    lines.append(
+        "These rows resolved successfully, but earlier candidate variants were rejected. Treat them as drift signals, not direct failures."
+    )
+    lines.append("")
+    _append_candidate_table(lines, report.get("watchlist", []))
 
     lines.extend(
         [
@@ -232,6 +273,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             "## How To Use",
             "",
             "- Prefer high-priority rows with a candidate title and geo for manual audit.",
+            "- Treat `Accepted Watchlist` rows as guardrail/drift signals, not immediate failures.",
             "- `score_rejected` with plausible geo usually points to alias/query-string tuning.",
             "- `bbox_rejected` usually points to destination normalization or bbox policy tuning.",
             "- Missing candidate title usually means provider recall or timeout needs investigation first.",
