@@ -94,6 +94,7 @@ def _to_badcase(sample: dict[str, Any]) -> dict[str, Any]:
     risk_flags = sample.get("risk_flags") if isinstance(sample.get("risk_flags"), list) else []
     return {
         "priority": _risk_priority(sample),
+        "action_type": _action_type(sample, quality, risk_flags),
         "decision": sample.get("decision"),
         "label": sample.get("label"),
         "destination": sample.get("destination"),
@@ -114,6 +115,44 @@ def _to_badcase(sample: dict[str, Any]) -> dict[str, Any]:
         "source_log": sample.get("source_log"),
         "source_path": sample.get("_source_path"),
     }
+
+
+def _action_type(sample: dict[str, Any], quality: dict[str, Any], risk_flags: list[Any]) -> str:
+    fallback_reason = str(sample.get("fallback_reason") or "")
+    provider_counts = (
+        sample.get("provider_status_counts")
+        if isinstance(sample.get("provider_status_counts"), dict)
+        else {}
+    )
+    has_candidate_geo = quality.get("has_candidate_geo") is True
+    has_candidate_title = bool(sample.get("candidate_title"))
+    risk_set = {str(flag) for flag in risk_flags}
+
+    if fallback_reason == "total_budget_exhausted" or "total_budget_exhausted" in risk_set:
+        return "budget_exhaustion"
+    if fallback_reason == "generic_activity" or "generic_activity" in risk_set:
+        return "generic_or_low_value_slot"
+    if has_candidate_title and fallback_reason == "score_rejected":
+        return "alias_or_match_tuning"
+    if has_candidate_geo and (
+        fallback_reason == "bbox_rejected"
+        or "bbox_rejected" in risk_set
+        or quality.get("bbox_valid") is False
+    ):
+        return "bbox_policy_review"
+    if has_candidate_title and (
+        fallback_reason == "score_rejected" or "score_rejected" in risk_set
+    ):
+        return "alias_or_match_tuning"
+    if not has_candidate_title and (
+        provider_counts.get("timeout")
+        or provider_counts.get("empty")
+        or fallback_reason in {"provider_timeout", "provider_empty_or_timeout", "provider_empty"}
+    ):
+        return "provider_recall_or_timeout"
+    if not has_candidate_title:
+        return "provider_recall_or_timeout"
+    return "manual_review"
 
 
 def _candidate_geo(sample: dict[str, Any]) -> str | None:
@@ -150,6 +189,8 @@ def build_badcase_report(samples: list[dict[str, Any]], limit: int = 20) -> dict
         str(item["fallback_reason"]) for item in badcases if item.get("fallback_reason")
     )
     watchlist_risk_counts = Counter(flag for item in watchlist for flag in item.get("risk_flags", []))
+    action_counts = Counter(str(item["action_type"]) for item in badcases)
+    watchlist_action_counts = Counter(str(item["action_type"]) for item in watchlist)
     return {
         "schema_version": SCHEMA_VERSION,
         "total_input_samples": len(samples),
@@ -159,7 +200,9 @@ def build_badcase_report(samples: list[dict[str, Any]], limit: int = 20) -> dict
         "reported_watchlist": len(selected_watchlist),
         "top_risk_flags": dict(risk_counts.most_common()),
         "top_fallback_reasons": dict(fallback_counts.most_common()),
+        "action_type_counts": dict(action_counts.most_common()),
         "watchlist_risk_flags": dict(watchlist_risk_counts.most_common()),
+        "watchlist_action_type_counts": dict(watchlist_action_counts.most_common()),
         "badcases": selected,
         "watchlist": selected_watchlist,
     }
@@ -188,8 +231,8 @@ def _unique_reason_text(item: dict[str, Any]) -> str:
 def _append_candidate_table(lines: list[str], rows: list[dict[str, Any]]) -> None:
     lines.extend(
         [
-            "| Priority | Decision | Place | Candidate | Destination | Reason | Score | Title Sim | BBox | Geo | Elapsed ms |",
-            "|----------|----------|-------|-----------|-------------|--------|-------|-----------|------|-----|------------|",
+            "| Priority | Action | Decision | Place | Candidate | Destination | Reason | Score | Title Sim | BBox | Geo | Elapsed ms |",
+            "|----------|--------|----------|-------|-----------|-------------|--------|-------|-----------|------|-----|------------|",
         ]
     )
     for item in rows:
@@ -199,6 +242,7 @@ def _append_candidate_table(lines: list[str], rows: list[dict[str, Any]]) -> Non
             + " | ".join(
                 [
                     _md(item.get("priority")),
+                    _md(item.get("action_type")),
                     _md(item.get("decision")),
                     _md(item.get("place")),
                     _md(item.get("candidate_title")),
@@ -214,7 +258,7 @@ def _append_candidate_table(lines: list[str], rows: list[dict[str, Any]]) -> Non
             + " |"
         )
     if not rows:
-        lines.append("| - | - | - | - | - | - | - | - | - | - | - |")
+        lines.append("| - | - | - | - | - | - | - | - | - | - | - | - |")
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -245,6 +289,14 @@ def render_markdown(report: dict[str, Any]) -> str:
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Action Types", ""])
+    action_counts = report.get("action_type_counts") or {}
+    if action_counts:
+        for action_type, count in action_counts.items():
+            lines.append(f"- `{action_type}`: {count}")
+    else:
+        lines.append("- None")
+
     lines.extend(
         [
             "",
@@ -260,6 +312,13 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"`{flag}`:{count}" for flag, count in report["watchlist_risk_flags"].items()
         )
         lines.append(f"- Risk flags: {risk_text}")
+    if report.get("watchlist_action_type_counts"):
+        action_text = ", ".join(
+            f"`{action_type}`:{count}"
+            for action_type, count in report["watchlist_action_type_counts"].items()
+        )
+        lines.append(f"- Action types: {action_text}")
+    if report.get("watchlist_risk_flags") or report.get("watchlist_action_type_counts"):
         lines.append("")
     lines.append(
         "These rows resolved successfully, but earlier candidate variants were rejected. Treat them as drift signals, not direct failures."
@@ -274,6 +333,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             "",
             "- Prefer high-priority rows with a candidate title and geo for manual audit.",
             "- Treat `Accepted Watchlist` rows as guardrail/drift signals, not immediate failures.",
+            "- Use `Action Types` as the owner queue: alias/match, bbox policy, provider/timeout, budget, or generic-slot cleanup.",
             "- `score_rejected` with plausible geo usually points to alias/query-string tuning.",
             "- `bbox_rejected` usually points to destination normalization or bbox policy tuning.",
             "- Missing candidate title usually means provider recall or timeout needs investigation first.",

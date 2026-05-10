@@ -638,6 +638,7 @@ disable it and fall back to the last stable rule-based ranking configuration.
 - `candidate-dataset-manifest` 已补充相邻 run 的 `deltas`，用于快速观察 accepted/rejected rate、低置信度、bbox 通过率、match score 和耗时是否相对上一批样本改善。
 - 新增 `scripts/candidate_badcase_report.py`，并由 smoke run 自动生成 `candidate-badcase-report.md/json`，把 rejected/skipped/risky 样本按可行动优先级排序，方便人工 audit 后决定 alias、bbox、query rewrite 或 provider timeout 的下一步优化。
 - `candidate-badcase-report` 已将真正失败的 `rejected/skipped` 样本与 `Accepted Watchlist` 分开；后者表示最终已解析成功但中间有候选变体被拒绝，用作 guardrail/drift 信号，而不是直接当作失败样本修。
+- `candidate-badcase-report` 已补充 `action_type` 分诊标签和汇总，包括 `alias_or_match_tuning`、`bbox_policy_review`、`provider_recall_or_timeout`、`budget_exhaustion`、`generic_or_low_value_slot`，让每轮 smoke 后能直接形成下一步优化队列。
 - 基于 badcase report 顶部样本，优先采用精准 POI alias 修复，例如 `Thalang Road -> Thanon Talang`、`Racha Island -> Goh Raja Yai/Koh Racha Yai`；避免为单个长尾问题降低全局 `min_match_score`，以免放大错误 POI 接受风险。
 - 新增 `POIFeature` / `CandidateFeature` schema。
 - 从 `ProviderCandidate`、`ScoredCandidate`、backfill diagnostics 中抽取统一特征。

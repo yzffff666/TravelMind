@@ -40,6 +40,7 @@ def test_build_badcase_report_prioritizes_actionable_rejections():
             "candidate_provider": "serp_map",
             "fallback_reason": "score_rejected",
             "risk_flags": ["score_rejected", "low_confidence"],
+            "provider_status_counts": {"success": 1},
             "match_score": 0.61,
             "candidate_lat": 7.827,
             "candidate_lng": 98.312,
@@ -59,6 +60,10 @@ def test_build_badcase_report_prioritizes_actionable_rejections():
     assert report["total_input_samples"] == 4
     assert report["total_badcases"] == 2
     assert report["total_watchlist"] == 1
+    assert report["action_type_counts"] == {
+        "alias_or_match_tuning": 1,
+        "generic_or_low_value_slot": 1,
+    }
     assert report["top_fallback_reasons"] == {"score_rejected": 1, "generic_activity": 1}
     assert report["top_risk_flags"] == {
         "low_confidence": 2,
@@ -66,8 +71,10 @@ def test_build_badcase_report_prioritizes_actionable_rejections():
         "generic_activity": 1,
     }
     assert report["watchlist_risk_flags"] == {"bbox_rejected": 1, "score_rejected": 1}
+    assert report["watchlist_action_type_counts"] == {"bbox_policy_review": 1}
     assert report["badcases"][0]["place"] == "Big Buddha Phuket"
     assert report["badcases"][0]["candidate_geo"] == "7.827,98.312"
+    assert report["badcases"][0]["action_type"] == "alias_or_match_tuning"
     assert report["watchlist"][0]["place"] == "Kata Viewpoint"
 
 
@@ -92,6 +99,8 @@ def test_render_markdown_escapes_table_cells_and_includes_guidance():
     assert "A \\| B" in markdown
     assert "Candidate \\| Name" in markdown
     assert "`bbox_rejected`: 1" in markdown
+    assert "Action Types" in markdown
+    assert "bbox_policy_review" in markdown
     assert "bbox_rejected, bbox_rejected" not in markdown
     assert "Accepted Watchlist" in markdown
     assert "not direct failures" in markdown
@@ -124,6 +133,61 @@ def test_render_markdown_separates_accepted_watchlist_from_badcases():
     assert "Patong Beach" in badcase_section
     assert "Phi Phi Islands" not in badcase_section
     assert "Phi Phi Islands" in watchlist_section
+
+
+def test_build_badcase_report_classifies_provider_and_budget_actions():
+    report = build_badcase_report(
+        [
+            {
+                "decision": "rejected",
+                "place": "Patong Beach",
+                "candidate_title": None,
+                "fallback_reason": "score_rejected",
+                "risk_flags": ["score_rejected", "low_confidence"],
+                "provider_status_counts": {"empty": 2, "timeout": 1},
+                "quality_breakdown": {"has_candidate_geo": False},
+            },
+            {
+                "decision": "rejected",
+                "place": "Bangla Road",
+                "fallback_reason": "total_budget_exhausted",
+                "risk_flags": ["total_budget_exhausted", "low_confidence"],
+                "provider_status_counts": {"success": 1},
+                "quality_breakdown": {"has_candidate_geo": False},
+            },
+        ]
+    )
+
+    assert [item["action_type"] for item in report["badcases"]] == [
+        "provider_recall_or_timeout",
+        "budget_exhaustion",
+    ]
+    assert report["action_type_counts"] == {
+        "provider_recall_or_timeout": 1,
+        "budget_exhaustion": 1,
+    }
+
+
+def test_build_badcase_report_prefers_score_rejected_alias_action_over_bbox_hint():
+    report = build_badcase_report(
+        [
+            {
+                "decision": "rejected",
+                "place": "Thalang Road",
+                "candidate_title": "Thanon Talang",
+                "fallback_reason": "score_rejected",
+                "risk_flags": ["score_rejected", "low_confidence"],
+                "quality_breakdown": {
+                    "has_candidate_geo": True,
+                    "bbox_valid": False,
+                    "title_similarity": 0.6087,
+                },
+            }
+        ]
+    )
+
+    assert report["badcases"][0]["action_type"] == "alias_or_match_tuning"
+    assert report["action_type_counts"] == {"alias_or_match_tuning": 1}
 
 
 def test_read_jsonl_and_writers_roundtrip(tmp_path):
