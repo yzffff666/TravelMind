@@ -83,11 +83,52 @@ def run_entry_from_summary(path: Path, *, root: Path) -> dict[str, Any]:
     }
 
 
+def _metric_delta(current: dict[str, Any], previous: dict[str, Any], key: str) -> float | int | None:
+    current_value = current.get(key)
+    previous_value = previous.get(key)
+    if current_value is None or previous_value is None:
+        return None
+    if isinstance(current_value, int) and isinstance(previous_value, int):
+        return current_value - previous_value
+    current_number = _as_float(current_value)
+    previous_number = _as_float(previous_value)
+    if current_number is None or previous_number is None:
+        return None
+    return round(current_number - previous_number, 4)
+
+
+def add_run_deltas(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    tracked_metrics = (
+        "total_samples",
+        "accepted_rate",
+        "rejected_rate",
+        "is_low_confidence_avg",
+        "bbox_valid_avg",
+        "match_score_avg",
+        "elapsed_ms_avg",
+    )
+    previous: dict[str, Any] | None = None
+    for run in runs:
+        if previous is None:
+            run["previous_run_id"] = None
+            run["deltas"] = {}
+        else:
+            run["previous_run_id"] = previous.get("run_id")
+            run["deltas"] = {
+                key: delta
+                for key in tracked_metrics
+                if (delta := _metric_delta(run, previous, key)) is not None
+            }
+        previous = run
+    return runs
+
+
 def collect_manifest(root: Path) -> dict[str, Any]:
     root = root.resolve()
     summary_paths = sorted(root.rglob(SUMMARY_FILENAME))
     runs = [run_entry_from_summary(path, root=root) for path in summary_paths]
     runs.sort(key=lambda item: (str(item.get("generated_at") or ""), str(item.get("run_id") or "")))
+    add_run_deltas(runs)
 
     total_runs = len(runs)
     total_samples = sum(int(run.get("total_samples") or 0) for run in runs)
@@ -124,8 +165,8 @@ def render_markdown(manifest: dict[str, Any]) -> str:
         f"- Runs: {manifest.get('total_runs', 0)}",
         f"- Samples: {manifest.get('total_samples', 0)}",
         "",
-        "| Run | Case set | Samples | Accepted | Rejected | Low conf | BBox valid | Top risks |",
-        "|-----|----------|---------|----------|----------|----------|------------|-----------|",
+        "| Run | Case set | Samples | Accepted | Delta Accepted | Rejected | Delta Rejected | Low conf | BBox valid | Top risks |",
+        "|-----|----------|---------|----------|------------|----------|------------|----------|------------|-----------|",
     ]
     for run in manifest.get("runs") or []:
         lines.append(
@@ -137,7 +178,9 @@ def render_markdown(manifest: dict[str, Any]) -> str:
                     run.get("case_set"),
                     run.get("total_samples"),
                     run.get("accepted_rate"),
+                    (run.get("deltas") or {}).get("accepted_rate"),
                     run.get("rejected_rate"),
+                    (run.get("deltas") or {}).get("rejected_rate"),
                     run.get("is_low_confidence_avg"),
                     run.get("bbox_valid_avg"),
                     run.get("top_risk_flags"),
