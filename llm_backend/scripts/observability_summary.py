@@ -230,12 +230,18 @@ def _summarize_llm(events: list[ObservabilityEvent]) -> dict[str, Any]:
     attempts = [_as_float(event.payload.get("attempt") or event.payload.get("llm_attempts")) for event in relevant]
     status_counts = Counter(event.payload.get("status") or event.payload.get("llm_status") for event in relevant)
     error_counts = Counter(event.payload.get("error_type") for event in relevant)
+    error_status_counts = Counter(event.payload.get("error_status_code") for event in relevant)
+    error_message_counts = Counter(event.payload.get("error_message") for event in relevant)
+    model_counts = Counter(event.payload.get("llm_model") or event.payload.get("model") for event in relevant)
     retryable_failures = sum(1 for event in relevant if _as_bool(event.payload.get("retryable")))
 
     return {
         "calls": len(relevant),
         "status_counts": _compact_counter(status_counts),
         "error_counts": _compact_counter(error_counts),
+        "error_status_counts": _compact_counter(error_status_counts),
+        "error_message_counts": _compact_counter(error_message_counts),
+        "model_counts": _compact_counter(model_counts),
         "retryable_failures": retryable_failures,
         "attempt_p95": _percentile([v for v in attempts if v is not None], 95),
         "latency_ms": {
@@ -447,6 +453,9 @@ def render_markdown(summary: dict[str, Any]) -> str:
         f"- Calls: {summary['llm']['calls']}",
         f"- Status counts: `{json.dumps(summary['llm']['status_counts'], ensure_ascii=False)}`",
         f"- Error counts: `{json.dumps(summary['llm']['error_counts'], ensure_ascii=False)}`",
+        f"- Error status counts: `{json.dumps(summary['llm']['error_status_counts'], ensure_ascii=False)}`",
+        f"- Error message counts: `{json.dumps(summary['llm']['error_message_counts'], ensure_ascii=False)}`",
+        f"- Model counts: `{json.dumps(summary['llm']['model_counts'], ensure_ascii=False)}`",
         f"- Retryable failures: {summary['llm']['retryable_failures']}",
         f"- Latency ms: `{json.dumps(summary['llm']['latency_ms'], ensure_ascii=False)}`",
         f"- Draft parse status counts: `{json.dumps(summary['llm']['draft']['parse_status_counts'], ensure_ascii=False)}`",

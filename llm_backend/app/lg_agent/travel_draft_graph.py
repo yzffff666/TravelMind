@@ -468,6 +468,17 @@ def _get_llm():
     )
 
 
+def _summarize_llm_exception(exc: Exception) -> dict[str, Any]:
+    """Return structured, non-secret fields that make API failures diagnosable."""
+    status_code = getattr(exc, "status_code", None)
+    error_message = str(exc)
+    return {
+        "error_type": type(exc).__name__,
+        "error_status_code": status_code,
+        "error_message": error_message[:300],
+    }
+
+
 async def _collect_llm_stream_with_retry(
     llm,
     messages: list[dict],
@@ -497,6 +508,7 @@ async def _collect_llm_stream_with_retry(
         except Exception as exc:  # noqa: BLE001
             elapsed_ms = (time.perf_counter() - attempt_started) * 1000
             last_exc = exc
+            error_details = _summarize_llm_exception(exc)
             logger.warning(
                 "llm_draft_call_failed",
                 extra={
@@ -508,7 +520,7 @@ async def _collect_llm_stream_with_retry(
                     "output_chars": len(buffer),
                     "parse_status": "stream_failed",
                     "status": "failed",
-                    "error_type": type(exc).__name__,
+                    **error_details,
                     "retryable": attempt < max_attempts,
                 },
             )
@@ -829,6 +841,10 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             {"role": "user", "content": user_prompt},
         ]
         draft_diagnostics = {
+            "llm_service": settings.AGENT_SERVICE.value,
+            "llm_model": settings.DEEPSEEK_MODEL
+            if settings.AGENT_SERVICE == ServiceType.DEEPSEEK
+            else settings.OLLAMA_AGENT_MODEL,
             "destination": destination,
             "days_count": days_count,
             "prompt_chars": sum(len(str(message.get("content") or "")) for message in messages),

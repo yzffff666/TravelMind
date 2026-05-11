@@ -125,6 +125,9 @@ def test_summarize_events_groups_core_metrics():
                     "elapsed_ms": 900,
                     "status": "failed",
                     "error_type": "TimeoutError",
+                    "error_status_code": 504,
+                    "error_message": "Gateway timeout",
+                    "llm_model": "deepseek-chat",
                     "retryable": True,
                 },
             )
@@ -147,6 +150,9 @@ def test_summarize_events_groups_core_metrics():
                     "parse_status": "stream_failed",
                     "status": "failed",
                     "error_type": "APIConnectionError",
+                    "error_status_code": 402,
+                    "error_message": "Insufficient Balance",
+                    "llm_model": "deepseek-chat",
                     "retryable": True,
                 },
             )
@@ -208,6 +214,9 @@ def test_summarize_events_groups_core_metrics():
     summary = summarize_events(event for event in events if event is not None)
 
     assert summary["llm"]["status_counts"] == {"failed": 2, "ok": 1}
+    assert summary["llm"]["error_status_counts"] == {"504": 1, "402": 1}
+    assert summary["llm"]["error_message_counts"] == {"Gateway timeout": 1, "Insufficient Balance": 1}
+    assert summary["llm"]["model_counts"] == {"deepseek-chat": 2}
     assert summary["llm"]["retryable_failures"] == 2
     assert summary["llm"]["draft"]["parse_status_counts"] == {"parsed": 1, "stream_failed": 1}
     assert summary["llm"]["draft"]["destination_counts"] == {"Phuket": 1, "Chengdu": 1}
@@ -271,6 +280,8 @@ def test_render_markdown_includes_major_sections():
 
     assert "# TravelMind Observability Summary" in markdown
     assert "Draft prompt chars" in markdown
+    assert "Error status counts" in markdown
+    assert "Model counts" in markdown
     assert "## Semantic Cache" in markdown
     assert '"miss": 1' in markdown
     assert "### Backfill Unresolved Samples" in markdown
