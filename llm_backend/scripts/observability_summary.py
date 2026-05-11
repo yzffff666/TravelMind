@@ -317,10 +317,15 @@ def _summarize_providers(events: list[ObservabilityEvent]) -> dict[str, Any]:
     by_provider = {}
     for key, items in grouped.items():
         latencies = [_as_float(item.payload.get("elapsed_ms")) for item in items]
+        cache_source_counts = Counter(item.payload.get("cache_source") for item in items)
+        cache_source_counts_compact = _compact_counter(cache_source_counts)
         by_provider[key] = {
             "calls": len(items),
             "status_counts": _compact_counter(Counter(item.payload.get("status") for item in items)),
             "error_counts": _compact_counter(Counter(item.payload.get("error_type") for item in items)),
+            "cache_source_counts": cache_source_counts_compact,
+            "live_call_count": cache_source_counts_compact.get("live", 0),
+            "cached_call_count": cache_source_counts_compact.get("cache", 0),
             "degraded_count": sum(1 for item in items if _as_bool(item.payload.get("degraded"))),
             "elapsed_ms": {
                 "p50": _percentile([v for v in latencies if v is not None], 50),
@@ -489,6 +494,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
                     f"- Calls: {provider['calls']}",
                     f"- Status counts: `{json.dumps(provider['status_counts'], ensure_ascii=False)}`",
                     f"- Error counts: `{json.dumps(provider['error_counts'], ensure_ascii=False)}`",
+                    f"- Cache source counts: `{json.dumps(provider['cache_source_counts'], ensure_ascii=False)}`",
+                    f"- Live/Cached calls: {provider['live_call_count']}/{provider['cached_call_count']}",
                     f"- Degraded count: {provider['degraded_count']}",
                     f"- Elapsed ms: `{json.dumps(provider['elapsed_ms'], ensure_ascii=False)}`",
                     "",

@@ -166,7 +166,14 @@ def test_summarize_events_groups_core_metrics():
         parse_log_line(
             "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
             "provider_call {'event_type': 'provider_call', 'provider_name': 'serp', "
-            "'provider_kind': 'search', 'elapsed_ms': 81, 'status': 'timeout', 'degraded': True}"
+            "'provider_kind': 'search', 'elapsed_ms': 81, 'status': 'timeout', "
+            "'degraded': True, 'cache_source': 'live'}"
+        ),
+        parse_log_line(
+            "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
+            "provider_call {'event_type': 'provider_call', 'provider_name': 'serp', "
+            "'provider_kind': 'search', 'elapsed_ms': 12, 'status': 'success', "
+            "'result_count': 3, 'cache_source': 'cache'}"
         ),
         parse_log_line(
             "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
@@ -229,6 +236,9 @@ def test_summarize_events_groups_core_metrics():
     assert summary["cache"]["source_counts"] == {"exact": 1}
     assert summary["cache"]["hit_rate"] == 1.0
     assert summary["providers"]["by_provider"]["serp:search"]["degraded_count"] == 1
+    assert summary["providers"]["by_provider"]["serp:search"]["cache_source_counts"] == {"live": 1, "cache": 1}
+    assert summary["providers"]["by_provider"]["serp:search"]["live_call_count"] == 1
+    assert summary["providers"]["by_provider"]["serp:search"]["cached_call_count"] == 1
     assert summary["backfill"]["attempted"] == 3
     assert summary["backfill"]["skipped"] == 1
     assert summary["backfill"]["skipped_events"] == 1
@@ -312,3 +322,30 @@ def test_render_markdown_includes_backfill_unresolved_samples_table():
     assert "Shanghai" in markdown
     assert "provider_empty" in markdown
     assert '{"empty": 2}' in markdown
+
+
+def test_render_markdown_includes_provider_cache_source_counts():
+    summary = summarize_events(
+        [
+            parse_log_line(
+                "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
+                "provider_call {'event_type': 'provider_call', 'provider_name': 'serp', "
+                "'provider_kind': 'map', 'elapsed_ms': 120, 'status': 'success', "
+                "'result_count': 3, 'cache_source': 'live'}"
+            ),
+            parse_log_line(
+                "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
+                "provider_call {'event_type': 'provider_call', 'provider_name': 'serp', "
+                "'provider_kind': 'map', 'elapsed_ms': 8, 'status': 'success', "
+                "'result_count': 3, 'cache_source': 'cache'}"
+            ),
+        ]
+    )
+
+    markdown = render_markdown(summary)
+
+    assert "### serp:map" in markdown
+    assert "Cache source counts" in markdown
+    assert '"live": 1' in markdown
+    assert '"cache": 1' in markdown
+    assert "Live/Cached calls: 1/1" in markdown
