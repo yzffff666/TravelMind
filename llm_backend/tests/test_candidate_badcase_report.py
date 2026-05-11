@@ -41,6 +41,9 @@ def test_build_badcase_report_prioritizes_actionable_rejections():
             "fallback_reason": "score_rejected",
             "risk_flags": ["score_rejected", "low_confidence"],
             "provider_status_counts": {"success": 1},
+            "variants_tried": ["Big Buddha Phuket", "Phuket Big Buddha", "Big Buddha Temple"],
+            "candidate_count": 3,
+            "rejected_score_count": 2,
             "match_score": 0.61,
             "candidate_lat": 7.827,
             "candidate_lng": 98.312,
@@ -75,6 +78,12 @@ def test_build_badcase_report_prioritizes_actionable_rejections():
     assert report["badcases"][0]["place"] == "Big Buddha Phuket"
     assert report["badcases"][0]["candidate_geo"] == "7.827,98.312"
     assert report["badcases"][0]["action_type"] == "alias_or_match_tuning"
+    assert report["badcases"][0]["provider_status_counts"] == {"success": 1}
+    assert report["badcases"][0]["variants_tried"] == [
+        "Big Buddha Phuket",
+        "Phuket Big Buddha",
+        "Big Buddha Temple",
+    ]
     assert report["watchlist"][0]["place"] == "Kata Viewpoint"
 
 
@@ -101,6 +110,8 @@ def test_render_markdown_escapes_table_cells_and_includes_guidance():
     assert "`bbox_rejected`: 1" in markdown
     assert "Action Types" in markdown
     assert "bbox_policy_review" in markdown
+    assert "Status" in markdown
+    assert "Variants" in markdown
     assert "bbox_rejected, bbox_rejected" not in markdown
     assert "Accepted Watchlist" in markdown
     assert "not direct failures" in markdown
@@ -145,6 +156,7 @@ def test_build_badcase_report_classifies_provider_and_budget_actions():
                 "fallback_reason": "score_rejected",
                 "risk_flags": ["score_rejected", "low_confidence"],
                 "provider_status_counts": {"empty": 2, "timeout": 1},
+                "variants_tried": ["Patong Beach", "Patong Beach Phuket"],
                 "quality_breakdown": {"has_candidate_geo": False},
             },
             {
@@ -166,6 +178,9 @@ def test_build_badcase_report_classifies_provider_and_budget_actions():
         "provider_recall_or_timeout": 1,
         "budget_exhaustion": 1,
     }
+    markdown = render_markdown(report)
+    assert "empty:2, timeout:1" in markdown
+    assert "Patong Beach / Patong Beach Phuket" in markdown
 
 
 def test_build_badcase_report_prefers_score_rejected_alias_action_over_bbox_hint():

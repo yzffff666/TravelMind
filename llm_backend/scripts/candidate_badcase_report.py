@@ -103,6 +103,15 @@ def _to_badcase(sample: dict[str, Any]) -> dict[str, Any]:
         "candidate_provider": sample.get("candidate_provider"),
         "fallback_reason": sample.get("fallback_reason"),
         "risk_flags": risk_flags,
+        "provider_status_counts": (
+            sample.get("provider_status_counts")
+            if isinstance(sample.get("provider_status_counts"), dict)
+            else {}
+        ),
+        "variants_tried": sample.get("variants_tried") if isinstance(sample.get("variants_tried"), list) else [],
+        "candidate_count": sample.get("candidate_count"),
+        "rejected_bbox_count": sample.get("rejected_bbox_count"),
+        "rejected_score_count": sample.get("rejected_score_count"),
         "match_score": sample.get("match_score"),
         "title_similarity": quality.get("title_similarity"),
         "english_token_overlap": quality.get("english_token_overlap"),
@@ -228,11 +237,28 @@ def _unique_reason_text(item: dict[str, Any]) -> str:
     return ", ".join(reasons)
 
 
+def _status_text(item: dict[str, Any]) -> str:
+    counts = item.get("provider_status_counts")
+    if not isinstance(counts, dict) or not counts:
+        return "-"
+    return ", ".join(f"{key}:{counts[key]}" for key in sorted(counts))
+
+
+def _variants_text(item: dict[str, Any], limit: int = 3) -> str:
+    variants = item.get("variants_tried")
+    if not isinstance(variants, list) or not variants:
+        return "-"
+    shown = [str(variant) for variant in variants[:limit]]
+    if len(variants) > limit:
+        shown.append(f"+{len(variants) - limit} more")
+    return " / ".join(shown)
+
+
 def _append_candidate_table(lines: list[str], rows: list[dict[str, Any]]) -> None:
     lines.extend(
         [
-            "| Priority | Action | Decision | Place | Candidate | Destination | Reason | Score | Title Sim | BBox | Geo | Elapsed ms |",
-            "|----------|--------|----------|-------|-----------|-------------|--------|-------|-----------|------|-----|------------|",
+            "| Priority | Action | Decision | Place | Candidate | Status | Variants | Reason | Score | Title Sim | BBox | Geo | Elapsed ms |",
+            "|----------|--------|----------|-------|-----------|--------|----------|--------|-------|-----------|------|-----|------------|",
         ]
     )
     for item in rows:
@@ -246,7 +272,8 @@ def _append_candidate_table(lines: list[str], rows: list[dict[str, Any]]) -> Non
                     _md(item.get("decision")),
                     _md(item.get("place")),
                     _md(item.get("candidate_title")),
-                    _md(item.get("destination")),
+                    _md(_status_text(item)),
+                    _md(_variants_text(item)),
                     _md(reason),
                     _md(item.get("match_score")),
                     _md(item.get("title_similarity")),
@@ -258,7 +285,7 @@ def _append_candidate_table(lines: list[str], rows: list[dict[str, Any]]) -> Non
             + " |"
         )
     if not rows:
-        lines.append("| - | - | - | - | - | - | - | - | - | - | - | - |")
+        lines.append("| - | - | - | - | - | - | - | - | - | - | - | - | - |")
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -334,6 +361,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             "- Prefer high-priority rows with a candidate title and geo for manual audit.",
             "- Treat `Accepted Watchlist` rows as guardrail/drift signals, not immediate failures.",
             "- Use `Action Types` as the owner queue: alias/match, bbox policy, provider/timeout, budget, or generic-slot cleanup.",
+            "- Use `Status` and `Variants` to inspect provider empty/timeout behavior before changing online backfill policy.",
             "- `score_rejected` with plausible geo usually points to alias/query-string tuning.",
             "- `bbox_rejected` usually points to destination normalization or bbox policy tuning.",
             "- Missing candidate title usually means provider recall or timeout needs investigation first.",
