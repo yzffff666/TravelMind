@@ -26,13 +26,14 @@ _PLACE_ALIASES = {
     "普吉国际机场": ["Phuket International Airport"],
     "幻多奇主题乐园": ["Phuket FantaSea"],
     "皮皮岛": ["Phi Phi Islands"],
-    "皇帝岛": ["Racha Island"],
-    "芭东海滩": ["Patong Beach"],
+    "皇帝岛": ["Goh Raja Yai", "Koh Racha Yai", "Racha Island", "Ko Racha Yai", "Racha Yai Island"],
+    "芭东海滩": ["Patong Beach", "Patong Beach Phuket"],
     "卡塔海滩": ["Kata Beach"],
     "卡伦海滩": ["Karon Beach"],
     "普吉老城": ["Old Phuket Town", "Phuket Old Town"],
     "普吉老镇": ["Old Phuket Town", "Phuket Old Town"],
-    "普吉周末夜市": ["Naka Weekend Market", "Phuket Weekend Night Market"],
+    "普吉周末夜市": ["Naka Weekend Market Phuket", "Naka Weekend Market", "Naka Market Phuket"],
+    "查龙寺": ["Wat Chalong", "Chaithararam Temple", "Chalong Temple"],
     "Phuket Weekend Market": [
         "Naka Weekend Market Phuket",
         "Naka Weekend Market",
@@ -46,12 +47,20 @@ _PLACE_ALIASES = {
         "Big Buddha Phuket Thailand",
         "Big Buddha Temple",
     ],
-    "Bangla Road": ["Bangla Road Patong", "Soi Bangla", "Bangla Walking Street"],
+    "Bangla Road": ["Soi Bangla Patong Phuket", "Bangla Road Patong", "Soi Bangla", "Bangla Walking Street"],
     "Thalang Road": ["Thanon Talang", "Thalang Road Phuket"],
     "Racha Island": ["Goh Raja Yai", "Ko Racha Yai", "Koh Racha Yai", "Racha Yai Island"],
     "Kan Eang@Pier": ["Kan Eang Restaurant", "Kan Eang at Pier", "Kan Eang @ Pier"],
     "The Boathouse Wine & Grill": ["The Boathouse Restaurant", "The Boathouse Phuket"],
 }
+
+_MATCH_EQUIVALENT_GROUPS = (
+    ("patongbeach", "芭东海滩", "芭东区", "芭东"),
+    ("watchalong", "chaithararamtemple", "chalongtemple", "查龙寺", "茶龙寺"),
+    ("rachaisland", "gohrajayai", "korachayai", "kohrachayai", "rachayaiisland", "皇帝岛"),
+    ("nakamarket", "nakaweekendmarket", "phuketweekendmarket", "phuketweekendnightmarket", "普吉周末夜市"),
+    ("banglaroad", "soibangla", "banglawalkingstreet", "邦古拉街"),
+)
 
 _DEST_ALIASES = {
     "普吉": "Phuket",
@@ -828,6 +837,8 @@ class LocationBackfillService:
             return 0.0
         if p == t:
             return 1.0
+        if LocationBackfillService._is_equivalent_place_name(p, t):
+            return 0.88
         if p in t or t in p:
             return 0.92
         if a and (p in a or t in a):
@@ -836,6 +847,13 @@ class LocationBackfillService:
         if token_score:
             return token_score
         return SequenceMatcher(None, p, t).ratio()
+
+    @staticmethod
+    def _is_equivalent_place_name(normalized_place: str, normalized_title: str) -> bool:
+        for group in _MATCH_EQUIVALENT_GROUPS:
+            if normalized_place in group and normalized_title in group:
+                return True
+        return False
 
     @staticmethod
     def _english_token_subset_score(place: str, title: str) -> float:

@@ -58,6 +58,26 @@ class FakeMapProvider:
                     extra={"lat": 7.880, "lng": 98.366, "address": "Phuket"},
                 ),
             ])
+        if keyword == "Wat Chalong":
+            return ProviderResponse(candidates=[
+                ProviderCandidate(
+                    candidate_id="wat-chalong",
+                    source=self.name,
+                    title="Chaithararam Temple",
+                    snippet="Wat Chalong Buddhist temple in Phuket",
+                    extra={"lat": 7.8462, "lng": 98.3366, "address": "Chalong, Phuket"},
+                ),
+            ])
+        if keyword == "Patong Beach":
+            return ProviderResponse(candidates=[
+                ProviderCandidate(
+                    candidate_id="patong-district",
+                    source=self.name,
+                    title="芭东区",
+                    snippet="Patong Beach area in Phuket",
+                    extra={"lat": 7.8966, "lng": 98.3021, "address": "Kathu District, Phuket"},
+                ),
+            ])
         if keyword == "Thanon Talang":
             return ProviderResponse(candidates=[
                 ProviderCandidate(
@@ -323,10 +343,26 @@ def test_backfill_builds_english_phuket_poi_aliases():
     assert "Phuket Weekend Night Market" in weekend_market_variants
     assert "Phuket Indy Night Market" not in weekend_market_variants
     assert "Kan Eang Restaurant" in kan_eang_variants
+    assert "Soi Bangla Patong Phuket" in bangla_variants
     assert "Bangla Road Patong" in bangla_variants
     assert "Thanon Talang" in thalang_variants
     assert "Goh Raja Yai" in racha_variants
     assert "Koh Racha Yai" in racha_variants
+
+
+def test_backfill_builds_chinese_phuket_poi_aliases_from_badcases():
+    svc = _service_with_fake_provider()
+
+    chalong_variants = svc._build_variants("查龙寺", "Phuket")
+    racha_variants = svc._build_variants("皇帝岛", "Phuket")
+    weekend_market_variants = svc._build_variants("普吉周末夜市", "Phuket")
+
+    assert "Wat Chalong" in chalong_variants[:3]
+    assert "Chaithararam Temple" in chalong_variants
+    assert "Goh Raja Yai" in racha_variants[:3]
+    assert "Koh Racha Yai" in racha_variants
+    assert "Naka Weekend Market Phuket" in weekend_market_variants[:3]
+    assert "Naka Market Phuket" in weekend_market_variants
 
 
 def test_backfill_resolves_phuket_old_town_via_alias():
@@ -387,6 +423,46 @@ def test_backfill_resolves_big_buddha_via_english_alias():
     assert report.filled == 1
     assert itinerary.days[0].slots[0].location is not None
     assert itinerary.days[0].slots[0].evidence_refs == ["ev-big-buddha-temple"]
+
+
+def test_backfill_resolves_chalong_temple_via_chinese_alias():
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-chalong-temple",
+        revision_id="rev-chalong-temple",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=3,
+            slots=[ItinerarySlot(slot="上午", activity="参观查龙寺", place="查龙寺")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_fake_provider().backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert itinerary.days[0].slots[0].location is not None
+    assert itinerary.days[0].slots[0].evidence_refs == ["ev-wat-chalong"]
+
+
+def test_backfill_resolves_patong_beach_when_provider_returns_chinese_area_title():
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-patong-beach",
+        revision_id="rev-patong-beach",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=2,
+            slots=[ItinerarySlot(slot="morning", activity="Relax at Patong Beach", place="Patong Beach")],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_fake_provider().backfill_itinerary(itinerary))
+
+    assert report.filled == 1
+    assert itinerary.days[0].slots[0].location is not None
+    assert itinerary.days[0].slots[0].evidence_refs == ["ev-patong-district"]
 
 
 def test_backfill_resolves_thalang_road_via_romanized_alias():
@@ -667,7 +743,7 @@ def test_backfill_budget_exhausted_diagnostics_preserve_planned_variants():
     diagnostics = svc._budget_exhausted_diagnostics("Bangla Road", "Phuket")
 
     assert diagnostics.fallback_reason == "total_budget_exhausted"
-    assert diagnostics.variants_tried == ["Bangla Road", "Bangla Road Patong"]
+    assert diagnostics.variants_tried == ["Bangla Road", "Soi Bangla Patong Phuket"]
     assert diagnostics.provider_status_counts == {}
     assert diagnostics.candidate_count == 0
     assert diagnostics.variant_limit_reached is True
@@ -678,6 +754,8 @@ def test_backfill_english_token_subset_score_handles_canonical_titles():
 
     assert svc._match_score("Big Buddha Phuket", "Big Buddha Temple", "Karon, Phuket") >= 0.8
     assert svc._match_score("Kan Eang@Pier", "Kan Eang Restaurant - ร้านกันเอง", "Chalong, Phuket") >= 0.8
+    assert svc._match_score("Patong Beach", "芭东区", "Kathu District, Phuket") >= 0.8
+    assert svc._match_score("查龙寺", "Chaithararam Temple", "Chalong, Phuket") >= 0.8
 
 
 def test_backfill_tolerates_provider_list_address():
