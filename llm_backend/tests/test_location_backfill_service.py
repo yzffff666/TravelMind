@@ -752,7 +752,37 @@ def test_backfill_generic_activity_filter_keeps_specific_pois():
 
     assert svc._should_skip_generic_activity("更轻松的室内活动")
     assert svc._should_skip_generic_activity("酒店泳池/附近海滩")
+    assert svc._should_skip_generic_activity("第1天核心景点参观")
+    assert svc._should_skip_generic_activity("第2天美食与休闲活动")
+    assert svc._should_skip_generic_activity("第3天城市漫步与地标打卡")
+    assert svc._should_skip_generic_activity("Day 2 food and leisure")
     assert not svc._should_skip_generic_activity("四川博物院")
     assert not svc._should_skip_generic_activity("九眼桥")
     assert not svc._should_skip_generic_activity("鹤鸣茶社")
     assert not svc._should_skip_generic_activity("卡伦海滩")
+
+
+def test_backfill_skips_generated_template_places_without_provider_call():
+    _cache.clear()
+    provider = EmptyTrackingMapProvider()
+    itinerary = ItineraryV1(
+        itinerary_id="it-template-place",
+        revision_id="rev-template-place",
+        trip_profile=TripProfile(destination_city="Phuket"),
+        days=[ItineraryDay(
+            day_index=1,
+            slots=[
+                ItinerarySlot(slot="morning", activity="第1天城市漫步与地标打卡", place="第1天城市漫步与地标打卡"),
+                ItinerarySlot(slot="afternoon", activity="第1天核心景点参观", place="第1天核心景点参观"),
+            ],
+        )],
+        budget_summary=BudgetSummary(total_estimate=12000),
+    )
+
+    report = asyncio.run(_service_with_provider(provider).backfill_itinerary(itinerary))
+
+    assert report.attempted == 0
+    assert report.filled == 0
+    assert report.skipped == 2
+    assert report.unresolved == []
+    assert provider.calls == 0

@@ -641,6 +641,7 @@ disable it and fall back to the last stable rule-based ranking configuration.
 - `candidate-badcase-report` 已补充 `action_type` 分诊标签和汇总，包括 `alias_or_match_tuning`、`bbox_policy_review`、`provider_recall_or_timeout`、`budget_exhaustion`、`generic_or_low_value_slot`，让每轮 smoke 后能直接形成下一步优化队列。
 - `candidate-badcase-report` 表格已补充 provider `Status` 与 `Variants`，用于快速判断 provider/timeout 类问题到底是 empty、timeout、budget 截断，还是 query variant 不够好。
 - Backfill 在总预算耗尽或外层 wait 超时时，会保留 planned `variants_tried` 与 `variant_limit_reached` 诊断，避免 `budget_exhaustion` 样本缺少可复盘的 query 线索。
+- Backfill 已跳过 fallback itinerary 中的泛化模板地点，例如 `第N天核心景点参观`、`第N天美食与休闲活动`、`第N天城市漫步与地标打卡`，避免把非 POI 占位文本送入 provider 查询并污染 candidate dataset。
 - 基于 badcase report 顶部样本，优先采用精准 POI alias 修复，例如 `Thalang Road -> Thanon Talang`、`Racha Island -> Goh Raja Yai/Koh Racha Yai`；避免为单个长尾问题降低全局 `min_match_score`，以免放大错误 POI 接受风险。
 - 新增 `POIFeature` / `CandidateFeature` schema。
 - 从 `ProviderCandidate`、`ScoredCandidate`、backfill diagnostics 中抽取统一特征。

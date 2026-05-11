@@ -109,6 +109,11 @@ _GENERIC_ACTIVITY_MARKERS = (
     "体验",
 )
 
+_GENERIC_TEMPLATE_PLACE_PATTERNS = (
+    re.compile(r"^第\s*\d+\s*天.*(?:核心景点|景点参观|美食|休闲活动|城市漫步|地标打卡)"),
+    re.compile(r"^day\s*\d+.*(?:core sights?|sightseeing|food|leisure|city walk|landmark)", re.IGNORECASE),
+)
+
 _GENERIC_RELATIVE_PLACE_MARKERS = (
     "酒店泳池",
     "附近海滩",
@@ -402,6 +407,8 @@ class LocationBackfillService:
         raw = (text or "").strip()
         normalized = LocationBackfillService._normalize(raw)
         if not normalized:
+            return True
+        if any(pattern.search(raw) for pattern in _GENERIC_TEMPLATE_PLACE_PATTERNS):
             return True
         if LocationBackfillService._is_generic_relative_place(raw):
             return True
