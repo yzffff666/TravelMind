@@ -10,8 +10,10 @@ Google Maps engine: https://serpapi.com/google-maps-api
 
 from __future__ import annotations
 
+import json
 import logging
 from hashlib import md5
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -35,6 +37,76 @@ def _candidate_id(title: str, city: str) -> str:
     """Deterministic ID so dedup works across providers."""
     raw = f"{title}-{city}".strip().lower()
     return md5(raw.encode()).hexdigest()[:12]
+
+
+def _cache_enabled() -> bool:
+    try:
+        from app.core.config import settings
+        return bool(settings.SERPAPI_RESPONSE_CACHE_ENABLED)
+    except Exception:
+        return True
+
+
+def _cache_dir() -> Path:
+    try:
+        from app.core.config import ROOT_DIR, settings
+        return Path(ROOT_DIR) / settings.SERPAPI_RESPONSE_CACHE_DIR
+    except Exception:
+        return Path("reports/provider-cache/serpapi")
+
+
+def _safe_params(params: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in params.items() if key != "api_key"}
+
+
+def _cache_key(params: dict[str, Any]) -> str:
+    raw = json.dumps(_safe_params(params), ensure_ascii=False, sort_keys=True, default=str)
+    return md5(raw.encode()).hexdigest()
+
+
+def _read_cached_response(params: dict[str, Any]) -> dict[str, Any] | None:
+    if not _cache_enabled():
+        return None
+    path = _cache_dir() / f"{_cache_key(params)}.json"
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Failed to read SerpAPI cache %s: %s", path, exc)
+        return None
+    data = payload.get("data")
+    return data if isinstance(data, dict) else None
+
+
+def _write_cached_response(params: dict[str, Any], data: dict[str, Any]) -> None:
+    if not _cache_enabled():
+        return
+    path = _cache_dir() / f"{_cache_key(params)}.json"
+    payload = {
+        "provider": "serpapi",
+        "params": _safe_params(params),
+        "data": data,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
+    except OSError as exc:
+        logger.warning("Failed to write SerpAPI cache %s: %s", path, exc)
+
+
+async def _fetch_serpapi_json(params: dict[str, Any], timeout: float) -> tuple[dict[str, Any], str]:
+    cached = _read_cached_response(params)
+    if cached is not None:
+        return cached, "cache"
+
+    # Ignore host-level proxy env vars to avoid accidental blackhole proxies.
+    async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        resp = await client.get(_SERPAPI_BASE, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+    _write_cached_response(params, data)
+    return data, "live"
 
 
 class SerpApiSearchProvider(SearchProvider):
@@ -68,11 +140,7 @@ class SerpApiSearchProvider(SearchProvider):
             "gl": "cn",
         }
 
-        # Ignore host-level proxy env vars to avoid accidental blackhole proxies.
-        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
-            resp = await client.get(_SERPAPI_BASE, params=params)
-            resp.raise_for_status()
-            data = resp.json()
+        data, cache_source = await _fetch_serpapi_json(params, self._timeout)
 
         candidates: list[ProviderCandidate] = []
 
@@ -94,7 +162,7 @@ class SerpApiSearchProvider(SearchProvider):
                 )
             )
 
-        return ProviderResponse(candidates=candidates)
+        return ProviderResponse(candidates=candidates, meta={"cache_source": cache_source})
 
     @staticmethod
     def _position_score(position: int) -> float:
@@ -147,11 +215,7 @@ class SerpApiMapProvider(MapProvider):
             "ll": "",  # let Google infer from city name
         }
 
-        # Ignore host-level proxy env vars to avoid accidental blackhole proxies.
-        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
-            resp = await client.get(_SERPAPI_BASE, params=params)
-            resp.raise_for_status()
-            data = resp.json()
+        data, cache_source = await _fetch_serpapi_json(params, self._timeout)
 
         candidates: list[ProviderCandidate] = []
 
@@ -219,9 +283,9 @@ class SerpApiMapProvider(MapProvider):
                 )
 
         if not candidates:
-            return ProviderResponse(degraded=True)
+            return ProviderResponse(degraded=True, meta={"cache_source": cache_source})
 
-        return ProviderResponse(candidates=candidates)
+        return ProviderResponse(candidates=candidates, meta={"cache_source": cache_source})
 
     @staticmethod
     def _type_text(type_value: object) -> str:

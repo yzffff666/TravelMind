@@ -150,6 +150,23 @@ class TestSerpApiSearchProvider:
         assert len(resp.candidates) == 0
         assert resp.degraded is False
 
+    def test_search_reuses_persistent_cache_without_second_http_call(self, tmp_path):
+        sp = SerpApiSearchProvider("fake-key")
+        with patch("app.services.providers.serp_providers._cache_enabled", return_value=True), \
+                patch("app.services.providers.serp_providers._cache_dir", return_value=tmp_path), \
+                patch("app.services.providers.serp_providers.httpx.AsyncClient") as mock_cls:
+            mock_client = _mock_httpx_get(FAKE_GOOGLE_RESPONSE)
+            mock_cls.return_value = mock_client
+
+            first = _run(sp.search(query="上海"))
+            second = _run(sp.search(query="上海"))
+
+        assert len(first.candidates) == 3
+        assert len(second.candidates) == 3
+        assert first.meta["cache_source"] == "live"
+        assert second.meta["cache_source"] == "cache"
+        assert mock_client.get.await_count == 1
+
 
 # ======================== SerpApiMapProvider ========================
 
@@ -202,6 +219,23 @@ class TestSerpApiMapProvider:
 
         assert resp.degraded is True
         assert len(resp.candidates) == 0
+
+    def test_nearby_poi_reuses_persistent_cache_without_second_http_call(self, tmp_path):
+        mp = SerpApiMapProvider("fake-key")
+        with patch("app.services.providers.serp_providers._cache_enabled", return_value=True), \
+                patch("app.services.providers.serp_providers._cache_dir", return_value=tmp_path), \
+                patch("app.services.providers.serp_providers.httpx.AsyncClient") as mock_cls:
+            mock_client = _mock_httpx_get(FAKE_MAPS_RESPONSE)
+            mock_cls.return_value = mock_client
+
+            first = _run(mp.nearby_poi(city="上海", keywords=["景点"]))
+            second = _run(mp.nearby_poi(city="上海", keywords=["景点"]))
+
+        assert len(first.candidates) == 3
+        assert len(second.candidates) == 3
+        assert first.meta["cache_source"] == "live"
+        assert second.meta["cache_source"] == "cache"
+        assert mock_client.get.await_count == 1
 
 
 # ======================== Factory ========================
