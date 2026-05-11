@@ -209,3 +209,15 @@ class TestFactoryWithAmap:
 
         search_names = [p.name for p in reg.search_providers]
         assert search_names[0] == "amap_search"
+
+    def test_amap_disabled_skips_amap_even_with_key(self):
+        with patch("app.services.providers.factory._get_key") as mock_get, \
+                patch("app.services.providers.factory._provider_enabled") as mock_enabled:
+            mock_get.side_effect = lambda s, e: "amap-key" if "AMAP" in s else None
+            mock_enabled.side_effect = lambda s, e, default=True: False if s == "AMAP_ENABLED" else default
+            from app.services.providers.factory import build_registry
+            reg = build_registry(include_mock_fallback=True)
+
+        search_names = [p.name for p in reg.search_providers]
+        assert "amap_search" not in search_names
+        assert "mock_search" in search_names

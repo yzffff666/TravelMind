@@ -37,9 +37,11 @@ class Settings(BaseSettings):
     # Search settings
     SERPAPI_KEY: str
     SEARCH_RESULT_COUNT: int = 3
+    SERPAPI_ENABLED: bool = True
 
     # Amap (高德地图) settings
     AMAP_API_KEY: str = ""
+    AMAP_ENABLED: bool = True
 
     # Database settings
     DB_HOST: str

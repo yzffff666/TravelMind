@@ -44,6 +44,18 @@ def _get_key(setting_name: str, env_name: str) -> str | None:
     return key.strip()
 
 
+def _provider_enabled(setting_name: str, env_name: str, default: bool = True) -> bool:
+    """Return whether a provider is allowed to register even when a key exists."""
+    try:
+        from app.core.config import settings
+        return bool(getattr(settings, setting_name, default))
+    except Exception:
+        raw = os.getenv(env_name)
+        if raw is None:
+            return default
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
 def build_registry(*, include_mock_fallback: bool = True) -> ProviderRegistry:
     """Build a ``ProviderRegistry`` with the best available providers.
 
@@ -51,17 +63,23 @@ def build_registry(*, include_mock_fallback: bool = True) -> ProviderRegistry:
     """
     registry = ProviderRegistry()
 
-    amap_key = _get_key("AMAP_API_KEY", "AMAP_API_KEY")
+    amap_enabled = _provider_enabled("AMAP_ENABLED", "AMAP_ENABLED")
+    amap_key = _get_key("AMAP_API_KEY", "AMAP_API_KEY") if amap_enabled else None
     if amap_key:
         logger.info("Amap key detected — registering 高德 search & map providers (priority 1)")
         registry.register_search(AmapSearchProvider(amap_key))
         registry.register_map(AmapMapProvider(amap_key))
+    elif not amap_enabled:
+        logger.info("Amap providers disabled by AMAP_ENABLED=false")
 
-    serpapi_key = _get_key("SERPAPI_KEY", "SERPAPI_KEY")
+    serpapi_enabled = _provider_enabled("SERPAPI_ENABLED", "SERPAPI_ENABLED")
+    serpapi_key = _get_key("SERPAPI_KEY", "SERPAPI_KEY") if serpapi_enabled else None
     if serpapi_key:
         logger.info("SerpAPI key detected — registering search & map providers (priority 2)")
         registry.register_search(SerpApiSearchProvider(serpapi_key))
         registry.register_map(SerpApiMapProvider(serpapi_key))
+    elif not serpapi_enabled:
+        logger.info("SerpAPI providers disabled by SERPAPI_ENABLED=false")
 
     if not amap_key and not serpapi_key:
         logger.warning(

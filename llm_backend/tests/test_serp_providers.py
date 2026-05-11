@@ -234,6 +234,17 @@ class TestProviderFactory:
         assert len(reg.search_providers) == 1
         assert reg.search_providers[0].name == "serp_search"
 
+    def test_factory_serp_disabled_skips_serp_even_with_key(self):
+        with patch("app.services.providers.factory._get_key") as mock_get, \
+                patch("app.services.providers.factory._provider_enabled") as mock_enabled:
+            mock_get.side_effect = lambda s, e: "key" if "SERPAPI" in s else None
+            mock_enabled.side_effect = lambda s, e, default=True: False if s == "SERPAPI_ENABLED" else default
+            reg = build_registry(include_mock_fallback=True)
+
+        search_names = [p.name for p in reg.search_providers]
+        assert "serp_search" not in search_names
+        assert "mock_search" in search_names
+
 
 # ======================== E2E: Factory + Orchestrator ========================
 
