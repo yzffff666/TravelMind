@@ -337,7 +337,7 @@ class LocationBackfillService:
                 remaining = self._remaining_budget(started)
                 if remaining <= 0:
                     return _ResolveResult(
-                        diagnostics=_BackfillDiagnostics(fallback_reason="total_budget_exhausted")
+                        diagnostics=self._budget_exhausted_diagnostics(place, destination)
                     )
                 try:
                     return await asyncio.wait_for(
@@ -346,7 +346,7 @@ class LocationBackfillService:
                     )
                 except asyncio.TimeoutError:
                     return _ResolveResult(
-                        diagnostics=_BackfillDiagnostics(fallback_reason="total_budget_exhausted")
+                        diagnostics=self._budget_exhausted_diagnostics(place, destination)
                     )
 
         results = await asyncio.gather(*(resolve_job(place) for _, place, _ in jobs))
@@ -532,6 +532,15 @@ class LocationBackfillService:
                 return _ResolveResult(resolved=query_result.resolved, diagnostics=diagnostics)
         diagnostics.fallback_reason = self._choose_fallback_reason(diagnostics)
         return _ResolveResult(diagnostics=diagnostics)
+
+    def _budget_exhausted_diagnostics(self, place: str, destination: str) -> _BackfillDiagnostics:
+        all_variants = self._build_variants(place, destination)
+        variants = all_variants[: self._max_variants_per_place]
+        return _BackfillDiagnostics(
+            fallback_reason="total_budget_exhausted",
+            variants_tried=variants,
+            variant_limit_reached=len(all_variants) > len(variants),
+        )
 
     async def _query_best_candidate(self, place: str, destination: str, variant: str) -> _QueryResult:
         best: dict | None = None

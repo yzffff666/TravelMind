@@ -661,6 +661,18 @@ def test_backfill_diagnostics_records_zero_score_candidate_for_audit():
     assert result.diagnostics.best_match_score == 0.0
 
 
+def test_backfill_budget_exhausted_diagnostics_preserve_planned_variants():
+    svc = _service_with_provider(EmptyTrackingMapProvider(), max_variants_per_place=2)
+
+    diagnostics = svc._budget_exhausted_diagnostics("Bangla Road", "Phuket")
+
+    assert diagnostics.fallback_reason == "total_budget_exhausted"
+    assert diagnostics.variants_tried == ["Bangla Road", "Bangla Road Patong"]
+    assert diagnostics.provider_status_counts == {}
+    assert diagnostics.candidate_count == 0
+    assert diagnostics.variant_limit_reached is True
+
+
 def test_backfill_english_token_subset_score_handles_canonical_titles():
     svc = _service_with_fake_provider()
 
