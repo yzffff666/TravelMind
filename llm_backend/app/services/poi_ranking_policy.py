@@ -11,6 +11,7 @@ rankers.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -243,6 +244,68 @@ class POIRankingPolicy:
         if feature.bbox_valid is False:
             reasons.append("bbox_invalid")
         return reasons
+
+
+def build_ranking_shadow_report(
+    *,
+    destination: str,
+    recalled_count: int,
+    legacy_ranked: list[Any],
+    policy_ranked: list[RankedPOICandidate],
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """Summarize old ranking vs new policy ranking without changing runtime output."""
+    legacy_top = [_candidate_summary(item.candidate) for item in legacy_ranked[:top_k]]
+    accepted = [item for item in policy_ranked if item.accepted]
+    rejected = [item for item in policy_ranked if not item.accepted]
+    policy_top = [
+        {
+            **_candidate_summary(item.candidate),
+            "rank_score": item.rank_score,
+            "score_breakdown": item.score_breakdown,
+        }
+        for item in accepted[:top_k]
+    ]
+
+    legacy_ids = {item["candidate_id"] for item in legacy_top if item.get("candidate_id")}
+    policy_ids = {item["candidate_id"] for item in policy_top if item.get("candidate_id")}
+    overlap_denominator = min(len(legacy_ids), len(policy_ids), top_k) or 1
+    overlap_count = len(legacy_ids & policy_ids)
+    reason_counts = Counter(reason for item in rejected for reason in item.reject_reasons)
+
+    return {
+        "event_type": "poi_ranking_shadow",
+        "destination": destination,
+        "recalled_count": recalled_count,
+        "legacy_ranked_count": len(legacy_ranked),
+        "policy_ranked_count": len(policy_ranked),
+        "policy_accepted_count": len(accepted),
+        "policy_rejected_count": len(rejected),
+        "top_k": top_k,
+        "top_k_overlap_count": overlap_count,
+        "top_k_overlap_rate": round(overlap_count / overlap_denominator, 4),
+        "reject_reason_counts": dict(reason_counts),
+        "legacy_top": legacy_top,
+        "policy_top": policy_top,
+        "rejected_samples": [
+            {
+                **_candidate_summary(item.candidate),
+                "rank_score": item.rank_score,
+                "reject_reasons": item.reject_reasons,
+                "risk_flags": item.feature.risk_flags,
+            }
+            for item in rejected[:top_k]
+        ],
+    }
+
+
+def _candidate_summary(candidate: ProviderCandidate) -> dict[str, Any]:
+    return {
+        "candidate_id": candidate.candidate_id,
+        "title": candidate.title,
+        "source": candidate.source,
+        "score": round(float(candidate.score or 0.0), 4),
+    }
 
 
 def _preference_match(candidate: ProviderCandidate, preferences: list[str]) -> float:

@@ -5,8 +5,13 @@ Agent decision quality: extract features, apply hard gates, then rank accepted
 POI candidates with explainable score breakdown.
 """
 
-from app.services.poi_ranking_policy import CandidateFeature, POIRankingPolicy
+from app.services.poi_ranking_policy import (
+    CandidateFeature,
+    POIRankingPolicy,
+    build_ranking_shadow_report,
+)
 from app.services.providers.base import ProviderCandidate
+from app.services.ranking_scorer import ScoredCandidate
 
 
 def _candidate(
@@ -126,3 +131,32 @@ def test_policy_rejects_generic_activity_candidate():
 
     assert ranked[0].accepted is False
     assert "generic_activity" in ranked[0].reject_reasons
+
+
+def test_shadow_report_summarizes_legacy_vs_policy_decisions():
+    accepted = _candidate("Kata Beach", extra={"alias_hit": True})
+    rejected = _candidate("Eiffel Tower", lat=48.8584, lng=2.2945)
+    legacy_ranked = [
+        ScoredCandidate(candidate=rejected, total_score=0.95),
+        ScoredCandidate(candidate=accepted, total_score=0.80),
+    ]
+    policy_ranked = POIRankingPolicy().rank(
+        [rejected, accepted],
+        destination="普吉岛",
+        include_rejected=True,
+    )
+
+    report = build_ranking_shadow_report(
+        destination="普吉岛",
+        recalled_count=2,
+        legacy_ranked=legacy_ranked,
+        policy_ranked=policy_ranked,
+    )
+
+    assert report["event_type"] == "poi_ranking_shadow"
+    assert report["policy_accepted_count"] == 1
+    assert report["policy_rejected_count"] == 1
+    assert report["reject_reason_counts"] == {"bbox_invalid": 1}
+    assert report["legacy_top"][0]["title"] == "Eiffel Tower"
+    assert report["policy_top"][0]["title"] == "Kata Beach"
+    assert report["rejected_samples"][0]["reject_reasons"] == ["bbox_invalid"]

@@ -26,11 +26,13 @@ KNOWN_EVENTS = {
     "provider_call",
     "location_backfill",
     "itinerary_quality_summary",
+    "poi_ranking_shadow",
     "qp_parsed",
     "qa_local_fast_path",
 }
 
 MAX_BACKFILL_SAMPLE_ROWS = 10
+MAX_RANKING_SAMPLE_ROWS = 10
 
 
 def _normalize_event_type(event_type: str) -> str:
@@ -206,6 +208,7 @@ def summarize_events(events: Iterable[ObservabilityEvent]) -> dict[str, Any]:
         "cache": _summarize_cache(event_list),
         "providers": _summarize_providers(event_list),
         "backfill": _summarize_backfill(event_list),
+        "poi_ranking": _summarize_poi_ranking(event_list),
         "qp": _summarize_qp(event_list),
         "qa": _summarize_qa(event_list),
     }
@@ -417,6 +420,56 @@ def _build_backfill_unresolved_samples(events: list[ObservabilityEvent]) -> list
     return samples
 
 
+def _summarize_poi_ranking(events: list[ObservabilityEvent]) -> dict[str, Any]:
+    relevant = [event for event in events if event.event_type == "poi_ranking_shadow"]
+    overlap_rates = [_as_float(event.payload.get("top_k_overlap_rate")) for event in relevant]
+    accepted_counts = [_as_float(event.payload.get("policy_accepted_count")) for event in relevant]
+    rejected_counts = [_as_float(event.payload.get("policy_rejected_count")) for event in relevant]
+    recalled_counts = [_as_float(event.payload.get("recalled_count")) for event in relevant]
+
+    return {
+        "events": len(relevant),
+        "destination_counts": _compact_counter(Counter(event.payload.get("destination") for event in relevant)),
+        "reject_reason_counts": _merge_count_mappings(relevant, "reject_reason_counts"),
+        "recalled_count": _stats(recalled_counts),
+        "policy_accepted_count": _stats(accepted_counts),
+        "policy_rejected_count": _stats(rejected_counts),
+        "top_k_overlap_rate": _stats(overlap_rates),
+        "rejected_samples": _build_poi_ranking_rejected_samples(relevant),
+    }
+
+
+def _stats(values: list[float | None]) -> dict[str, float | None]:
+    present = [value for value in values if value is not None]
+    return {
+        "p50": _percentile(present, 50),
+        "p95": _percentile(present, 95),
+        "avg": _mean(present),
+    }
+
+
+def _build_poi_ranking_rejected_samples(events: list[ObservabilityEvent]) -> list[dict[str, Any]]:
+    samples: list[dict[str, Any]] = []
+    for event in events:
+        destination = event.payload.get("destination")
+        for sample in event.payload.get("rejected_samples") or []:
+            if not isinstance(sample, dict):
+                continue
+            samples.append(
+                {
+                    "destination": destination,
+                    "title": sample.get("title"),
+                    "source": sample.get("source"),
+                    "rank_score": _as_float(sample.get("rank_score")),
+                    "reject_reasons": sample.get("reject_reasons") or [],
+                    "risk_flags": sample.get("risk_flags") or [],
+                }
+            )
+            if len(samples) >= MAX_RANKING_SAMPLE_ROWS:
+                return samples
+    return samples
+
+
 def _summarize_qp(events: list[ObservabilityEvent]) -> dict[str, Any]:
     relevant = [event for event in events if event.event_type == "qp_parsed" or event.payload.get("qp_source")]
     confidences = [_as_float(event.payload.get("confidence")) for event in relevant]
@@ -567,6 +620,48 @@ def render_markdown(summary: dict[str, Any]) -> str:
         lines.append("")
     else:
         lines.extend(["### Backfill Unresolved Samples", "", "- No unresolved backfill samples.", ""])
+
+    lines.extend(
+        [
+            "## POI Ranking Shadow",
+            "",
+            f"- Events: {summary['poi_ranking']['events']}",
+            f"- Destination counts: `{json.dumps(summary['poi_ranking']['destination_counts'], ensure_ascii=False)}`",
+            f"- Reject reasons: `{json.dumps(summary['poi_ranking']['reject_reason_counts'], ensure_ascii=False)}`",
+            f"- Recalled count: `{json.dumps(summary['poi_ranking']['recalled_count'], ensure_ascii=False)}`",
+            f"- Policy accepted count: `{json.dumps(summary['poi_ranking']['policy_accepted_count'], ensure_ascii=False)}`",
+            f"- Policy rejected count: `{json.dumps(summary['poi_ranking']['policy_rejected_count'], ensure_ascii=False)}`",
+            f"- Top-K overlap rate: `{json.dumps(summary['poi_ranking']['top_k_overlap_rate'], ensure_ascii=False)}`",
+            "",
+        ]
+    )
+    if summary["poi_ranking"]["rejected_samples"]:
+        lines.extend(
+            [
+                "### POI Ranking Rejected Samples",
+                "",
+                "| Title | Destination | Source | Reasons | Risk Flags | Rank Score |",
+                "|-------|-------------|--------|---------|------------|------------|",
+            ]
+        )
+        for sample in summary["poi_ranking"]["rejected_samples"]:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _markdown_cell(sample.get("title")),
+                        _markdown_cell(sample.get("destination")),
+                        _markdown_cell(sample.get("source")),
+                        _markdown_cell(",".join(str(item) for item in sample.get("reject_reasons") or [])),
+                        _markdown_cell(",".join(str(item) for item in sample.get("risk_flags") or [])),
+                        _markdown_cell(sample.get("rank_score")),
+                    ]
+                )
+                + " |"
+            )
+        lines.append("")
+    else:
+        lines.extend(["### POI Ranking Rejected Samples", "", "- No POI ranking rejected samples.", ""])
 
     lines.extend(
         [

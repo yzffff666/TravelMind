@@ -216,6 +216,29 @@ def test_summarize_events_groups_core_metrics():
                 {"qa_source": "local_itinerary", "qa_elapsed_ms": 18.5},
             )
         ),
+        parse_log_line(
+            _loguru_json(
+                "poi_ranking_shadow",
+                {
+                    "event_type": "poi_ranking_shadow",
+                    "destination": "Phuket",
+                    "recalled_count": 4,
+                    "policy_accepted_count": 3,
+                    "policy_rejected_count": 1,
+                    "top_k_overlap_rate": 0.5,
+                    "reject_reason_counts": {"bbox_invalid": 1},
+                    "rejected_samples": [
+                        {
+                            "title": "Wrong Place",
+                            "source": "serp_map",
+                            "rank_score": 0.12,
+                            "reject_reasons": ["bbox_invalid"],
+                            "risk_flags": ["bbox_invalid"],
+                        }
+                    ],
+                },
+            )
+        ),
     ]
 
     summary = summarize_events(event for event in events if event is not None)
@@ -272,6 +295,11 @@ def test_summarize_events_groups_core_metrics():
     assert summary["qa"]["events"] == 1
     assert summary["qa"]["source_counts"] == {"local_itinerary": 1}
     assert summary["qa"]["elapsed_ms"]["p50"] == 18.5
+    assert summary["poi_ranking"]["events"] == 1
+    assert summary["poi_ranking"]["destination_counts"] == {"Phuket": 1}
+    assert summary["poi_ranking"]["reject_reason_counts"] == {"bbox_invalid": 1}
+    assert summary["poi_ranking"]["top_k_overlap_rate"]["p50"] == 0.5
+    assert summary["poi_ranking"]["rejected_samples"][0]["title"] == "Wrong Place"
 
 
 def test_render_markdown_includes_major_sections():
@@ -296,6 +324,8 @@ def test_render_markdown_includes_major_sections():
     assert '"miss": 1' in markdown
     assert "### Backfill Unresolved Samples" in markdown
     assert "- No unresolved backfill samples." in markdown
+    assert "## POI Ranking Shadow" in markdown
+    assert "- No POI ranking rejected samples." in markdown
 
 
 def test_render_markdown_includes_backfill_unresolved_samples_table():

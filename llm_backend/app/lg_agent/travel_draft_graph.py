@@ -45,6 +45,7 @@ from app.services.coverage_tracker import CoverageTracker
 from app.services.evidence_builder import EvidenceBuilder, PipelineResult
 from app.services.geo_bounds import is_coord_within_destination
 from app.services.location_backfill_service import LocationBackfillService
+from app.services.poi_ranking_policy import POIRankingPolicy, build_ranking_shadow_report
 from app.services.ranking_scorer import RankingScorer
 from app.services.recall_service import RecallService
 
@@ -432,6 +433,7 @@ class TravelDraftState(TravelDraftInput):
     pipeline_result: Any  # PipelineResult or None (not serialisable as TypedDict)
     recall_degraded: bool
     recall_geo_index: dict  # full name→{lat,lng,image_url} from ALL recalled candidates
+    poi_ranking_shadow_report: dict
 
     # -- llm_draft_node outputs --
     raw_llm_content: str | None
@@ -730,10 +732,12 @@ async def recall_node(state: TravelDraftState) -> dict:
     pipeline_result: PipelineResult | None = None
     recall_degraded = False
     recall_geo_index: dict = {}
+    poi_ranking_shadow_report: dict = {}
     try:
         qp, recall_svc, scorer, flt, eb, _ = _get_pipeline()
         qp_output = qp.process(state["query"])
         recall_result = await recall_svc.recall_from_qp(qp_output)
+        constraints = qp_output.get("constraints", {})
 
         for rc in recall_result.candidates:
             c = rc.candidate if hasattr(rc, "candidate") else rc
@@ -764,6 +768,23 @@ async def recall_node(state: TravelDraftState) -> dict:
                 recall_geo_index[title] = entry
 
         ranked = scorer.rank_from_qp(recall_result.candidates, qp_output, top_k=15)
+        policy_ranked = POIRankingPolicy().rank(
+            recall_result.candidates,
+            destination=constraints.get("destination_city") or recall_result.city,
+            preferences=constraints.get("preferences"),
+            budget=constraints.get("budget"),
+            days=constraints.get("days"),
+            top_k=max(len(recall_result.candidates), 15),
+            include_rejected=True,
+        )
+        poi_ranking_shadow_report = build_ranking_shadow_report(
+            destination=constraints.get("destination_city") or recall_result.city,
+            recalled_count=len(recall_result.candidates),
+            legacy_ranked=ranked,
+            policy_ranked=policy_ranked,
+        )
+        logger.info("poi_ranking_shadow", extra=poi_ranking_shadow_report)
+
         filter_result = flt.apply_from_qp(ranked, qp_output)
         pipeline_result = eb.build(filter_result, recall_result)
         recall_degraded = pipeline_result.degraded
@@ -789,6 +810,7 @@ async def recall_node(state: TravelDraftState) -> dict:
         "pipeline_result": pipeline_result,
         "recall_degraded": recall_degraded,
         "recall_geo_index": recall_geo_index,
+        "poi_ranking_shadow_report": poi_ranking_shadow_report,
         "perf": {**state.get("perf", {}), "recall_ms": elapsed},
     }
 

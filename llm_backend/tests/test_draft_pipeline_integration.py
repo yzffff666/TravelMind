@@ -271,6 +271,8 @@ class TestRecallNode:
         with patch("app.services.providers.factory._get_key", return_value=None):
             result = _run(recall_node(state))
         assert result["pipeline_result"] is not None
+        assert result["poi_ranking_shadow_report"]["event_type"] == "poi_ranking_shadow"
+        assert "policy_accepted_count" in result["poi_ranking_shadow_report"]
         assert "recall_ms" in result["perf"]
 
     def test_recall_failure_graceful(self):
@@ -286,6 +288,7 @@ class TestRecallNode:
                 result = _run(recall_node(state))
         assert result["pipeline_result"] is None
         assert result["recall_degraded"] is True
+        assert result["poi_ranking_shadow_report"] == {}
 
 
 class TestLlmDraftNode:
