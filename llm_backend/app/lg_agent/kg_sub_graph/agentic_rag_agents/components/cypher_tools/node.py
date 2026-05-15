@@ -101,7 +101,7 @@ def create_cypher_query_node(
 
         NEO4J_URI="bolt://localhost"
         NEO4J_USERNAME="neo4j"
-        NEO4J_PASSWORD="g1601522830"
+        NEO4J_PASSWORD="your-neo4j-password"
         NEO4J_DATABASE="neo4j"
 
         driver = GraphDatabase.driver(
@@ -169,4 +169,3 @@ def create_cypher_query_node(
             }
   
     return cypher_query
-

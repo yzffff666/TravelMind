@@ -1,5 +1,6 @@
 import aiohttp
 import asyncio
+import os
 import time
 from pathlib import Path
 from loguru import logger
@@ -487,7 +488,7 @@ class OllamaBenchmark:
 
 async def main():
     benchmark = OllamaBenchmark(
-        url="http://192.168.110.131:11434",  # 这里替换成实际的ollama endpoint
+        url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         model="deepseek-r1:1.5b"             # 这里替换成实际要进行测试的模型名称
     )
     
