@@ -1,6 +1,6 @@
-# TravelMind 性能优化与技术选型综合分析报告
+# TravelMind Agentic POI Ranking 与性能/质量综合分析报告
 
-> 版本：v5.11（双语输入输出观测闭环） | 日期：2026-05-05 | 作者：TravelMind Dev Team
+> 版本：v5.12（Agentic POI Ranking 定位与 shadow ranking 观测） | 日期：2026-05-20 | 作者：TravelMind Dev Team
 >
 > 说明：本文是“当前状态型”报告，保留核心数据、阶段演进和下一步判断；完整历史长文已归档到 [performance-analysis-report-v5.6-full-history.md](archive/performance-analysis-report-v5.6-full-history.md)。
 
@@ -8,7 +8,15 @@
 
 ## 1. 当前结论
 
-TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定性与缓存收益验证”阶段。当前已经完成的关键变化：
+TravelMind 的主线已经从单纯的“性能优化项目”收束为“旅行规划 Agent 中的 POI 候选排序与决策质量系统”。
+
+新的定位是：
+
+```text
+TravelMind = Agentic POI Ranking for Travel Planning
+```
+
+也就是说，性能、缓存、Provider 成本治理仍然重要，但它们现在是 guardrail；当前更核心的价值是把 Amap / SerpAPI / Mock Provider 返回的 POI 候选，变成可解释、可排序、可观测、可回归的 Agent 决策输入。当前已经完成的关键变化：
 
 - LangGraph 从单节点重构为 `extract -> recall -> llm_draft -> postprocess` 四节点图，缺字段可毫秒级早退。
 - Provider 检索和坐标回填已并行化，并补充 `provider_call`、`location_backfill`、`itinerary_quality_summary` 结构化日志。
@@ -18,16 +26,17 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 - Redis 语义缓存已从 `KEYS + Python 全扫` 升级为 `L1 exact + L2 FAISS + SCAN fallback`。
 - 基于已有行程的 QA 已增加本地 fast path，明确问“第 N 天安排”时可跳过 Structured QP LLM。
 - 双语链路已完成首轮闭环：`observability_smoke.py` 增加 `bilingual` 用例集，`original_query` 与 `recall_query` 分层，英文 create / QA 可按英文输出并进入 `response_language` 观测。
+- `POIRankingPolicy` 已作为 rule-based baseline 落地，并以 shadow mode 在 `recall_node` 中并行产出 `poi_ranking_shadow` 结构化日志，不改变线上主链路结果。
+- `observability_summary.py` 已能汇总 POI Ranking Shadow 的 accepted/rejected 数量、reject reasons、Top-K overlap 和 rejected samples，为后续排序策略迭代提供数据入口。
 
-当前最重要的后续工作不是继续大幅改架构，而是用真实样例和日志验证：
+当前最重要的后续工作不是继续零散修 POI alias，而是用 shadow ranking 观测把“哪些候选该进入 LLM”这件事量化清楚：
 
-- LLM retry / timeout 的真实恢复率。
-- `cache_source=exact|faiss|semantic_scan|miss` 的命中分布。
-- Provider / backfill 的 P50/P95、fallback 原因和 unresolved 样例。
-- LLM draft prompt/output 规模、`response_language` 与耗时之间的关系，以及输出瘦身后的收益。
-- QA `qa_source=local_itinerary` 的命中率与未命中原因。
-- Structured QP 从 30 条扩到 60-100 条后的稳定性。
-- 海外/双语 POI 的 unresolved 率、bbox/score 拒绝原因和 negative cache 命中。
+- `poi_ranking_shadow` 的 Top-K overlap：新策略和旧策略到底差多少。
+- reject reasons：主要是在拒绝泛地点、bbox invalid、duplicate，还是误伤真实 POI。
+- rejected samples：把被拒候选变成人工 audit 的最小样本集。
+- accepted/rejected rate 与 Backfill unresolved、LLM draft 质量之间的关系。
+- 双语/海外 POI 的 alias、bbox、evidence coverage 是否应该进入 ranking feature，而不是继续散落在 backfill 小修里。
+- LLM retry、cache_source、response_language、QA fast path 等性能指标继续保留为质量系统的成本/稳定性 guardrail。
 
 ---
 
@@ -39,6 +48,7 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
   -> QP: rule baseline + optional Structured QP
   -> LangGraph: extract -> recall -> llm_draft -> postprocess
   -> Provider: Amap / SerpAPI / fallback
+  -> POI Ranking Shadow: CandidateFeature -> hard gates -> soft score -> observability
   -> Cache: Redis 真源 + L1 exact + FAISS L2 index
   -> MySQL: 用户、会话、行程状态
 ```
@@ -53,6 +63,7 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 | QP            | 规则 baseline + Structured QP feature flag      | Structured QP 样例量仍小，生产默认开启需继续观察   |
 | DeepSeek LLM  | 已补 timeout/retry/latency logging，并完成 draft 输出瘦身 | 远程 API 仍是尾延迟核心来源，后续继续验证更多真实样例 |
 | Provider      | 并行调用、timeout、结构化日志                            | Provider 调用已较快，剩余风险集中在长尾 POI 质量和 evidence URL |
+| POI Ranking   | `POIRankingPolicy` 已 shadow mode 运行，不影响主链路输出 | 样本仍少，需通过 smoke/summary 验证 reject 是否误伤真实 POI |
 | Redis / FAISS | Redis 存 response/vector/meta，FAISS 做进程内 L2 检索 | 多进程下 FAISS index 不共享，后续可评估 Qdrant |
 | Embedding     | 仍使用 Ollama embedding                          | `EMBEDDING_TYPE` 配置尚未真正生效         |
 
@@ -110,6 +121,7 @@ TravelMind 的性能优化已经从“主链路可用”进入“成本、稳定
 | v5.9 Backfill 诊断与 POI 清洗 | 用 unresolved 样例驱动质量优化 | Backfill unresolved samples、目的地清洗、POI alias、泛地点跳过、provider list/dict 字段兼容 | Extended backfill 从 `8/3/1/5` 改善到 `7/4/2/3`，海外 create smoke 通过 |
 | v5.10 LLM draft 输出瘦身 | 降低远程 LLM 生成成本 | draft prompt 增加 output 约束，slot 只让 LLM 生成 `slot/activity/place`，补 `response_language` 诊断字段 | Extended create 明显下降：国内约 18.0s -> 10.2s，海外约 33.8s -> 16.0s |
 | v5.11 双语观测闭环 | 验证英文/中英混合输入输出 | 新增 `bilingual` smoke，传递 `original_query` 保护语言判断，QA fast path 和 draft explanation 支持英文输出 | bilingual smoke 4/4 通过，draft language `{"en": 1, "zh-CN": 1}`，英文 QA 约 17ms |
+| v5.12 Agentic POI Ranking shadow | 把 Provider 候选排序变成可观测决策问题 | 新增 `POIRankingPolicy`、`CandidateFeature`、`poi_ranking_shadow` 日志和 summary 汇总 | 新策略先只旁路观测，不改变主链路，下一步用 rejected samples 和 overlap 决定是否收紧规则 |
 
 
 ---
@@ -229,6 +241,27 @@ lookup(messages)
 - FAISS 不可用不影响主链路，会回退 `semantic_scan`。
 - 日志区分 `cache_source=exact|faiss|semantic_scan|miss`。
 
+### 5.6 Agentic POI Ranking Shadow
+
+当前新增的 POI Ranking 不是直接替换旧逻辑，而是先以 shadow mode 运行：
+
+```text
+Provider candidates
+  -> legacy RankingScorer + ConstraintFilter
+  -> shadow POIRankingPolicy
+  -> poi_ranking_shadow structured log
+  -> observability_summary POI Ranking Shadow section
+```
+
+关键设计：
+
+- `CandidateFeature` 把原始 Provider 候选归一成可比较特征，例如 `alias_hit`、`bbox_valid`、`has_geo`、`evidence_score`、`provider_confidence`、`is_generic_activity`。
+- `POIRankingPolicy` 分两层判断：hard gate 先拒绝明显不该进入候选池的项，soft score 再给剩余候选排序。
+- `build_ranking_shadow_report` 对比 legacy ranking 和 policy ranking，记录 Top-K overlap、reject reasons、accepted/rejected 数量和 rejected samples。
+- `travel_draft_graph.py` 当前仍使用旧 ranking 结果进入后续链路，shadow policy 只写日志，因此改动风险低。
+
+这一步的长期意义是：把“LLM 为什么选了这个 POI”前移到可解释的候选排序层，而不是等到 Backfill unresolved 后再补洞。
+
 ---
 
 ## 6. 当前剩余 Gap
@@ -236,12 +269,13 @@ lookup(messages)
 
 | 优先级 | Gap                   | 原因                                   | 推荐动作                                                             |
 | --- | --------------------- | ------------------------------------ | ---------------------------------------------------------------- |
-| 高   | 真实流量观测不足              | 已有日志但缺少汇总统计                          | 汇总 LLM P50/P95、retry 恢复率、cache hit 分布                            |
-| 中   | LLM draft 长尾仍需更多真实样例 | 已完成输出瘦身，但样本仍少，远程 LLM 波动存在 | 持续记录 `prompt_chars/output_chars/response_language`，扩展中英混合 extended smoke |
-| 高   | EmbeddingProvider 未解耦 | `EMBEDDING_TYPE` 声明尚未接入缓存路径          | 抽象 embedding provider，支持 Ollama / sentence-transformers fallback |
+| 高   | POI Ranking shadow 样本不足 | 已有 `poi_ranking_shadow` 日志，但还缺少真实 smoke 下的稳定对比 | 跑 mini/extended/bilingual smoke，优先看 Top-K overlap、reject reasons、误伤样例 |
+| 高   | CandidateFeature 仍偏规则化 | 当前特征覆盖 bbox、alias、evidence、provider confidence，但还不够表达偏好和约束 | 从 rejected samples 中补充 preference、budget、transport、evidence URL 等特征 |
+| 中   | LLM draft 长尾仍需更多真实样例 | 已完成输出瘦身，但样本仍少，远程 LLM 波动存在 | 持续记录 `prompt_chars/output_chars/response_language`，作为 ranking 改造的成本 guardrail |
+| 中   | EmbeddingProvider 未解耦 | `EMBEDDING_TYPE` 声明尚未接入缓存路径          | Stage B 语义 rerank 前再抽象 embedding provider，支持 Ollama / sentence-transformers fallback |
 | 中   | FAISS 多进程不共享          | 当前是进程内索引                             | 个人项目可接受；多实例部署时评估 Qdrant                                          |
 | 中   | 请求去重非分布式              | 进程内 TTL guard                        | 多 worker 时改 Redis `SET NX`                                       |
-| 中   | Provider / Backfill 双语长尾仍明显 | 最新 bilingual smoke 中 backfill attempted 10 / filled 4 / unresolved 6 | 优先修英文/混合 POI 的 alias、bbox/score 拒绝和 negative cache 误伤 |
+| 中   | Provider / Backfill 双语长尾仍明显 | 最新 bilingual smoke 中 backfill attempted 10 / filled 4 / unresolved 6 | 作为 ranking/badcase 样本来源，不再优先零散 patch；先确认是否是候选排序或特征缺失 |
 | 中   | 前端进度透明度不足             | SSE 事件有了，但 UI 未充分展示 tool/provider 过程 | 展示 tool_result、阶段耗时、低置信度提示                                       |
 | 中   | Structured QP 样例量不足   | 30 条不足以默认开启                          | 扩展到 60-100 条再决定默认策略                                              |
 | 低   | QA fast path 覆盖面有限     | 当前优先覆盖 itinerary 结构内的天数、预算、某天安排        | 扩展交通/住宿/证据类本地回答，未命中再走 LLM                                      |
@@ -253,28 +287,32 @@ lookup(messages)
 
 推荐顺序：
 
-1. **Backfill 双语长尾样例小修**
-   - 最新 bilingual smoke 中，语言链路已闭环，但 backfill 仍为 attempted 10 / filled 4 / unresolved 6。
-   - 优先分析 `Phuket Weekend Market`、`Big Buddha Phuket`、`Patong Beach`、`Kan Eang@Pier` 等英文 POI 的 `bbox_rejected`、`score_rejected` 和 `cache_negative_hit`。
-   - 先做 alias / 查询词拆分 / negative cache key 策略的小步修复，再用 `bilingual` smoke 复测。
-2. **继续观测型性能分析测试**
-   - `observability_summary.py` 已能统计 LLM、Provider、Backfill、QP、QA，并展示 `Backfill Unresolved Samples`。
+1. **跑一轮 POI Ranking Shadow 观测回归**
+   - 使用同一批 mini/extended/bilingual smoke，收集 `poi_ranking_shadow`。
+   - 优先看 `top_k_overlap_rate`、`reject_reason_counts`、`policy_accepted_count`、`policy_rejected_count` 和 `POI Ranking Rejected Samples`。
+   - 如果 overlap 很低，要先人工 audit rejected samples，不能直接把新 policy 切成主路径。
+2. **基于 rejected samples 调整 CandidateFeature**
+   - 如果误伤来自 alias/bbox，就补 alias 或 bbox 策略。
+   - 如果误伤来自偏好/预算/交通语义，就补 feature，而不是继续在 backfill 里硬编码。
+   - 如果拒绝确实合理，再考虑把对应 hard gate 从 shadow 推进到主链路 guardrail。
+3. **继续观测型性能分析测试**
+   - `observability_summary.py` 已能统计 LLM、Provider、Backfill、QP、QA，并展示 `Backfill Unresolved Samples` 与 `POI Ranking Shadow`。
    - `observability_smoke.py` 已能按 `mini/extended/bilingual` 调用 `/travel/query` 并保存 SSE 事件与单次 structured log 窗口。
    - 推荐命令：`python -m scripts.observability_smoke --base-url http://127.0.0.1:8000 --user-id 1 --case-set bilingual`。
    - 详细说明见 [观测型性能分析测试](evaluation/观测型性能分析测试.md)。
-3. **扩展更多城市的双语 Provider 样例**
+4. **扩展更多城市的双语 Provider 样例**
    - 优先修 `查龙寺/Wat Chalong`、`Maya Bay/玛雅湾` 等明确 POI alias 和 bbox 拒绝样例。
    - 在普吉岛外扩展巴黎、伦敦、新加坡、纽约等英文/中英混合目的地，避免只对单城过拟合。
-4. **EmbeddingProvider 解耦**
+5. **EmbeddingProvider 解耦**
   - 让 `EMBEDDING_TYPE` 真正生效。
   - Ollama 不可用时可走 `sentence-transformers` fallback。
-5. **前端进度与错误态优化**
+6. **前端进度与错误态优化**
   - 展示“正在理解需求 / 检索资料 / 生成行程 / 坐标回填”。
   - 错误发生时避免旧 itinerary 让用户误以为成功。
-6. **Structured QP 扩样**
+7. **Structured QP 扩样**
   - 从 30 条扩到 60-100 条。
   - 加入中英混合、反悔表达、多城市、弱约束。
-7. **再考虑 Qdrant / 分布式缓存**
+8. **再考虑 Qdrant / 分布式缓存**
   - 只有当缓存规模、多 worker、持久化索引需求出现时再做。
 
 ---
@@ -332,7 +370,7 @@ lookup(messages)
 ## 9. 快速引用
 
 ```text
-核心结论：TravelMind 已从“完整生成但等待长”优化到“可渐进展示、可观测、可缓存复用、可按样例修复 backfill 质量、可控制 LLM 输出成本、可观测双语输入输出”的阶段；下一阶段重点是双语/海外 POI 长尾和更大样例评测。
+核心结论：TravelMind 已从“完整生成但等待长”优化到“可渐进展示、可观测、可缓存复用、可控制 LLM 输出成本、可观测双语输入输出”的阶段；当前主线进一步收束为 Agentic POI Ranking，即把 Provider 候选变成可解释、可排序、可回归的 Agent 决策输入。
 
 已完成：
 - 四节点 LangGraph + 条件边早退
@@ -346,9 +384,12 @@ lookup(messages)
 - LLM draft prompt/output 诊断与输出瘦身
 - `response_language` 诊断字段与 `original_query` 语言链路
 - bilingual smoke 样例覆盖英文 create / QA / edit 和中英混合 POI
+- `POIRankingPolicy` rule-based baseline
+- `poi_ranking_shadow` 旁路观测与 summary 汇总
 
 剩余重点：
-- 优化双语/海外 POI backfill 长尾，降低 unresolved 和 negative cache 误伤
+- 跑 POI Ranking Shadow 观测回归，人工 audit rejected samples
+- 基于误伤样例补 CandidateFeature，再决定哪些 hard gate 能进入主链路
 - 用日志统计真实 P50/P95、retry 恢复率、cache hit 分布
 - 解耦 EmbeddingProvider
 - 扩展 Structured QP 和 Provider 真实样例
