@@ -460,7 +460,11 @@ def _build_poi_ranking_rejected_samples(events: list[ObservabilityEvent]) -> lis
                     "destination": destination,
                     "title": sample.get("title"),
                     "source": sample.get("source"),
+                    "lat": _as_float(sample.get("lat")),
+                    "lng": _as_float(sample.get("lng")),
+                    "address": sample.get("address"),
                     "rank_score": _as_float(sample.get("rank_score")),
+                    "score_breakdown": sample.get("score_breakdown") or {},
                     "reject_reasons": sample.get("reject_reasons") or [],
                     "risk_flags": sample.get("risk_flags") or [],
                 }
@@ -640,11 +644,14 @@ def render_markdown(summary: dict[str, Any]) -> str:
             [
                 "### POI Ranking Rejected Samples",
                 "",
-                "| Title | Destination | Source | Reasons | Risk Flags | Rank Score |",
-                "|-------|-------------|--------|---------|------------|------------|",
+                "| Title | Destination | Source | Geo | Address | Reasons | Risk Flags | Rank Score | Score Breakdown |",
+                "|-------|-------------|--------|-----|---------|---------|------------|------------|-----------------|",
             ]
         )
         for sample in summary["poi_ranking"]["rejected_samples"]:
+            lat = sample.get("lat")
+            lng = sample.get("lng")
+            geo = f"{lat},{lng}" if lat is not None and lng is not None else None
             lines.append(
                 "| "
                 + " | ".join(
@@ -652,9 +659,12 @@ def render_markdown(summary: dict[str, Any]) -> str:
                         _markdown_cell(sample.get("title")),
                         _markdown_cell(sample.get("destination")),
                         _markdown_cell(sample.get("source")),
+                        _markdown_cell(geo),
+                        _markdown_cell(sample.get("address")),
                         _markdown_cell(",".join(str(item) for item in sample.get("reject_reasons") or [])),
                         _markdown_cell(",".join(str(item) for item in sample.get("risk_flags") or [])),
                         _markdown_cell(sample.get("rank_score")),
+                        _markdown_cell(json.dumps(sample.get("score_breakdown") or {}, ensure_ascii=False, sort_keys=True)),
                     ]
                 )
                 + " |"

@@ -291,6 +291,7 @@ def build_ranking_shadow_report(
             {
                 **_candidate_summary(item.candidate),
                 "rank_score": item.rank_score,
+                "score_breakdown": item.score_breakdown,
                 "reject_reasons": item.reject_reasons,
                 "risk_flags": item.feature.risk_flags,
             }
@@ -305,6 +306,9 @@ def _candidate_summary(candidate: ProviderCandidate) -> dict[str, Any]:
         "title": candidate.title,
         "source": candidate.source,
         "score": round(float(candidate.score or 0.0), 4),
+        "lat": _as_float(candidate.extra.get("lat")),
+        "lng": _as_float(candidate.extra.get("lng")),
+        "address": candidate.extra.get("address"),
     }
 
 

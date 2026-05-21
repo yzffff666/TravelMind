@@ -231,7 +231,11 @@ def test_summarize_events_groups_core_metrics():
                         {
                             "title": "Wrong Place",
                             "source": "serp_map",
+                            "lat": 43.95,
+                            "lng": 125.54,
+                            "address": "Changchun",
                             "rank_score": 0.12,
+                            "score_breakdown": {"distance_feasibility": 0.0, "evidence_score": 0.5},
                             "reject_reasons": ["bbox_invalid"],
                             "risk_flags": ["bbox_invalid"],
                         }
@@ -300,6 +304,10 @@ def test_summarize_events_groups_core_metrics():
     assert summary["poi_ranking"]["reject_reason_counts"] == {"bbox_invalid": 1}
     assert summary["poi_ranking"]["top_k_overlap_rate"]["p50"] == 0.5
     assert summary["poi_ranking"]["rejected_samples"][0]["title"] == "Wrong Place"
+    assert summary["poi_ranking"]["rejected_samples"][0]["lat"] == 43.95
+    assert summary["poi_ranking"]["rejected_samples"][0]["lng"] == 125.54
+    assert summary["poi_ranking"]["rejected_samples"][0]["address"] == "Changchun"
+    assert summary["poi_ranking"]["rejected_samples"][0]["score_breakdown"]["distance_feasibility"] == 0.0
 
 
 def test_render_markdown_includes_major_sections():

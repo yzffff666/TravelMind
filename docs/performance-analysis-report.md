@@ -257,7 +257,7 @@ Provider candidates
 
 - `CandidateFeature` 把原始 Provider 候选归一成可比较特征，例如 `alias_hit`、`bbox_valid`、`has_geo`、`evidence_score`、`provider_confidence`、`is_generic_activity`。
 - `POIRankingPolicy` 分两层判断：hard gate 先拒绝明显不该进入候选池的项，soft score 再给剩余候选排序。
-- `build_ranking_shadow_report` 对比 legacy ranking 和 policy ranking，记录 Top-K overlap、reject reasons、accepted/rejected 数量和 rejected samples。
+- `build_ranking_shadow_report` 对比 legacy ranking 和 policy ranking，记录 Top-K overlap、reject reasons、accepted/rejected 数量和 rejected samples；rejected samples 会保留坐标、地址和 `score_breakdown`，便于人工 audit。
 - `travel_draft_graph.py` 当前仍使用旧 ranking 结果进入后续链路，shadow policy 只写日志，因此改动风险低。
 
 这一步的长期意义是：把“LLM 为什么选了这个 POI”前移到可解释的候选排序层，而不是等到 Backfill unresolved 后再补洞。

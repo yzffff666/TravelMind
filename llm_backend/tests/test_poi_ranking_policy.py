@@ -160,3 +160,7 @@ def test_shadow_report_summarizes_legacy_vs_policy_decisions():
     assert report["legacy_top"][0]["title"] == "Eiffel Tower"
     assert report["policy_top"][0]["title"] == "Kata Beach"
     assert report["rejected_samples"][0]["reject_reasons"] == ["bbox_invalid"]
+    assert report["rejected_samples"][0]["lat"] == 48.8584
+    assert report["rejected_samples"][0]["lng"] == 2.2945
+    assert report["rejected_samples"][0]["address"] == "Phuket address"
+    assert report["rejected_samples"][0]["score_breakdown"]["distance_feasibility"] == 0.0
