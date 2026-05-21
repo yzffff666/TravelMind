@@ -38,8 +38,10 @@ class Settings(BaseSettings):
     SERPAPI_KEY: str
     SEARCH_RESULT_COUNT: int = 3
     SERPAPI_ENABLED: bool = True
+    SERPAPI_LIVE_ENABLED: bool = False
     SERPAPI_RESPONSE_CACHE_ENABLED: bool = True
     SERPAPI_RESPONSE_CACHE_DIR: str = "reports/provider-cache/serpapi"
+    PROVIDER_COST_MODE: str = "standard"  # cheap / standard / full
 
     # Amap (高德地图) settings
     AMAP_API_KEY: str = ""

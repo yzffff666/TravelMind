@@ -184,6 +184,7 @@ class ProviderOrchestrator:
                 context=context,
                 degraded=resp.degraded,
                 cache_source=resp.meta.get("cache_source"),
+                provider_cost_tier=resp.meta.get("provider_cost_tier"),
             )
             return _ProviderOutcome(
                 provider_name=provider.name,
@@ -263,6 +264,7 @@ class ProviderOrchestrator:
                 context=context,
                 degraded=resp.degraded,
                 cache_source=resp.meta.get("cache_source"),
+                provider_cost_tier=resp.meta.get("provider_cost_tier"),
             )
             return _ProviderOutcome(
                 provider_name=provider.name,
@@ -367,6 +369,7 @@ class ProviderOrchestrator:
         error_type: str = "",
         degraded: bool = False,
         cache_source: str | None = None,
+        provider_cost_tier: str | None = None,
     ) -> None:
         structured_logger.info(
             "provider_call",
@@ -385,6 +388,7 @@ class ProviderOrchestrator:
                 "error_type": error_type,
                 "degraded": degraded,
                 "cache_source": cache_source,
+                "provider_cost_tier": provider_cost_tier,
             },
         )
 

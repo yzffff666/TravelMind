@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from hashlib import md5
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,16 @@ def _cache_enabled() -> bool:
         return bool(settings.SERPAPI_RESPONSE_CACHE_ENABLED)
     except Exception:
         return True
+
+
+def _live_enabled() -> bool:
+    try:
+        from app.core.config import settings
+        return bool(settings.SERPAPI_LIVE_ENABLED) or str(settings.PROVIDER_COST_MODE).lower() == "full"
+    except Exception:
+        raw_live = str(os.getenv("SERPAPI_LIVE_ENABLED", "false")).lower()
+        raw_mode = str(os.getenv("PROVIDER_COST_MODE", "standard")).lower()
+        return raw_live in {"1", "true", "yes", "on"} or raw_mode == "full"
 
 
 def _cache_dir() -> Path:
@@ -99,6 +110,9 @@ async def _fetch_serpapi_json(params: dict[str, Any], timeout: float) -> tuple[d
     cached = _read_cached_response(params)
     if cached is not None:
         return cached, "cache"
+    if not _live_enabled():
+        logger.info("SerpAPI live call skipped because SERPAPI_LIVE_ENABLED=false")
+        return {}, "live_disabled"
 
     # Ignore host-level proxy env vars to avoid accidental blackhole proxies.
     async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
@@ -162,7 +176,10 @@ class SerpApiSearchProvider(SearchProvider):
                 )
             )
 
-        return ProviderResponse(candidates=candidates, meta={"cache_source": cache_source})
+        return ProviderResponse(
+            candidates=candidates,
+            meta={"cache_source": cache_source, "provider_cost_tier": "expensive"},
+        )
 
     @staticmethod
     def _position_score(position: int) -> float:
@@ -283,9 +300,15 @@ class SerpApiMapProvider(MapProvider):
                 )
 
         if not candidates:
-            return ProviderResponse(degraded=True, meta={"cache_source": cache_source})
+            return ProviderResponse(
+                degraded=True,
+                meta={"cache_source": cache_source, "provider_cost_tier": "expensive"},
+            )
 
-        return ProviderResponse(candidates=candidates, meta={"cache_source": cache_source})
+        return ProviderResponse(
+            candidates=candidates,
+            meta={"cache_source": cache_source, "provider_cost_tier": "expensive"},
+        )
 
     @staticmethod
     def _type_text(type_value: object) -> str:

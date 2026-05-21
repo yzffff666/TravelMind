@@ -275,7 +275,7 @@ Provider candidates
 | 中   | EmbeddingProvider 未解耦 | `EMBEDDING_TYPE` 声明尚未接入缓存路径          | Stage B 语义 rerank 前再抽象 embedding provider，支持 Ollama / sentence-transformers fallback |
 | 中   | FAISS 多进程不共享          | 当前是进程内索引                             | 个人项目可接受；多实例部署时评估 Qdrant                                          |
 | 中   | 请求去重非分布式              | 进程内 TTL guard                        | 多 worker 时改 Redis `SET NX`                                       |
-| 中   | Provider / Backfill 双语长尾仍明显 | 最新 bilingual smoke 中 backfill attempted 10 / filled 4 / unresolved 6 | 作为 ranking/badcase 样本来源，不再优先零散 patch；先确认是否是候选排序或特征缺失 |
+| 中   | Provider / Backfill 双语长尾仍明显 | 最新 bilingual smoke 中 backfill attempted 10 / filled 4 / unresolved 6；SerpAPI 已受成本模式保护 | 默认 cache-only，关键回归再设 `PROVIDER_COST_MODE=full` 或 `SERPAPI_LIVE_ENABLED=true` 跑真实海外 smoke |
 | 中   | 前端进度透明度不足             | SSE 事件有了，但 UI 未充分展示 tool/provider 过程 | 展示 tool_result、阶段耗时、低置信度提示                                       |
 | 中   | Structured QP 样例量不足   | 30 条不足以默认开启                          | 扩展到 60-100 条再决定默认策略                                              |
 | 低   | QA fast path 覆盖面有限     | 当前优先覆盖 itinerary 结构内的天数、预算、某天安排        | 扩展交通/住宿/证据类本地回答，未命中再走 LLM                                      |
@@ -298,6 +298,7 @@ Provider candidates
 3. **继续观测型性能分析测试**
    - `observability_summary.py` 已能统计 LLM、Provider、Backfill、QP、QA，并展示 `Backfill Unresolved Samples` 与 `POI Ranking Shadow`。
    - `observability_smoke.py` 已能按 `mini/extended/bilingual` 调用 `/travel/query` 并保存 SSE 事件与单次 structured log 窗口。
+   - SerpAPI 默认 cache-only；真实海外 smoke 需显式打开 `PROVIDER_COST_MODE=full` 或 `SERPAPI_LIVE_ENABLED=true`，避免日常调试误烧额度。
    - 推荐命令：`python -m scripts.observability_smoke --base-url http://127.0.0.1:8000 --user-id 1 --case-set bilingual`。
    - 详细说明见 [观测型性能分析测试](evaluation/观测型性能分析测试.md)。
 4. **扩展更多城市的双语 Provider 样例**

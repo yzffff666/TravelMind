@@ -13,6 +13,8 @@ import json
 
 from unittest.mock import AsyncMock, patch, MagicMock
 
+import pytest
+
 from app.services.providers.factory import build_registry
 from app.services.providers.orchestrator import ProviderOrchestrator
 from app.services.providers.serp_providers import (
@@ -23,6 +25,13 @@ from app.services.providers.serp_providers import (
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+@pytest.fixture(autouse=True)
+def _allow_serpapi_live_for_mocked_http_tests():
+    """Most provider tests mock HTTP; keep live enabled there to exercise parsing."""
+    with patch("app.services.providers.serp_providers._live_enabled", return_value=True):
+        yield
 
 
 FAKE_GOOGLE_RESPONSE = {
@@ -167,6 +176,19 @@ class TestSerpApiSearchProvider:
         assert second.meta["cache_source"] == "cache"
         assert mock_client.get.await_count == 1
 
+    def test_search_cache_only_skips_live_on_cache_miss(self, tmp_path):
+        sp = SerpApiSearchProvider("fake-key")
+        with patch("app.services.providers.serp_providers._cache_enabled", return_value=True), \
+                patch("app.services.providers.serp_providers._cache_dir", return_value=tmp_path), \
+                patch("app.services.providers.serp_providers._live_enabled", return_value=False), \
+                patch("app.services.providers.serp_providers.httpx.AsyncClient") as mock_cls:
+            resp = _run(sp.search(query="上海"))
+
+        assert resp.candidates == []
+        assert resp.meta["cache_source"] == "live_disabled"
+        assert resp.meta["provider_cost_tier"] == "expensive"
+        mock_cls.assert_not_called()
+
 
 # ======================== SerpApiMapProvider ========================
 
@@ -258,6 +280,16 @@ class TestProviderFactory:
 
         search_names = [p.name for p in reg.search_providers]
         assert "serp_search" in search_names
+        assert "mock_search" in search_names
+
+    def test_factory_cost_mode_cheap_skips_serp_even_with_key(self):
+        with patch("app.services.providers.factory._get_key") as mock_get, \
+                patch("app.services.providers.factory._provider_cost_mode", return_value="cheap"):
+            mock_get.side_effect = lambda s, e: "real-key" if "SERPAPI" in s else None
+            reg = build_registry()
+
+        search_names = [p.name for p in reg.search_providers]
+        assert "serp_search" not in search_names
         assert "mock_search" in search_names
 
     def test_factory_no_mock_fallback(self):

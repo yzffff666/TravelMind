@@ -4,7 +4,7 @@ Registration order = priority (first registered, first tried).
 
 Strategy:
 1. Amap (高德) — best for Chinese cities, generous free quota.
-2. SerpAPI — good for international cities or web search.
+2. SerpAPI — good for international cities or web search, treated as expensive.
 3. Mock — always-available fallback with fixture data.
 
 The ``ProviderOrchestrator`` iterates providers in registration order,
@@ -29,6 +29,7 @@ from app.services.providers.serp_providers import (
 logger = logging.getLogger(__name__)
 
 _PLACEHOLDER_KEYS = {"", "xxxxx", "xxxx", "your-api-key", "sk-xxxx"}
+_COST_MODES = {"cheap", "standard", "full"}
 
 
 def _get_key(setting_name: str, env_name: str) -> str | None:
@@ -56,6 +57,21 @@ def _provider_enabled(setting_name: str, env_name: str, default: bool = True) ->
         return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _provider_cost_mode() -> str:
+    """Return the configured provider cost mode.
+
+    ``standard`` keeps expensive providers cache-only, ``cheap`` skips them,
+    and ``full`` allows live paid-provider calls for intentional smoke runs.
+    """
+    try:
+        from app.core.config import settings
+        raw = getattr(settings, "PROVIDER_COST_MODE", "standard")
+    except Exception:
+        raw = os.getenv("PROVIDER_COST_MODE", "standard")
+    mode = str(raw or "standard").strip().lower()
+    return mode if mode in _COST_MODES else "standard"
+
+
 def build_registry(*, include_mock_fallback: bool = True) -> ProviderRegistry:
     """Build a ``ProviderRegistry`` with the best available providers.
 
@@ -72,14 +88,24 @@ def build_registry(*, include_mock_fallback: bool = True) -> ProviderRegistry:
     elif not amap_enabled:
         logger.info("Amap providers disabled by AMAP_ENABLED=false")
 
-    serpapi_enabled = _provider_enabled("SERPAPI_ENABLED", "SERPAPI_ENABLED")
+    cost_mode = _provider_cost_mode()
+    serpapi_enabled = (
+        _provider_enabled("SERPAPI_ENABLED", "SERPAPI_ENABLED")
+        and cost_mode != "cheap"
+    )
     serpapi_key = _get_key("SERPAPI_KEY", "SERPAPI_KEY") if serpapi_enabled else None
     if serpapi_key:
-        logger.info("SerpAPI key detected — registering search & map providers (priority 2)")
+        logger.info(
+            "SerpAPI key detected — registering search & map providers "
+            "(priority 2, cost_mode=%s)",
+            cost_mode,
+        )
         registry.register_search(SerpApiSearchProvider(serpapi_key))
         registry.register_map(SerpApiMapProvider(serpapi_key))
     elif not serpapi_enabled:
-        logger.info("SerpAPI providers disabled by SERPAPI_ENABLED=false")
+        logger.info(
+            "SerpAPI providers disabled by SERPAPI_ENABLED=false or PROVIDER_COST_MODE=cheap"
+        )
 
     if not amap_key and not serpapi_key:
         logger.warning(
