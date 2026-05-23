@@ -4,8 +4,9 @@ Registration order = priority (first registered, first tried).
 
 Strategy:
 1. Amap (高德) — best for Chinese cities, generous free quota.
-2. SerpAPI — good for international cities or web search, treated as expensive.
-3. Mock — always-available fallback with fixture data.
+2. Geoapify — low-cost global geocoding/places, good day-to-day overseas fallback.
+3. SerpAPI — high-quality international search/maps, treated as expensive.
+4. Mock — always-available fallback with fixture data.
 
 The ``ProviderOrchestrator`` iterates providers in registration order,
 so higher-quality providers are tried first; if they fail the
@@ -19,6 +20,10 @@ import logging
 import os
 
 from app.services.providers.amap_provider import AmapMapProvider, AmapSearchProvider
+from app.services.providers.geoapify_provider import (
+    GeoapifyMapProvider,
+    GeoapifySearchProvider,
+)
 from app.services.providers.mock_providers import MockMapProvider, MockSearchProvider
 from app.services.providers.registry import ProviderRegistry
 from app.services.providers.serp_providers import (
@@ -89,6 +94,19 @@ def build_registry(*, include_mock_fallback: bool = True) -> ProviderRegistry:
         logger.info("Amap providers disabled by AMAP_ENABLED=false")
 
     cost_mode = _provider_cost_mode()
+    geoapify_enabled = _provider_enabled("GEOAPIFY_ENABLED", "GEOAPIFY_ENABLED")
+    geoapify_key = _get_key("GEOAPIFY_KEY", "GEOAPIFY_KEY") if geoapify_enabled else None
+    if geoapify_key:
+        logger.info(
+            "Geoapify key detected — registering low-cost global search & map providers "
+            "(priority 2, cost_mode=%s)",
+            cost_mode,
+        )
+        registry.register_search(GeoapifySearchProvider(geoapify_key))
+        registry.register_map(GeoapifyMapProvider(geoapify_key))
+    elif not geoapify_enabled:
+        logger.info("Geoapify providers disabled by GEOAPIFY_ENABLED=false")
+
     serpapi_enabled = (
         _provider_enabled("SERPAPI_ENABLED", "SERPAPI_ENABLED")
         and cost_mode != "cheap"
@@ -97,7 +115,7 @@ def build_registry(*, include_mock_fallback: bool = True) -> ProviderRegistry:
     if serpapi_key:
         logger.info(
             "SerpAPI key detected — registering search & map providers "
-            "(priority 2, cost_mode=%s)",
+            "(priority 3, cost_mode=%s)",
             cost_mode,
         )
         registry.register_search(SerpApiSearchProvider(serpapi_key))
@@ -107,10 +125,10 @@ def build_registry(*, include_mock_fallback: bool = True) -> ProviderRegistry:
             "SerpAPI providers disabled by SERPAPI_ENABLED=false or PROVIDER_COST_MODE=cheap"
         )
 
-    if not amap_key and not serpapi_key:
+    if not amap_key and not geoapify_key and not serpapi_key:
         logger.warning(
             "No real API keys configured — only mock providers will be available. "
-            "Set AMAP_API_KEY or SERPAPI_KEY in .env to enable real search."
+            "Set AMAP_API_KEY, GEOAPIFY_KEY, or SERPAPI_KEY in .env to enable real search."
         )
 
     if include_mock_fallback:

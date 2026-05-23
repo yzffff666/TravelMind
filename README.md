@@ -130,7 +130,15 @@ DATABASE_URL=mysql+aiomysql://user:pass@localhost:3306/travelmind
 
 # Redis
 REDIS_URL=redis://localhost:6379/0
+
+# Provider（可选但推荐）
+AMAP_API_KEY=your-amap-key
+GEOAPIFY_KEY=your-geoapify-key
+SERPAPI_KEY=your-serpapi-key
+PROVIDER_COST_MODE=standard
 ```
+
+Provider 默认顺序是 `Amap -> Geoapify -> SerpAPI -> Mock`：国内优先高德，海外日常优先低成本 Geoapify，SerpAPI 作为更贵的兜底来源。日常开发建议保持 `SERPAPI_LIVE_ENABLED=false`，避免调试时误烧 SerpAPI 额度。
 
 ### 3. 安装前端依赖
 

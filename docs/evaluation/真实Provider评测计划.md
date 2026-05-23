@@ -12,6 +12,7 @@
 - 编辑行程后 changed day / changed slot 的局部坐标回填。
 - 国内与海外城市的点位匹配精度、fallback 触发率和地图可渲染性。
 - Provider 超时、空结果、低置信度结果时的降级说明是否可解释。
+- Provider 成本分层是否符合预期：Amap 处理国内，Geoapify 作为低成本海外优先来源，SerpAPI 只在关键回归或低成本 provider 不足时兜底。
 
 暂不覆盖：
 
@@ -30,6 +31,8 @@
 | 跨城市/跨国家误匹配率 | POI 坐标是否明显落到错误区域 | 必须人工抽检，海外优先 |
 | Provider 降级率 | 超时、空结果、异常导致降级的比例 | 需要写入 assumptions 或日志 |
 | evidence 可追溯率 | slot 是否能关联来源、provider 或说明 | 无 URL 时至少保留 provider/source |
+| 低成本覆盖率 | 海外 POI 是否先由 Geoapify 等低成本 provider 命中 | 降低 SerpAPI live 依赖 |
+| expensive 调用数 | SerpAPI live 调用数量 | 日常调试应接近 0，关键回归单独记录 |
 
 ## 4. 固定评测样例
 
@@ -43,7 +46,7 @@
 
 ## 5. 执行步骤
 
-1. 启动后端与前端，确认 `.env` 中真实 Provider key 已配置。
+1. 启动后端与前端，确认 `.env` 中真实 Provider key 已配置，优先配置 `GEOAPIFY_KEY`，SerpAPI 可保持 cache-only。
 2. 逐条输入固定样例，记录生成是否成功、耗时、coverage、fallback 情况。
 3. 对每条完整行程执行一次编辑操作，替换一个下午或晚上 slot。
 4. 打开地图检查 marker 是否显示、是否落在合理区域。
@@ -67,4 +70,4 @@
 
 ## 8. 下一步建议
 
-若本轮发现海外 fallback 比例偏高，优先做目的地边界框、地址国家校验和 Provider 置信度规则。若主要问题是耗时抖动，则优先补 Provider 超时预算、并发限制和失败重试策略。
+若本轮发现海外 fallback 比例偏高，先看 Geoapify 是否命中、是否 bbox/score 被拒，再决定补 alias、目的地边界框、地址国家校验或 Provider 置信度规则。若主要问题是耗时抖动，则优先补 Provider 超时预算、并发限制和失败重试策略。若 expensive 调用数偏高，优先补 Geoapify 缓存或低成本 provider 策略，而不是继续增加 SerpAPI 调用。

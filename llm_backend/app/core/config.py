@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     SERPAPI_RESPONSE_CACHE_DIR: str = "reports/provider-cache/serpapi"
     PROVIDER_COST_MODE: str = "standard"  # cheap / standard / full
 
+    # Geoapify settings (low-cost global geocoding / places provider)
+    GEOAPIFY_KEY: str = ""
+    GEOAPIFY_ENABLED: bool = True
+    GEOAPIFY_LIVE_ENABLED: bool = True
+    GEOAPIFY_RESPONSE_CACHE_ENABLED: bool = True
+    GEOAPIFY_RESPONSE_CACHE_DIR: str = "reports/provider-cache/geoapify"
+
     # Amap (高德地图) settings
     AMAP_API_KEY: str = ""
     AMAP_ENABLED: bool = True
