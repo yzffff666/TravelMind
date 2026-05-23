@@ -77,6 +77,27 @@ FAKE_PLACES_RESPONSE = {
     ]
 }
 
+FAKE_OLD_TOWN_MIXED_RESPONSE = {
+    "results": [
+        {
+            "name": "Phuket City Municipality, Phuket Old Town",
+            "formatted": "Phuket City Municipality, Phuket Old Town, 83000, Thailand",
+            "lat": 7.8847774,
+            "lon": 98.3892206,
+            "categories": ["administrative"],
+            "rank": {"confidence": 0.5},
+        },
+        {
+            "name": "Beehive Phuket Old Town Hostel",
+            "formatted": "Beehive Phuket Old Town Hostel, Debuk Road, Phuket Old Town, Thailand",
+            "lat": 7.8864847,
+            "lon": 98.3926823,
+            "categories": ["accommodation.hostel"],
+            "rank": {"confidence": 0.6},
+        },
+    ]
+}
+
 
 def _mock_response(response_data):
     mock_response = MagicMock()
@@ -191,7 +212,7 @@ class TestGeoapifyMapProvider:
         }
         with patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
             mock_cls.return_value = _mock_httpx_sequence(
-                [FAKE_EMPTY_RESPONSE, city_center, FAKE_PLACES_RESPONSE]
+                [city_center, FAKE_EMPTY_RESPONSE, FAKE_PLACES_RESPONSE]
             )
             resp = _run(mp.nearby_poi(city="Phuket", keywords=["Old Town"], top_k=3))
 
@@ -200,6 +221,22 @@ class TestGeoapifyMapProvider:
         assert resp.candidates[0].extra["lat"] == 7.8841
         assert resp.candidates[0].extra["lng"] == 98.3883
         assert resp.meta["cache_source"] == "live+live"
+        exact_params = mock_cls.return_value.get.await_args_list[1].kwargs["params"]
+        assert exact_params["filter"].startswith("circle:98.3923,7.8804,")
+        assert exact_params["bias"] == "proximity:98.3923,7.8804"
+
+    def test_nearby_poi_penalizes_lodging_when_query_is_attraction(self):
+        mp = GeoapifyMapProvider("fake-key")
+        city_center = {
+            "results": [{"name": "Phuket", "formatted": "Phuket, Thailand", "lat": 7.8804, "lon": 98.3923}]
+        }
+        with patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _mock_httpx_sequence(
+                [city_center, FAKE_OLD_TOWN_MIXED_RESPONSE, {"features": []}]
+            )
+            resp = _run(mp.nearby_poi(city="Phuket", keywords=["Phuket Old Town"], top_k=2))
+
+        assert resp.candidates[0].title == "Phuket City Municipality, Phuket Old Town"
 
 
 class TestGeoapifyFactory:

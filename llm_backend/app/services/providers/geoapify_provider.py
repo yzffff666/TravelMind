@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+from difflib import SequenceMatcher
 from hashlib import md5
 from pathlib import Path
 from typing import Any
@@ -264,6 +265,40 @@ def _candidate_from_item(item: dict[str, Any], *, source: str, location_hint: st
     )
 
 
+def _normalize_match_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", (text or "").lower()).strip()
+
+
+def _name_match_score(title_norm: str, query_norm: str) -> float:
+    if not title_norm or not query_norm:
+        return 0.0
+    if title_norm == query_norm:
+        return 1.0
+    if query_norm in title_norm:
+        return 0.92
+    if title_norm in query_norm:
+        title_tokens = set(title_norm.split())
+        query_tokens = set(query_norm.split())
+        coverage = len(title_tokens) / max(len(query_tokens), 1)
+        return 0.45 + 0.45 * coverage
+    title_tokens = set(title_norm.split())
+    query_tokens = set(query_norm.split())
+    token_overlap = len(title_tokens & query_tokens) / max(len(query_tokens), 1)
+    fuzzy = SequenceMatcher(None, title_norm, query_norm).ratio()
+    return max(token_overlap, fuzzy)
+
+
+def _category_mismatch_penalty(candidate: ProviderCandidate, query_norm: str) -> float:
+    categories = " ".join(str(item).lower() for item in candidate.extra.get("categories") or [])
+    title_norm = _normalize_match_text(candidate.title)
+    lodging_terms = {"hotel", "hostel", "resort", "accommodation", "guesthouse"}
+    lodging_query = any(term in query_norm for term in lodging_terms)
+    lodging_candidate = any(term in categories or term in title_norm for term in lodging_terms)
+    if lodging_candidate and not lodging_query:
+        return 0.25
+    return 0.0
+
+
 def _dedupe(candidates: list[ProviderCandidate]) -> list[ProviderCandidate]:
     seen: set[str] = set()
     deduped: list[ProviderCandidate] = []
@@ -317,7 +352,7 @@ class GeoapifySearchProvider(SearchProvider):
 class GeoapifyMapProvider(MapProvider):
     """Global POI lookup via Geoapify geocoding plus Places fallback."""
 
-    def __init__(self, api_key: str, *, timeout: float = 10.0, radius_meters: int = 50000) -> None:
+    def __init__(self, api_key: str, *, timeout: float = 10.0, radius_meters: int = 120000) -> None:
         self._api_key = api_key
         self._timeout = timeout
         self._radius_meters = radius_meters
@@ -336,6 +371,7 @@ class GeoapifyMapProvider(MapProvider):
     ) -> ProviderResponse:
         keyword_text = " ".join(keyword.strip() for keyword in keywords if keyword.strip())
         query = f"{keyword_text}, {city}".strip(" ,") if keyword_text else f"tourist attractions, {city}".strip(" ,")
+        city_candidate = await self._city_center(city) if city else None
 
         geocode_params: dict[str, Any] = {
             "text": query,
@@ -344,6 +380,8 @@ class GeoapifyMapProvider(MapProvider):
             "lang": _detect_lang(query),
             "apiKey": self._api_key,
         }
+        if city_candidate:
+            self._add_city_bias(geocode_params, city_candidate)
         geocode_data, geocode_cache_source = await _fetch_geoapify_json(
             _GEOCODE_URL,
             geocode_params,
@@ -356,8 +394,17 @@ class GeoapifyMapProvider(MapProvider):
         ]
 
         places_cache_source = ""
-        if len(candidates) < top_k and city:
-            city_candidate = await self._city_center(city)
+        # Named POI queries benefit from Places even when geocoding returns
+        # generic nearby entities; merge both sources and rank by name match.
+        if keyword_text and city_candidate:
+            places_candidates, places_cache_source = await self._places_near_city(
+                city=city,
+                keyword_text=keyword_text,
+                center=city_candidate,
+                top_k=top_k,
+            )
+            candidates.extend(places_candidates)
+        elif len(candidates) < top_k and city:
             if city_candidate:
                 places_candidates, places_cache_source = await self._places_near_city(
                     city=city,
@@ -368,6 +415,7 @@ class GeoapifyMapProvider(MapProvider):
                 candidates.extend(places_candidates)
 
         cache_sources = [source for source in (geocode_cache_source, places_cache_source) if source]
+        candidates = self._rank_candidates(candidates, keyword_text or city)
         return ProviderResponse(
             candidates=_dedupe(candidates)[:top_k],
             degraded=not candidates,
@@ -375,6 +423,29 @@ class GeoapifyMapProvider(MapProvider):
                 "cache_source": "+".join(cache_sources) if cache_sources else geocode_cache_source,
                 "provider_cost_tier": "low_cost",
             },
+        )
+
+    def _add_city_bias(self, params: dict[str, Any], center: dict[str, Any]) -> None:
+        lat = center.get("lat")
+        lon = center.get("lon")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            return
+        params["filter"] = f"circle:{lon},{lat},{self._radius_meters}"
+        params["bias"] = f"proximity:{lon},{lat}"
+
+    @staticmethod
+    def _rank_candidates(candidates: list[ProviderCandidate], query: str) -> list[ProviderCandidate]:
+        query_norm = _normalize_match_text(query)
+        if not query_norm:
+            return candidates
+        return sorted(
+            candidates,
+            key=lambda candidate: (
+                _name_match_score(_normalize_match_text(candidate.title), query_norm)
+                - _category_mismatch_penalty(candidate, query_norm),
+                candidate.score,
+            ),
+            reverse=True,
         )
 
     async def _city_center(self, city: str) -> dict[str, Any] | None:
