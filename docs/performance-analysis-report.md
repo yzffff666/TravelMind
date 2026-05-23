@@ -299,6 +299,7 @@ Provider candidates
    - `observability_summary.py` 已能统计 LLM、Provider、Backfill、QP、QA，并展示 `Backfill Unresolved Samples` 与 `POI Ranking Shadow`。
    - `observability_smoke.py` 已能按 `mini/extended/bilingual` 调用 `/travel/query` 并保存 SSE 事件与单次 structured log 窗口。
    - SerpAPI 默认 cache-only；真实海外 smoke 需显式打开 `PROVIDER_COST_MODE=full` 或 `SERPAPI_LIVE_ENABLED=true`，避免日常调试误烧额度。
+   - 新增 `live_probe` 单用例集，用最小真实海外请求验证 SerpAPI / Amap / LLM / POI Ranking Shadow 链路。
    - 推荐命令：`python -m scripts.observability_smoke --base-url http://127.0.0.1:8000 --user-id 1 --case-set bilingual`。
    - 详细说明见 [观测型性能分析测试](evaluation/观测型性能分析测试.md)。
 4. **扩展更多城市的双语 Provider 样例**

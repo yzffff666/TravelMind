@@ -32,6 +32,16 @@ def test_case_sets_include_bilingual_language_coverage():
     assert "查龙寺" in cases["mixed_poi_create"].query
 
 
+def test_case_sets_include_single_live_probe():
+    cases = CASE_SETS["live_probe"]
+
+    assert len(cases) == 1
+    assert cases[0].name == "serpapi_live_probe_phuket"
+    assert cases[0].reset_conversation is True
+    assert cases[0].conversation_alias == "live_probe"
+    assert "Phuket" in cases[0].query
+
+
 def test_parse_sse_events_handles_named_and_data_events():
     lines = [
         "event: intent_routed",

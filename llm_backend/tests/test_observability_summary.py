@@ -167,7 +167,8 @@ def test_summarize_events_groups_core_metrics():
             "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
             "provider_call {'event_type': 'provider_call', 'provider_name': 'serp', "
             "'provider_kind': 'search', 'elapsed_ms': 81, 'status': 'timeout', "
-            "'degraded': True, 'cache_source': 'live', 'provider_cost_tier': 'expensive'}"
+            "'degraded': True, 'error_message': '搜索服务超时', "
+            "'cache_source': 'live', 'provider_cost_tier': 'expensive'}"
         ),
         parse_log_line(
             "2026-05-01 10:00:00.000 | INFO | x:y:1 - "
@@ -263,6 +264,7 @@ def test_summarize_events_groups_core_metrics():
     assert summary["cache"]["source_counts"] == {"exact": 1}
     assert summary["cache"]["hit_rate"] == 1.0
     assert summary["providers"]["by_provider"]["serp:search"]["degraded_count"] == 1
+    assert summary["providers"]["by_provider"]["serp:search"]["error_message_counts"] == {"搜索服务超时": 1}
     assert summary["providers"]["by_provider"]["serp:search"]["cache_source_counts"] == {"live": 1, "cache": 1}
     assert summary["providers"]["by_provider"]["serp:search"]["provider_cost_tier_counts"] == {"expensive": 2}
     assert summary["providers"]["by_provider"]["serp:search"]["live_call_count"] == 1

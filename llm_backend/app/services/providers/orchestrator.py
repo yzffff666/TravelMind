@@ -204,7 +204,9 @@ class ProviderOrchestrator:
                 status="timeout",
                 context=context,
                 error_type="TimeoutError",
+                error_message="搜索服务超时",
                 degraded=True,
+                provider_cost_tier=self._provider_cost_tier(provider.name),
             )
             return _ProviderOutcome(
                 provider_name=provider.name,
@@ -224,7 +226,9 @@ class ProviderOrchestrator:
                 status="error",
                 context=context,
                 error_type=type(exc).__name__,
+                error_message=str(exc),
                 degraded=True,
+                provider_cost_tier=self._provider_cost_tier(provider.name),
             )
             return _ProviderOutcome(
                 provider_name=provider.name,
@@ -284,7 +288,9 @@ class ProviderOrchestrator:
                 status="timeout",
                 context=context,
                 error_type="TimeoutError",
+                error_message="地图服务超时",
                 degraded=True,
+                provider_cost_tier=self._provider_cost_tier(provider.name),
             )
             return _ProviderOutcome(
                 provider_name=provider.name,
@@ -304,7 +310,9 @@ class ProviderOrchestrator:
                 status="error",
                 context=context,
                 error_type=type(exc).__name__,
+                error_message=str(exc),
                 degraded=True,
+                provider_cost_tier=self._provider_cost_tier(provider.name),
             )
             return _ProviderOutcome(
                 provider_name=provider.name,
@@ -367,6 +375,7 @@ class ProviderOrchestrator:
         context: ProviderCallContext | None,
         result_count: int = 0,
         error_type: str = "",
+        error_message: str = "",
         degraded: bool = False,
         cache_source: str | None = None,
         provider_cost_tier: str | None = None,
@@ -386,11 +395,18 @@ class ProviderOrchestrator:
                 "status": status,
                 "result_count": result_count,
                 "error_type": error_type,
+                "error_message": error_message,
                 "degraded": degraded,
                 "cache_source": cache_source,
                 "provider_cost_tier": provider_cost_tier,
             },
         )
+
+    @staticmethod
+    def _provider_cost_tier(provider_name: str) -> str | None:
+        if provider_name.startswith("serp_"):
+            return "expensive"
+        return None
 
     @staticmethod
     def _merge_response(

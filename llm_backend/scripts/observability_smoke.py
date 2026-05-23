@@ -143,6 +143,15 @@ CASE_SETS: dict[str, list[SmokeCase]] = {
             expect_events=("intent_routed", "final_itinerary"),
         ),
     ],
+    "live_probe": [
+        SmokeCase(
+            name="serpapi_live_probe_phuket",
+            query="Plan a 2 day trip to Phuket with budget 4000 CNY, relaxed beaches and food",
+            conversation_alias="live_probe",
+            reset_conversation=True,
+            expect_events=("intent_routed",),
+        ),
+    ],
 }
 
 
