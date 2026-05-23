@@ -1,6 +1,6 @@
 # TravelMind Agentic POI Ranking 与性能/质量综合分析报告
 
-> 版本：v5.12（Agentic POI Ranking 定位与 shadow ranking 观测） | 日期：2026-05-20 | 作者：TravelMind Dev Team
+> 版本：v5.13（Provider HTTP 诊断与 live probe 根因确认） | 日期：2026-05-22 | 作者：TravelMind Dev Team
 >
 > 说明：本文是“当前状态型”报告，保留核心数据、阶段演进和下一步判断；完整历史长文已归档到 [performance-analysis-report-v5.6-full-history.md](archive/performance-analysis-report-v5.6-full-history.md)。
 
@@ -28,6 +28,7 @@ TravelMind = Agentic POI Ranking for Travel Planning
 - 双语链路已完成首轮闭环：`observability_smoke.py` 增加 `bilingual` 用例集，`original_query` 与 `recall_query` 分层，英文 create / QA 可按英文输出并进入 `response_language` 观测。
 - `POIRankingPolicy` 已作为 rule-based baseline 落地，并以 shadow mode 在 `recall_node` 中并行产出 `poi_ranking_shadow` 结构化日志，不改变线上主链路结果。
 - `observability_summary.py` 已能汇总 POI Ranking Shadow 的 accepted/rejected 数量、reject reasons、Top-K overlap 和 rejected samples，为后续排序策略迭代提供数据入口。
+- Provider HTTP 失败已能被结构化诊断：SerpAPI live probe 复测确认当前 SerpAPI 失败是 HTTP `429` 额度耗尽（`Your account has run out of searches`），不是 query、bbox 或 ranking 策略问题。
 
 当前最重要的后续工作不是继续零散修 POI alias，而是用 shadow ranking 观测把“哪些候选该进入 LLM”这件事量化清楚：
 
@@ -37,6 +38,7 @@ TravelMind = Agentic POI Ranking for Travel Planning
 - accepted/rejected rate 与 Backfill unresolved、LLM draft 质量之间的关系。
 - 双语/海外 POI 的 alias、bbox、evidence coverage 是否应该进入 ranking feature，而不是继续散落在 backfill 小修里。
 - LLM retry、cache_source、response_language、QA fast path 等性能指标继续保留为质量系统的成本/稳定性 guardrail。
+- Provider 成本与可用性也要继续作为 guardrail：当 SerpAPI 额度不可用时，Amap 对海外 POI 的 recall 质量不足会让 ranking 没有候选可排，因此应先恢复/替代海外 Provider，再判断 ranking 策略收益。
 
 ---
 
@@ -122,6 +124,7 @@ TravelMind = Agentic POI Ranking for Travel Planning
 | v5.10 LLM draft 输出瘦身 | 降低远程 LLM 生成成本 | draft prompt 增加 output 约束，slot 只让 LLM 生成 `slot/activity/place`，补 `response_language` 诊断字段 | Extended create 明显下降：国内约 18.0s -> 10.2s，海外约 33.8s -> 16.0s |
 | v5.11 双语观测闭环 | 验证英文/中英混合输入输出 | 新增 `bilingual` smoke，传递 `original_query` 保护语言判断，QA fast path 和 draft explanation 支持英文输出 | bilingual smoke 4/4 通过，draft language `{"en": 1, "zh-CN": 1}`，英文 QA 约 17ms |
 | v5.12 Agentic POI Ranking shadow | 把 Provider 候选排序变成可观测决策问题 | 新增 `POIRankingPolicy`、`CandidateFeature`、`poi_ranking_shadow` 日志和 summary 汇总 | 新策略先只旁路观测，不改变主链路，下一步用 rejected samples 和 overlap 决定是否收紧规则 |
+| v5.13 Provider HTTP 诊断 | 区分 Provider 失败是额度、认证、限流、参数还是服务不可用 | SerpAPI HTTP 错误包装为结构化异常，Provider 日志补 `http_status_code` / `error_response_snippet`，summary 汇总 HTTP 状态与响应片段 | live probe 确认 SerpAPI 当前为 HTTP 429 额度耗尽；ranking 无候选不是策略问题，而是 upstream recall 不可用 |
 
 
 ---
@@ -270,6 +273,7 @@ Provider candidates
 | 优先级 | Gap                   | 原因                                   | 推荐动作                                                             |
 | --- | --------------------- | ------------------------------------ | ---------------------------------------------------------------- |
 | 高   | POI Ranking shadow 样本不足 | 已有 `poi_ranking_shadow` 日志，但还缺少真实 smoke 下的稳定对比 | 跑 mini/extended/bilingual smoke，优先看 Top-K overlap、reject reasons、误伤样例 |
+| 高   | 海外 Provider live 可用性不稳定 | SerpAPI live probe 已确认当前账号 HTTP 429 额度耗尽；Amap 对 Phuket 等海外 POI recall 质量不足 | SerpAPI 额度恢复前保持 cache-only；关键回归只跑 `live_probe`；如长期做海外/双语数据集，评估增加低成本海外 Provider 或更严格的 live 预算策略 |
 | 高   | CandidateFeature 仍偏规则化 | 当前特征覆盖 bbox、alias、evidence、provider confidence，但还不够表达偏好和约束 | 从 rejected samples 中补充 preference、budget、transport、evidence URL 等特征 |
 | 中   | LLM draft 长尾仍需更多真实样例 | 已完成输出瘦身，但样本仍少，远程 LLM 波动存在 | 持续记录 `prompt_chars/output_chars/response_language`，作为 ranking 改造的成本 guardrail |
 | 中   | EmbeddingProvider 未解耦 | `EMBEDDING_TYPE` 声明尚未接入缓存路径          | Stage B 语义 rerank 前再抽象 embedding provider，支持 Ollama / sentence-transformers fallback |
@@ -300,6 +304,7 @@ Provider candidates
    - `observability_smoke.py` 已能按 `mini/extended/bilingual` 调用 `/travel/query` 并保存 SSE 事件与单次 structured log 窗口。
    - SerpAPI 默认 cache-only；真实海外 smoke 需显式打开 `PROVIDER_COST_MODE=full` 或 `SERPAPI_LIVE_ENABLED=true`，避免日常调试误烧额度。
    - 新增 `live_probe` 单用例集，用最小真实海外请求验证 SerpAPI / Amap / LLM / POI Ranking Shadow 链路。
+   - 如果 Provider summary 出现 SerpAPI `HTTP status counts: {"429": ...}` 且响应包含 `Your account has run out of searches`，应先处理额度/供应商可用性，不要把问题误判为 ranking 或 alias。
    - 推荐命令：`python -m scripts.observability_smoke --base-url http://127.0.0.1:8000 --user-id 1 --case-set bilingual`。
    - 详细说明见 [观测型性能分析测试](evaluation/观测型性能分析测试.md)。
 4. **扩展更多城市的双语 Provider 样例**
@@ -388,9 +393,11 @@ Provider candidates
 - bilingual smoke 样例覆盖英文 create / QA / edit 和中英混合 POI
 - `POIRankingPolicy` rule-based baseline
 - `poi_ranking_shadow` 旁路观测与 summary 汇总
+- Provider HTTP 状态、错误响应片段与 SerpAPI 额度耗尽诊断
 
 剩余重点：
 - 跑 POI Ranking Shadow 观测回归，人工 audit rejected samples
+- 恢复或替代海外 Provider live 可用性，避免 ranking 因没有候选而无法评估
 - 基于误伤样例补 CandidateFeature，再决定哪些 hard gate 能进入主链路
 - 用日志统计真实 P50/P95、retry 恢复率、cache hit 分布
 - 解耦 EmbeddingProvider

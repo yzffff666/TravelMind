@@ -168,6 +168,7 @@ def test_summarize_events_groups_core_metrics():
             "provider_call {'event_type': 'provider_call', 'provider_name': 'serp', "
             "'provider_kind': 'search', 'elapsed_ms': 81, 'status': 'timeout', "
             "'degraded': True, 'error_message': '搜索服务超时', "
+            "'http_status_code': 429, 'error_response_snippet': 'quota exceeded', "
             "'cache_source': 'live', 'provider_cost_tier': 'expensive'}"
         ),
         parse_log_line(
@@ -265,6 +266,8 @@ def test_summarize_events_groups_core_metrics():
     assert summary["cache"]["hit_rate"] == 1.0
     assert summary["providers"]["by_provider"]["serp:search"]["degraded_count"] == 1
     assert summary["providers"]["by_provider"]["serp:search"]["error_message_counts"] == {"搜索服务超时": 1}
+    assert summary["providers"]["by_provider"]["serp:search"]["http_status_counts"] == {"429": 1}
+    assert summary["providers"]["by_provider"]["serp:search"]["error_response_snippet_counts"] == {"quota exceeded": 1}
     assert summary["providers"]["by_provider"]["serp:search"]["cache_source_counts"] == {"live": 1, "cache": 1}
     assert summary["providers"]["by_provider"]["serp:search"]["provider_cost_tier_counts"] == {"expensive": 2}
     assert summary["providers"]["by_provider"]["serp:search"]["live_call_count"] == 1

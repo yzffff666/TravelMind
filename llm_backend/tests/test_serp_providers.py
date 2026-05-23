@@ -14,10 +14,13 @@ import json
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
+import httpx
 
 from app.services.providers.factory import build_registry
+from app.services.providers.base import ProviderErrorCode
 from app.services.providers.orchestrator import ProviderOrchestrator
 from app.services.providers.serp_providers import (
+    SerpApiHTTPError,
     SerpApiMapProvider,
     SerpApiSearchProvider,
 )
@@ -110,6 +113,25 @@ def _mock_httpx_get(response_data):
     return mock_client
 
 
+def _mock_httpx_status_error(status_code: int, payload: dict):
+    """Create a mock that raises an HTTPStatusError with JSON body."""
+    request = httpx.Request("GET", "https://serpapi.com/search")
+    response = httpx.Response(status_code, json=payload, request=request)
+    error = httpx.HTTPStatusError("bad response", request=request, response=response)
+
+    mock_response = MagicMock()
+    mock_response.status_code = status_code
+    mock_response.raise_for_status.side_effect = error
+    mock_response.json.return_value = payload
+    mock_response.text = json.dumps(payload, ensure_ascii=False)
+
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_response
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    return mock_client
+
+
 # ======================== SerpApiSearchProvider ========================
 
 
@@ -188,6 +210,21 @@ class TestSerpApiSearchProvider:
         assert resp.meta["cache_source"] == "live_disabled"
         assert resp.meta["provider_cost_tier"] == "expensive"
         mock_cls.assert_not_called()
+
+    def test_search_http_status_error_has_structured_diagnostics(self):
+        sp = SerpApiSearchProvider("fake-key")
+        with patch("app.services.providers.serp_providers.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _mock_httpx_status_error(
+                401,
+                {"error": "Invalid API key", "api_key": "secret"},
+            )
+
+            with pytest.raises(SerpApiHTTPError) as exc_info:
+                _run(sp.search(query="Phuket"))
+
+        assert exc_info.value.status_code == 401
+        assert "Invalid API key" in exc_info.value.response_snippet
+        assert "secret" not in exc_info.value.response_snippet
 
 
 # ======================== SerpApiMapProvider ========================
@@ -339,3 +376,18 @@ class TestFactoryOrchestrator:
             result = _run(orch.recall(query="上海", city="上海"))
 
         assert len(result.candidates) > 0
+
+    def test_e2e_serp_http_status_maps_to_auth_failed(self):
+        with patch("app.services.providers.factory._get_key") as mock_get:
+            mock_get.side_effect = lambda s, e: "key-123" if "SERPAPI" in s else None
+            reg = build_registry(include_mock_fallback=False)
+
+        with patch("app.services.providers.serp_providers.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _mock_httpx_status_error(401, {"error": "Invalid API key"})
+            orch = ProviderOrchestrator(reg)
+            result = _run(orch.recall(query="Phuket", city="Phuket"))
+
+        assert result.degraded is True
+        assert result.errors
+        assert {error.code for error in result.errors} == {ProviderErrorCode.AUTH_FAILED}
+        assert all("SerpAPI HTTP 401" in error.message for error in result.errors)

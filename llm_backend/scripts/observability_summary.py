@@ -323,11 +323,16 @@ def _summarize_providers(events: list[ObservabilityEvent]) -> dict[str, Any]:
         cache_source_counts = Counter(item.payload.get("cache_source") for item in items)
         cache_source_counts_compact = _compact_counter(cache_source_counts)
         cost_tier_counts = _compact_counter(Counter(item.payload.get("provider_cost_tier") for item in items))
+        http_status_counts = _compact_counter(Counter(item.payload.get("http_status_code") for item in items))
         by_provider[key] = {
             "calls": len(items),
             "status_counts": _compact_counter(Counter(item.payload.get("status") for item in items)),
             "error_counts": _compact_counter(Counter(item.payload.get("error_type") for item in items)),
             "error_message_counts": _compact_counter(Counter(item.payload.get("error_message") for item in items)),
+            "http_status_counts": http_status_counts,
+            "error_response_snippet_counts": _compact_counter(
+                Counter(item.payload.get("error_response_snippet") for item in items)
+            ),
             "cache_source_counts": cache_source_counts_compact,
             "provider_cost_tier_counts": cost_tier_counts,
             "live_call_count": cache_source_counts_compact.get("live", 0),
@@ -555,6 +560,8 @@ def render_markdown(summary: dict[str, Any]) -> str:
                     f"- Status counts: `{json.dumps(provider['status_counts'], ensure_ascii=False)}`",
                     f"- Error counts: `{json.dumps(provider['error_counts'], ensure_ascii=False)}`",
                     f"- Error message counts: `{json.dumps(provider['error_message_counts'], ensure_ascii=False)}`",
+                    f"- HTTP status counts: `{json.dumps(provider['http_status_counts'], ensure_ascii=False)}`",
+                    f"- Error response snippets: `{json.dumps(provider['error_response_snippet_counts'], ensure_ascii=False)}`",
                     f"- Cache source counts: `{json.dumps(provider['cache_source_counts'], ensure_ascii=False)}`",
                     f"- Cost tier counts: `{json.dumps(provider['provider_cost_tier_counts'], ensure_ascii=False)}`",
                     f"- Live/Cached calls: {provider['live_call_count']}/{provider['cached_call_count']}",

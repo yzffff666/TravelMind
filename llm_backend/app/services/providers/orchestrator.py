@@ -217,6 +217,7 @@ class ProviderOrchestrator:
             )
         except Exception as exc:  # noqa: BLE001
             elapsed_ms = self._elapsed_ms(started)
+            error_code = self._provider_error_code(exc)
             self._log_provider_call(
                 provider_name=provider.name,
                 provider_kind="search",
@@ -227,6 +228,8 @@ class ProviderOrchestrator:
                 context=context,
                 error_type=type(exc).__name__,
                 error_message=str(exc),
+                http_status_code=self._exception_status_code(exc),
+                error_response_snippet=self._exception_response_snippet(exc),
                 degraded=True,
                 provider_cost_tier=self._provider_cost_tier(provider.name),
             )
@@ -234,7 +237,7 @@ class ProviderOrchestrator:
                 provider_name=provider.name,
                 provider_kind="search",
                 elapsed_ms=elapsed_ms,
-                error_code=ProviderErrorCode.UNKNOWN,
+                error_code=error_code,
                 error_message=str(exc),
             )
 
@@ -301,6 +304,7 @@ class ProviderOrchestrator:
             )
         except Exception as exc:  # noqa: BLE001
             elapsed_ms = self._elapsed_ms(started)
+            error_code = self._provider_error_code(exc)
             self._log_provider_call(
                 provider_name=provider.name,
                 provider_kind="map",
@@ -311,6 +315,8 @@ class ProviderOrchestrator:
                 context=context,
                 error_type=type(exc).__name__,
                 error_message=str(exc),
+                http_status_code=self._exception_status_code(exc),
+                error_response_snippet=self._exception_response_snippet(exc),
                 degraded=True,
                 provider_cost_tier=self._provider_cost_tier(provider.name),
             )
@@ -318,7 +324,7 @@ class ProviderOrchestrator:
                 provider_name=provider.name,
                 provider_kind="map",
                 elapsed_ms=elapsed_ms,
-                error_code=ProviderErrorCode.UNKNOWN,
+                error_code=error_code,
                 error_message=str(exc),
             )
 
@@ -376,6 +382,8 @@ class ProviderOrchestrator:
         result_count: int = 0,
         error_type: str = "",
         error_message: str = "",
+        http_status_code: int | None = None,
+        error_response_snippet: str = "",
         degraded: bool = False,
         cache_source: str | None = None,
         provider_cost_tier: str | None = None,
@@ -396,6 +404,8 @@ class ProviderOrchestrator:
                 "result_count": result_count,
                 "error_type": error_type,
                 "error_message": error_message,
+                "http_status_code": http_status_code,
+                "error_response_snippet": error_response_snippet,
                 "degraded": degraded,
                 "cache_source": cache_source,
                 "provider_cost_tier": provider_cost_tier,
@@ -407,6 +417,29 @@ class ProviderOrchestrator:
         if provider_name.startswith("serp_"):
             return "expensive"
         return None
+
+    @staticmethod
+    def _exception_status_code(exc: Exception) -> int | None:
+        value = getattr(exc, "status_code", None)
+        return int(value) if isinstance(value, int) else None
+
+    @staticmethod
+    def _exception_response_snippet(exc: Exception) -> str:
+        value = getattr(exc, "response_snippet", "")
+        return str(value or "")
+
+    @classmethod
+    def _provider_error_code(cls, exc: Exception) -> ProviderErrorCode:
+        status_code = cls._exception_status_code(exc)
+        if status_code in {401, 403}:
+            return ProviderErrorCode.AUTH_FAILED
+        if status_code == 429:
+            return ProviderErrorCode.RATE_LIMIT
+        if status_code is not None and 400 <= status_code < 500:
+            return ProviderErrorCode.INVALID_REQUEST
+        if status_code is not None and status_code >= 500:
+            return ProviderErrorCode.UNAVAILABLE
+        return ProviderErrorCode.UNKNOWN
 
     @staticmethod
     def _merge_response(

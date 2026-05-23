@@ -32,6 +32,16 @@ from app.services.providers.base import (
 logger = logging.getLogger(__name__)
 
 _SERPAPI_BASE = "https://serpapi.com/search"
+_MAX_ERROR_SNIPPET_CHARS = 300
+
+
+class SerpApiHTTPError(RuntimeError):
+    """HTTP failure from SerpAPI with structured diagnostics for observability."""
+
+    def __init__(self, *, status_code: int, response_snippet: str) -> None:
+        self.status_code = status_code
+        self.response_snippet = response_snippet
+        super().__init__(f"SerpAPI HTTP {status_code}: {response_snippet}")
 
 
 def _candidate_id(title: str, city: str) -> str:
@@ -73,6 +83,18 @@ def _safe_params(params: dict[str, Any]) -> dict[str, Any]:
 def _cache_key(params: dict[str, Any]) -> str:
     raw = json.dumps(_safe_params(params), ensure_ascii=False, sort_keys=True, default=str)
     return md5(raw.encode()).hexdigest()
+
+
+def _response_snippet(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        text = response.text
+    else:
+        payload = _safe_params(payload) if isinstance(payload, dict) else payload
+        text = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    text = " ".join(str(text).split())
+    return text[:_MAX_ERROR_SNIPPET_CHARS]
 
 
 def _read_cached_response(params: dict[str, Any]) -> dict[str, Any] | None:
@@ -117,7 +139,13 @@ async def _fetch_serpapi_json(params: dict[str, Any], timeout: float) -> tuple[d
     # Ignore host-level proxy env vars to avoid accidental blackhole proxies.
     async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         resp = await client.get(_SERPAPI_BASE, params=params)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise SerpApiHTTPError(
+                status_code=exc.response.status_code,
+                response_snippet=_response_snippet(exc.response),
+            ) from exc
         data = resp.json()
     _write_cached_response(params, data)
     return data, "live"
