@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+import app.services.providers.geoapify_provider as geoapify_provider
 from app.services.providers.base import ProviderErrorCode
 from app.services.providers.factory import build_registry
 from app.services.providers.geoapify_provider import (
@@ -25,9 +26,11 @@ def _run(coro):
 
 
 @pytest.fixture(autouse=True)
-def _allow_geoapify_live_for_mocked_http_tests():
+def _allow_geoapify_live_for_mocked_http_tests(tmp_path):
     with patch("app.services.providers.geoapify_provider._live_enabled", return_value=True), \
-            patch("app.services.providers.geoapify_provider._cache_enabled", return_value=False):
+            patch("app.services.providers.geoapify_provider._cache_enabled", return_value=False), \
+            patch("app.services.providers.geoapify_provider._budget_state_dir", return_value=tmp_path), \
+            patch("app.services.providers.geoapify_provider._daily_live_limit", return_value=0):
         yield
 
 
@@ -173,6 +176,21 @@ class TestGeoapifySearchProvider:
         assert resp.meta["provider_cost_tier"] == "low_cost"
         mock_cls.assert_not_called()
 
+    def test_search_daily_budget_skips_live_on_cache_miss(self):
+        sp = GeoapifySearchProvider("fake-key")
+        with patch(
+            "app.services.providers.geoapify_provider._budget_skip_source",
+            return_value="budget_exhausted",
+        ), patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
+            resp = _run(sp.search(query="Phuket"))
+
+        assert resp.candidates == []
+        assert resp.degraded is True
+        assert resp.meta["cache_source"] == "budget_exhausted"
+        assert resp.errors
+        assert resp.errors[0].code == ProviderErrorCode.RATE_LIMIT
+        mock_cls.assert_not_called()
+
     def test_search_http_status_error_has_structured_diagnostics(self):
         sp = GeoapifySearchProvider("fake-key")
         with patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
@@ -187,6 +205,20 @@ class TestGeoapifySearchProvider:
         assert exc_info.value.status_code == 403
         assert "Invalid apiKey" in exc_info.value.response_snippet
         assert "secret" not in exc_info.value.response_snippet
+
+    def test_search_rate_limit_records_budget_cooldown(self):
+        sp = GeoapifySearchProvider("fake-key")
+        with patch("app.services.providers.geoapify_provider._rate_limit_cooldown_seconds", return_value=60), \
+                patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _mock_httpx_status_error(429, {"message": "Quota exceeded"})
+
+            with pytest.raises(GeoapifyHTTPError):
+                _run(sp.search(query="Phuket"))
+
+        state = geoapify_provider._read_budget_state()
+        assert state["live_call_count"] == 1
+        assert state["cooldown_until_epoch"] > 0
+        assert "Quota exceeded" in state["last_error"]
 
 
 class TestGeoapifyMapProvider:
@@ -287,4 +319,5 @@ class TestGeoapifyOrchestrator:
         assert result.degraded is True
         assert result.errors
         assert {error.code for error in result.errors} == {ProviderErrorCode.RATE_LIMIT}
-        assert all("Geoapify HTTP 429" in error.message for error in result.errors)
+        assert any("Geoapify HTTP 429" in error.message for error in result.errors)
+        assert any("temporarily disabled" in error.message for error in result.errors)

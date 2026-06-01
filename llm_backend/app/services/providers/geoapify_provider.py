@@ -16,6 +16,8 @@ import json
 import logging
 import os
 import re
+import time
+from datetime import date
 from difflib import SequenceMatcher
 from hashlib import md5
 from pathlib import Path
@@ -27,6 +29,8 @@ from app.services.providers.base import (
     MapProvider,
     ProviderCallContext,
     ProviderCandidate,
+    ProviderError,
+    ProviderErrorCode,
     ProviderResponse,
     SearchProvider,
 )
@@ -36,6 +40,9 @@ logger = logging.getLogger(__name__)
 _GEOCODE_URL = "https://api.geoapify.com/v1/geocode/search"
 _PLACES_URL = "https://api.geoapify.com/v2/places"
 _MAX_ERROR_SNIPPET_CHARS = 300
+_BUDGET_EXHAUSTED = "budget_exhausted"
+_BUDGET_COOLDOWN = "budget_cooldown"
+_BUDGET_SKIP_SOURCES = {_BUDGET_EXHAUSTED, _BUDGET_COOLDOWN}
 _DEFAULT_PLACE_CATEGORIES = ",".join(
     [
         "tourism",
@@ -86,6 +93,103 @@ def _cache_dir() -> Path:
         return Path(ROOT_DIR) / settings.GEOAPIFY_RESPONSE_CACHE_DIR
     except Exception:
         return Path("reports/provider-cache/geoapify")
+
+
+def _budget_state_dir() -> Path:
+    try:
+        from app.core.config import ROOT_DIR, settings
+        return Path(ROOT_DIR) / settings.GEOAPIFY_BUDGET_STATE_DIR
+    except Exception:
+        return Path("reports/provider-budget")
+
+
+def _daily_live_limit() -> int:
+    try:
+        from app.core.config import settings
+        return max(0, int(settings.GEOAPIFY_DAILY_LIVE_LIMIT))
+    except Exception:
+        raw = os.getenv("GEOAPIFY_DAILY_LIVE_LIMIT", "500")
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            return 500
+
+
+def _rate_limit_cooldown_seconds() -> int:
+    try:
+        from app.core.config import settings
+        return max(0, int(settings.GEOAPIFY_RATE_LIMIT_COOLDOWN_SECONDS))
+    except Exception:
+        raw = os.getenv("GEOAPIFY_RATE_LIMIT_COOLDOWN_SECONDS", "86400")
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            return 86400
+
+
+def _budget_state_path() -> Path:
+    return _budget_state_dir() / "geoapify-live-budget.json"
+
+
+def _today_key() -> str:
+    return date.today().isoformat()
+
+
+def _read_budget_state() -> dict[str, Any]:
+    path = _budget_state_path()
+    if not path.exists():
+        return {"date": _today_key(), "live_call_count": 0}
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Failed to read Geoapify budget state %s: %s", path, exc)
+        return {"date": _today_key(), "live_call_count": 0}
+    if state.get("date") != _today_key():
+        return {
+            "date": _today_key(),
+            "live_call_count": 0,
+            "cooldown_until_epoch": state.get("cooldown_until_epoch", 0),
+            "last_error": state.get("last_error", ""),
+        }
+    return state if isinstance(state, dict) else {"date": _today_key(), "live_call_count": 0}
+
+
+def _write_budget_state(state: dict[str, Any]) -> None:
+    path = _budget_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
+    except OSError as exc:
+        logger.warning("Failed to write Geoapify budget state %s: %s", path, exc)
+
+
+def _budget_skip_source() -> str | None:
+    state = _read_budget_state()
+    cooldown_until = float(state.get("cooldown_until_epoch") or 0)
+    if cooldown_until > time.time():
+        return _BUDGET_COOLDOWN
+
+    limit = _daily_live_limit()
+    if limit > 0 and int(state.get("live_call_count") or 0) >= limit:
+        return _BUDGET_EXHAUSTED
+    return None
+
+
+def _mark_live_attempt() -> None:
+    state = _read_budget_state()
+    state["date"] = _today_key()
+    state["live_call_count"] = int(state.get("live_call_count") or 0) + 1
+    _write_budget_state(state)
+
+
+def _mark_rate_limited(message: str) -> None:
+    cooldown_seconds = _rate_limit_cooldown_seconds()
+    if cooldown_seconds <= 0:
+        return
+    state = _read_budget_state()
+    state["cooldown_until_epoch"] = int(time.time() + cooldown_seconds)
+    state["last_error"] = message[:_MAX_ERROR_SNIPPET_CHARS]
+    _write_budget_state(state)
 
 
 def _safe_params(params: dict[str, Any]) -> dict[str, Any]:
@@ -153,15 +257,22 @@ async def _fetch_geoapify_json(url: str, params: dict[str, Any], timeout: float)
     if not _live_enabled():
         logger.info("Geoapify live call skipped because GEOAPIFY_LIVE_ENABLED=false")
         return {}, "live_disabled"
+    if skip_source := _budget_skip_source():
+        logger.info("Geoapify live call skipped by budget guard: %s", skip_source)
+        return {}, skip_source
 
+    _mark_live_attempt()
     async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
         resp = await client.get(url, params=params)
         try:
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            snippet = _response_snippet(exc.response)
+            if exc.response.status_code == 429:
+                _mark_rate_limited(snippet)
             raise GeoapifyHTTPError(
                 status_code=exc.response.status_code,
-                response_snippet=_response_snippet(exc.response),
+                response_snippet=snippet,
             ) from exc
         data = resp.json()
     _write_cached_response(url, params, data)
@@ -311,6 +422,26 @@ def _dedupe(candidates: list[ProviderCandidate]) -> list[ProviderCandidate]:
     return deduped
 
 
+def _budget_errors(cache_source: str) -> list[ProviderError]:
+    sources = set((cache_source or "").split("+"))
+    if not sources & _BUDGET_SKIP_SOURCES:
+        return []
+    if _BUDGET_COOLDOWN in sources:
+        message = "Geoapify live calls are temporarily disabled after a rate-limit response."
+    else:
+        message = "Geoapify daily live call budget has been exhausted."
+    return [
+        ProviderError(
+            code=ProviderErrorCode.RATE_LIMIT,
+            message=message,
+            provider_name="geoapify",
+            retryable=False,
+            degraded=True,
+            meta={"cache_source": cache_source},
+        )
+    ]
+
+
 class GeoapifySearchProvider(SearchProvider):
     """Global geocoding search via Geoapify."""
 
@@ -343,8 +474,11 @@ class GeoapifySearchProvider(SearchProvider):
             for item in _iter_geocode_results(data)
             if (candidate := _candidate_from_item(item, source=self.name, location_hint=query)) is not None
         ]
+        errors = _budget_errors(cache_source)
         return ProviderResponse(
             candidates=_dedupe(candidates)[:top_k],
+            errors=errors,
+            degraded=bool(errors),
             meta={"cache_source": cache_source, "provider_cost_tier": "low_cost"},
         )
 
@@ -415,12 +549,15 @@ class GeoapifyMapProvider(MapProvider):
                 candidates.extend(places_candidates)
 
         cache_sources = [source for source in (geocode_cache_source, places_cache_source) if source]
+        cache_source = "+".join(cache_sources) if cache_sources else geocode_cache_source
         candidates = self._rank_candidates(candidates, keyword_text or city)
+        errors = _budget_errors(cache_source)
         return ProviderResponse(
             candidates=_dedupe(candidates)[:top_k],
-            degraded=not candidates,
+            errors=errors,
+            degraded=not candidates or bool(errors),
             meta={
-                "cache_source": "+".join(cache_sources) if cache_sources else geocode_cache_source,
+                "cache_source": cache_source,
                 "provider_cost_tier": "low_cost",
             },
         )

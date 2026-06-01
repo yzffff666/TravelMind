@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     GEOAPIFY_LIVE_ENABLED: bool = True
     GEOAPIFY_RESPONSE_CACHE_ENABLED: bool = True
     GEOAPIFY_RESPONSE_CACHE_DIR: str = "reports/provider-cache/geoapify"
+    GEOAPIFY_DAILY_LIVE_LIMIT: int = 500
+    GEOAPIFY_RATE_LIMIT_COOLDOWN_SECONDS: int = 86400
+    GEOAPIFY_BUDGET_STATE_DIR: str = "reports/provider-budget"
 
     # Amap (高德地图) settings
     AMAP_API_KEY: str = ""

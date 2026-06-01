@@ -30,6 +30,7 @@ TravelMind = Agentic POI Ranking for Travel Planning
 - `observability_summary.py` 已能汇总 POI Ranking Shadow 的 accepted/rejected 数量、reject reasons、Top-K overlap 和 rejected samples，为后续排序策略迭代提供数据入口。
 - Provider HTTP 失败已能被结构化诊断：SerpAPI live probe 复测确认当前 SerpAPI 失败是 HTTP `429` 额度耗尽（`Your account has run out of searches`），不是 query、bbox 或 ranking 策略问题。
 - 低成本海外 Provider 已接入第一版：新增 Geoapify geocoding / places adapter，注册顺序调整为 `Amap -> Geoapify -> SerpAPI -> Mock`，让海外日常调试先走 `low_cost` provider，再用 SerpAPI 做 expensive fallback。
+- Geoapify 已补本地 live 预算阀门：cache miss 才消耗 live；达到 `GEOAPIFY_DAILY_LIVE_LIMIT` 会返回 `budget_exhausted`；收到 HTTP 429 后进入 `budget_cooldown`，避免继续撞额度。
 
 当前最重要的后续工作不是继续零散修 POI alias，而是用 shadow ranking 观测把“哪些候选该进入 LLM”这件事量化清楚：
 
@@ -127,6 +128,7 @@ TravelMind = Agentic POI Ranking for Travel Planning
 | v5.12 Agentic POI Ranking shadow | 把 Provider 候选排序变成可观测决策问题 | 新增 `POIRankingPolicy`、`CandidateFeature`、`poi_ranking_shadow` 日志和 summary 汇总 | 新策略先只旁路观测，不改变主链路，下一步用 rejected samples 和 overlap 决定是否收紧规则 |
 | v5.13 Provider HTTP 诊断 | 区分 Provider 失败是额度、认证、限流、参数还是服务不可用 | SerpAPI HTTP 错误包装为结构化异常，Provider 日志补 `http_status_code` / `error_response_snippet`，summary 汇总 HTTP 状态与响应片段 | live probe 确认 SerpAPI 当前为 HTTP 429 额度耗尽；ranking 无候选不是策略问题，而是 upstream recall 不可用 |
 | v5.14 低成本海外 Provider | 减少海外 smoke / 数据集积累对 SerpAPI 的依赖 | 新增 `GeoapifySearchProvider` / `GeoapifyMapProvider`、响应缓存、HTTP 诊断与 factory 注册顺序 | `PROVIDER_COST_MODE=cheap` 下仍可使用 Geoapify，SerpAPI 被跳过；新增单测覆盖解析、缓存、factory 顺序和 429 映射 |
+| v5.15 Provider 额度阀门 | 防止低成本 Provider 也被调试流量用爆 | Geoapify 增加每日 live 上限、429 冷却状态和 `budget_exhausted` / `budget_cooldown` cache source | API 用完时系统进入可观测降级，不继续打 live；cache 命中不消耗预算 |
 
 
 ---
@@ -275,7 +277,7 @@ Provider candidates
 | 优先级 | Gap                   | 原因                                   | 推荐动作                                                             |
 | --- | --------------------- | ------------------------------------ | ---------------------------------------------------------------- |
 | 高   | POI Ranking shadow 样本不足 | 已有 `poi_ranking_shadow` 日志，但还缺少真实 smoke 下的稳定对比 | 跑 mini/extended/bilingual smoke，优先看 Top-K overlap、reject reasons、误伤样例 |
-| 高   | Geoapify 真实链路尚未跑 smoke | 低成本 provider adapter 已接入，但还未用真实 `GEOAPIFY_KEY` 验证 Phuket / London / Paris 等样例 | 配置 `GEOAPIFY_KEY` 后跑 `live_probe` 或小型 bilingual smoke，观察 `geoapify_*` 的 filled、bbox/score rejected 和 cost tier |
+| 高   | Geoapify 真实链路尚未跑完整 smoke | 低成本 provider 已通过 Phuket 小探针，且有预算阀门；但还未进入完整 SSE / backfill / ranking 链路评估 | 在预算保护开启下跑 `live_probe` 或小型 bilingual smoke，观察 `geoapify_*` 的 filled、bbox/score rejected、budget 状态和 cost tier |
 | 高   | CandidateFeature 仍偏规则化 | 当前特征覆盖 bbox、alias、evidence、provider confidence，但还不够表达偏好和约束 | 从 rejected samples 中补充 preference、budget、transport、evidence URL 等特征 |
 | 中   | LLM draft 长尾仍需更多真实样例 | 已完成输出瘦身，但样本仍少，远程 LLM 波动存在 | 持续记录 `prompt_chars/output_chars/response_language`，作为 ranking 改造的成本 guardrail |
 | 中   | EmbeddingProvider 未解耦 | `EMBEDDING_TYPE` 声明尚未接入缓存路径          | Stage B 语义 rerank 前再抽象 embedding provider，支持 Ollama / sentence-transformers fallback |
