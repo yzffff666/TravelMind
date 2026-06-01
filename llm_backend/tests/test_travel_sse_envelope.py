@@ -99,6 +99,43 @@ def test_clarification_stream_backward_compatible_text_fallback():
     assert data_2["missing_required"] == ["destination"]
 
 
+def test_clarification_does_not_trigger_for_per_person_budget():
+    service = TravelClarificationService()
+
+    decision = service.start_new(
+        thread_id="conv_hk",
+        query="我想去香港，3天，人均2000",
+    )
+
+    assert decision["need_clarification"] is False
+    assert decision["missing_hard"] == []
+    assert not service.has_pending("conv_hk")
+
+
+def test_clarification_completes_when_pending_budget_gets_per_person_value():
+    service = TravelClarificationService()
+
+    first = service.start_new(thread_id="conv_budget", query="我想去香港，3天")
+    assert first["need_clarification"] is True
+    assert service.has_pending("conv_budget")
+
+    decision = service.continue_pending(
+        thread_id="conv_budget",
+        query="人均2000",
+    )
+
+    assert decision["need_clarification"] is False
+    assert decision["combined_query"] == "去香港，玩3天，预算2000元"
+    assert not service.has_pending("conv_budget")
+
+
+def test_budget_only_clarification_treats_vague_confirmations_as_ambiguous():
+    from app.api.travel import _needs_budget_clarification_hint
+
+    for query in ("都可以", "好的", "随便", "都行"):
+        assert _needs_budget_clarification_hint(query=query, missing_text="预算范围") is True
+
+
 def test_travel_request_fingerprint_dedupes_active_request(monkeypatch):
     from app.api import travel
 

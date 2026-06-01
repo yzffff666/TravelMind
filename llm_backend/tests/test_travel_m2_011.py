@@ -90,6 +90,23 @@ def test_qp_create_with_duration_and_qualitative_budget_is_not_edit():
     assert out["missing_required"] == []
 
 
+def test_qp_extracts_per_person_budget_for_create():
+    processor = TravelQueryProcessor()
+    for query in (
+        "我想去香港，3天，人均2000",
+        "香港3天，每人2000",
+        "香港 3 天 2000/人",
+        "香港3天，当地花销2000",
+        "香港3天，不含住宿2000",
+    ):
+        out = processor.process(query)
+        assert out["intent"] == "create"
+        assert out["constraints"]["destination_city"] == "香港"
+        assert out["constraints"]["days"] == 3
+        assert out["constraints"]["budget"] == 2000.0
+        assert out["missing_required"] == []
+
+
 def test_qp_structured_strategy_can_drive_contextual_edit():
     strategy = _FakeStructuredQPStrategy(
         StructuredQPResult(

@@ -55,6 +55,18 @@ _DIGIT_WAN_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*万")
 _DIGIT_W_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*[wW]")
 _DIGIT_K_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*[kK]")
 _DIGIT_YUAN_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(?:元|块钱?)")
+_PER_PERSON_BUDGET_PATTERN = re.compile(
+    r"(?:人均|每人|每个人|per\s*person)\s*(?:预算|花费|消费|费用|budget|cost)?\s*[:：]?\s*(\d{3,6}(?:\.\d+)?)\s*(?:元|块钱?|rmb|cny|港币|hkd)?",
+    re.I,
+)
+_SLASH_PERSON_BUDGET_PATTERN = re.compile(
+    r"(\d{3,6}(?:\.\d+)?)\s*(?:元|块钱?|rmb|cny|港币|hkd)?\s*/\s*(?:人|person|pax)",
+    re.I,
+)
+_LOCAL_SPEND_BUDGET_PATTERN = re.compile(
+    r"(?:当地|当地花销|当地消费|纯玩|游玩|不含(?:机票|交通|住宿|酒店|往返|大交通|机票住宿){1,4})\s*(?:预算|花费|消费|费用)?\s*[:：]?\s*(\d{3,6}(?:\.\d+)?)\s*(?:元|块钱?|rmb|cny|港币|hkd)?",
+    re.I,
+)
 _BUDGET_CONTEXT_PATTERN = re.compile(r"(\d{3,}(?:\.\d+)?)\s*(?:左右|以内|以下|上下|出头|多(?!少))")
 _BUDGET_RANGE_PATTERN = re.compile(r"(\d{3,6})\s*[-~到至]\s*(\d{3,6})")
 _STANDALONE_BUDGET_PATTERN = re.compile(r"^\s*(\d{3,6})(?:\.0+)?\s*$")
@@ -80,6 +92,18 @@ def extract_budget(query: str, config: DraftConfig = DRAFT_CONFIG) -> float | No
         return max(float(m.group(1)) * 1000, 0.0)
 
     m = _DIGIT_YUAN_PATTERN.search(query)
+    if m:
+        return max(float(m.group(1)), 0.0)
+
+    m = _PER_PERSON_BUDGET_PATTERN.search(query)
+    if m:
+        return max(float(m.group(1)), 0.0)
+
+    m = _SLASH_PERSON_BUDGET_PATTERN.search(query)
+    if m:
+        return max(float(m.group(1)), 0.0)
+
+    m = _LOCAL_SPEND_BUDGET_PATTERN.search(query)
     if m:
         return max(float(m.group(1)), 0.0)
 
@@ -150,4 +174,3 @@ def build_slots(day_index: int, config: DraftConfig = DRAFT_CONFIG) -> list[Itin
         ItinerarySlot(slot=slot_name, activity=activity_template.format(day=day_index))
         for slot_name, activity_template in config.day_slot_templates
     ]
-

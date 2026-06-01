@@ -210,7 +210,10 @@ _GUIDED_SYSTEM_PROMPT = (
 )
 
 RECENT_WINDOW = 6  # keep last 6 turns raw (12 messages)
-_AMBIGUOUS_BUDGET_PHRASES = ("少一点", "低一点", "便宜点", "省一点", "差不多", "看情况")
+_AMBIGUOUS_BUDGET_PHRASES = (
+    "少一点", "低一点", "便宜点", "省一点", "差不多", "看情况",
+    "都可以", "都行", "都好", "随便", "无所谓", "可以", "好的", "好",
+)
 
 async def _ensure_user_exists(user_id: int) -> None:
     """Fail fast for invalid user_id to avoid FK 500 in conversation state upsert."""
