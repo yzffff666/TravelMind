@@ -24,6 +24,8 @@ class PatchOpType(str, Enum):
     DELETE_SLOT = "delete_slot"
     # 插入 slot
     INSERT_SLOT = "insert_slot"
+    # 重新规划某一天
+    REPLAN_DAY = "replan_day"
     # 更新约束
     UPDATE_CONSTRAINT = "update_constraint"
 
@@ -78,8 +80,55 @@ def _normalize_slot(label: str | None) -> str | None:
 _DELETE_HINTS = ("删掉", "删除", "去掉", "不要", "取消")
 _ADD_HINTS = ("增加", "加上", "添加", "插入", "新增")
 _REPLACE_HINTS = ("换成", "替换", "改成", "改为", "变成")
+_DAY_REPLAN_HINTS = (*_REPLACE_HINTS, "安排", "调整", "调整为", "改一下", "换一下")
+_MUTATION_HINTS = (
+    *_DELETE_HINTS,
+    *_ADD_HINTS,
+    *_REPLACE_HINTS,
+    "修改",
+    "调整",
+    "改一下",
+    "换一下",
+    "别太",
+    "不要太",
+    "预算",
+    "偏好",
+)
 _BUDGET_PATTERN = re.compile(r"预算[改调]?[成为到]?\s*(\d+)")
 _PREFERENCE_PATTERN = re.compile(r"偏好[改调]?[成为到]?\s*(.+?)(?:\s|$)")
+_DAY_REPLAN_CONSTRAINT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "indoor": ("室内", "下雨", "避雨", "少晒", "不晒", "博物馆", "美术馆", "展馆", "商场"),
+    "relaxed": ("轻松", "悠闲", "慢一点", "慢节奏", "少走路", "别太累", "不要太累", "不赶"),
+    "food": ("美食", "吃喝", "逛吃", "小吃", "茶餐厅", "餐厅"),
+    "culture": ("文化", "历史", "人文", "艺术", "展览"),
+}
+_INDOOR_POI_SEEDS: dict[str, tuple[tuple[str, str, str], ...]] = {
+    "香港": (
+        ("上午", "香港故宫文化博物馆室内参观", "香港故宫文化博物馆"),
+        ("下午", "K11 MUSEA 室内展览与购物休息", "K11 MUSEA"),
+        ("晚上", "中环茶餐厅与室内美食体验", "中环"),
+    ),
+    "上海": (
+        ("上午", "上海博物馆室内参观", "上海博物馆"),
+        ("下午", "上海当代艺术博物馆展览体验", "上海当代艺术博物馆"),
+        ("晚上", "新天地室内餐厅与休闲", "新天地"),
+    ),
+    "成都": (
+        ("上午", "成都博物馆室内参观", "成都博物馆"),
+        ("下午", "四川科技馆轻松体验", "四川科技馆"),
+        ("晚上", "太古里室内餐厅与休闲", "成都太古里"),
+    ),
+    "北京": (
+        ("上午", "中国国家博物馆室内参观", "中国国家博物馆"),
+        ("下午", "首都博物馆展览体验", "首都博物馆"),
+        ("晚上", "三里屯室内餐厅与休闲", "三里屯"),
+    ),
+    "东京": (
+        ("上午", "东京国立博物馆室内参观", "东京国立博物馆"),
+        ("下午", "六本木之丘室内展览与购物", "六本木之丘"),
+        ("晚上", "银座室内餐厅与购物休息", "银座"),
+    ),
+}
 _PLACE_TRAILING_ACTIONS = (
     "游玩",
     "游览",
@@ -92,6 +141,12 @@ _PLACE_TRAILING_ACTIONS = (
     "吃饭",
     "体验",
 )
+
+
+def has_mutation_intent(utterance: str) -> bool:
+    """Return whether the utterance explicitly asks to write/change itinerary state."""
+    text = (utterance or "").strip()
+    return bool(text) and any(hint in text for hint in _MUTATION_HINTS)
 
 # 解析编辑操作
 def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
@@ -109,6 +164,17 @@ def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
     target_slot = _extract_target_slot(text)
 
     # Collect all matching ops (no early return — supports multi-op edits)
+
+    day_replan_constraints = _extract_day_replan_constraints(text)
+    if target_day and not target_slot and day_replan_constraints and _match_any(text, _DAY_REPLAN_HINTS):
+        ops.append(PatchOp(
+            op=PatchOpType.REPLAN_DAY,
+            day_index=target_day,
+            payload={
+                "constraints": day_replan_constraints,
+                "raw_request": text,
+            },
+        ))
 
     if _match_any(text, _DELETE_HINTS):
         if target_day and target_slot:
@@ -187,6 +253,8 @@ def apply_patch(
                 _apply_delete(itinerary, op, changed_days, diff_items)
             elif op.op == PatchOpType.INSERT_SLOT:
                 _apply_insert(itinerary, op, changed_days, diff_items)
+            elif op.op == PatchOpType.REPLAN_DAY:
+                _apply_replan_day(itinerary, op, changed_days, diff_items)
             elif op.op == PatchOpType.UPDATE_CONSTRAINT:
                 _apply_constraint(itinerary, op, diff_items)
             succeeded += 1
@@ -258,6 +326,14 @@ def _extract_target_slot(text: str) -> str | None:
         if variant in text:
             return canonical
     return None
+
+
+def _extract_day_replan_constraints(text: str) -> list[str]:
+    constraints: list[str] = []
+    for constraint, keywords in _DAY_REPLAN_CONSTRAINT_KEYWORDS.items():
+        if any(keyword in text for keyword in keywords):
+            constraints.append(constraint)
+    return constraints
 
 
 def _match_any(text: str, hints: tuple[str, ...]) -> bool:
@@ -412,6 +488,107 @@ def _apply_insert(itinerary: dict, op: PatchOp, changed_days: set, diff_items: l
     }
     day.get("slots", []).append(new_slot)
     diff_items.append(f"第{day_index}天新增{new_slot['slot']}时段：{new_slot['activity']}")
+
+
+def _apply_replan_day(itinerary: dict, op: PatchOp, changed_days: set, diff_items: list):
+    if not op.day_index:
+        diff_items.append("未指定重新规划哪一天，请说明第N天")
+        return
+    day = _find_day(itinerary, op.day_index)
+    if not day:
+        diff_items.append(f"未找到第{op.day_index}天")
+        return
+
+    constraints = list(op.payload.get("constraints") or [])
+    old_slots = [slot.get("activity", "") for slot in day.get("slots", [])]
+    day["theme"] = _build_replan_theme(constraints)
+    day["slots"] = _build_replanned_slots(itinerary, constraints)
+    changed_days.add(op.day_index)
+
+    old_desc = "、".join([s for s in old_slots if s][:3]) or "原安排"
+    constraint_desc = "、".join(_constraint_label(c) for c in constraints) or "新偏好"
+    diff_items.append(f"第{op.day_index}天按「{constraint_desc}」重新规划（原安排：{old_desc}）")
+
+
+def _build_replan_theme(constraints: list[str]) -> str:
+    if "indoor" in constraints and "relaxed" in constraints:
+        return "轻松室内体验"
+    if "indoor" in constraints:
+        return "室内文化与休闲体验"
+    if "food" in constraints:
+        return "在地美食体验"
+    if "culture" in constraints:
+        return "文化与人文探索"
+    if "relaxed" in constraints:
+        return "轻松慢节奏体验"
+    return "按新偏好调整的一日行程"
+
+
+def _build_replanned_slots(itinerary: dict, constraints: list[str]) -> list[dict]:
+    destination = _destination_city(itinerary)
+    if "indoor" in constraints:
+        seeds = _indoor_seed_slots(destination)
+        return [_slot(slot, activity, place, transit="地铁/步行") for slot, activity, place in seeds]
+    if "food" in constraints:
+        return [
+            _slot("上午", f"{destination}特色街区轻松逛吃", f"{destination}特色街区"),
+            _slot("下午", f"{destination}本地小吃与咖啡休息", f"{destination}小吃街"),
+            _slot("晚上", f"{destination}代表性餐厅晚餐", f"{destination}餐厅"),
+        ]
+    if "culture" in constraints:
+        return [
+            _slot("上午", f"{destination}博物馆或历史展馆参观", f"{destination}博物馆"),
+            _slot("下午", f"{destination}老街区人文探索", f"{destination}老街区"),
+            _slot("晚上", f"{destination}文化街区夜间散步", f"{destination}文化街区"),
+        ]
+    if "relaxed" in constraints:
+        return [
+            _slot("上午", f"{destination}轻松早餐与慢节奏城市漫步", f"{destination}市中心"),
+            _slot("下午", f"{destination}咖啡馆或公园休息", f"{destination}公园"),
+            _slot("晚上", f"{destination}轻松晚餐后返回休息", f"{destination}餐厅"),
+        ]
+    return [
+        _slot("上午", f"{destination}按新偏好安排上午活动", f"{destination}市中心"),
+        _slot("下午", f"{destination}按新偏好安排下午活动", f"{destination}核心景区"),
+        _slot("晚上", f"{destination}按新偏好安排晚间活动", f"{destination}餐厅"),
+    ]
+
+
+def _destination_city(itinerary: dict) -> str:
+    profile = itinerary.get("trip_profile") or {}
+    return (profile.get("destination_city") or "当地").strip() or "当地"
+
+
+def _indoor_seed_slots(destination: str) -> tuple[tuple[str, str, str], ...]:
+    for key, seeds in sorted(_INDOOR_POI_SEEDS.items(), key=lambda item: len(item[0]), reverse=True):
+        if key in destination:
+            return seeds
+    return (
+        ("上午", f"{destination}博物馆室内参观", f"{destination}博物馆"),
+        ("下午", f"{destination}美术馆或展馆体验", f"{destination}美术馆"),
+        ("晚上", f"{destination}室内餐厅与休闲", f"{destination}餐厅"),
+    )
+
+
+def _slot(slot: str, activity: str, place: str, transit: str = "步行/公共交通") -> dict:
+    return {
+        "slot": slot,
+        "activity": activity,
+        "place": place,
+        "transit": transit,
+        "alternatives": [],
+        "evidence_refs": [],
+    }
+
+
+def _constraint_label(constraint: str) -> str:
+    labels = {
+        "indoor": "室内",
+        "relaxed": "轻松",
+        "food": "美食",
+        "culture": "文化",
+    }
+    return labels.get(constraint, constraint)
 
 
 def _apply_constraint(itinerary: dict, op: PatchOp, diff_items: list):

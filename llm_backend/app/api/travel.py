@@ -13,7 +13,7 @@ from app.core.config import settings
 
 from app.core.database import AsyncSessionLocal
 from app.core.logger import get_logger
-from app.domain.travel.patch_engine import apply_patch, parse_edit_ops
+from app.domain.travel.patch_engine import apply_patch, has_mutation_intent, parse_edit_ops
 from app.domain.travel.sse_envelope import (
     build_data_line,
     build_event_envelope,
@@ -693,6 +693,23 @@ async def _stream_edit_result(
         yield line
 
     try:
+        if not has_mutation_intent(utterance):
+            yield build_event_line(
+                "final_text",
+                build_event_envelope(
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    revision_id=None,
+                    payload={
+                        "text": (
+                            "我还不能确认你是要修改行程。"
+                            "如果只是询问，我会按当前行程回答；如果要修改，请明确说“把第N天改成...”或“删掉/增加...”。"
+                        )
+                    },
+                ),
+            )
+            return
+
         ops = parse_edit_ops(utterance, current_itinerary)
         result = apply_patch(current_itinerary, ops)
 

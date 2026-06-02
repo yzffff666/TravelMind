@@ -112,6 +112,19 @@ def test_clarification_does_not_trigger_for_per_person_budget():
     assert not service.has_pending("conv_hk")
 
 
+def test_clarification_does_not_trigger_for_planning_prefix_destination():
+    service = TravelClarificationService()
+
+    decision = service.start_new(
+        thread_id="conv_sz",
+        query="帮我规划深圳3天，预算中等",
+    )
+
+    assert decision["need_clarification"] is False
+    assert decision["missing_hard"] == []
+    assert not service.has_pending("conv_sz")
+
+
 def test_clarification_completes_when_pending_budget_gets_per_person_value():
     service = TravelClarificationService()
 

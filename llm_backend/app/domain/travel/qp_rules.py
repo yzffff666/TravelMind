@@ -37,9 +37,16 @@ QP_RULES = QPRules(
         "紧凑": "intensive",
         "特种兵": "intensive",
     },
-    edit_hints=("修改", "改", "调整", "换成", "替换", "删掉", "增加"),
+    edit_hints=(
+        "修改", "改", "调整", "换成", "替换", "换一下",
+        "删掉", "删除", "去掉", "取消", "不要",
+        "增加", "加上", "添加", "插入", "新增",
+        "别太", "不要太",
+    ),
     reset_hints=("重置", "重新开始", "清空", "从头开始", "reset", "restart"),
     evidence_qa_hints=("为什么", "证据", "来源", "链接", "依据", "ref"),
     edit_day_pattern=re.compile(r"(第\s*(?:\d+|[一二两三四五六七八九十]+)\s*天|day\s*\d+)", re.IGNORECASE),
-    qa_question_pattern=re.compile(r"[?？]|(几点|多久|开放|门票|交通|地址)"),
+    qa_question_pattern=re.compile(
+        r"[?？]|(几点|多久|开放|门票|交通|地址|哪里|哪儿|去哪|去哪里|是什么|有什么|有啥|安排什么|安排啥)"
+    ),
 )

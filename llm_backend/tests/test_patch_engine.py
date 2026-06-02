@@ -14,6 +14,7 @@ from app.domain.travel.patch_engine import (
     PatchOpType,
     PatchResult,
     apply_patch,
+    has_mutation_intent,
     parse_edit_ops,
 )
 
@@ -55,6 +56,13 @@ def _make_itinerary(days: int = 3, budget: float = 6000.0) -> dict:
 # ---------- parse_edit_ops ----------
 
 class TestParseEditOps:
+    def test_mutation_intent_gate(self):
+        assert has_mutation_intent("把第二天改成室内")
+        assert has_mutation_intent("删掉第3天晚上")
+        assert has_mutation_intent("第二天别太赶")
+        assert not has_mutation_intent("第三天下午去哪里")
+        assert not has_mutation_intent("第2天安排是什么")
+
     def test_replace_slot_with_day_and_slot(self):
         it = _make_itinerary()
         ops = parse_edit_ops("把第2天下午换成去博物馆", it)
@@ -100,6 +108,14 @@ class TestParseEditOps:
         assert ops[0].op == PatchOpType.DELETE_SLOT
         assert ops[0].day_index == 2
         assert ops[0].slot_label is None
+
+    def test_day_level_indoor_edit_becomes_replan_day(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("把第二天改成室内", it)
+        assert len(ops) == 1
+        assert ops[0].op == PatchOpType.REPLAN_DAY
+        assert ops[0].day_index == 2
+        assert "indoor" in ops[0].payload["constraints"]
 
 
 # ---------- apply_patch ----------
@@ -192,6 +208,30 @@ class TestApplyPatch:
         day1 = next(d for d in result.new_itinerary["days"] if d["day_index"] == 1)
         assert len(day1["slots"]) >= 1
         assert day1["slots"][0]["activity"] == "自由活动"
+
+    def test_replan_day_replaces_whole_day_with_constraint_plan(self):
+        it = _make_itinerary()
+        it["trip_profile"]["destination_city"] = "香港"
+        original_day1 = copy.deepcopy(next(d for d in it["days"] if d["day_index"] == 1))
+        original_day3 = copy.deepcopy(next(d for d in it["days"] if d["day_index"] == 3))
+
+        ops = parse_edit_ops("把第二天改成室内", it)
+        result = apply_patch(it, ops)
+
+        assert result.success
+        assert 2 in result.change_summary["changed_days"]
+        assert "重新规划" in result.change_summary["diff_items"][0]
+
+        assert next(d for d in result.new_itinerary["days"] if d["day_index"] == 1) == original_day1
+        assert next(d for d in result.new_itinerary["days"] if d["day_index"] == 3) == original_day3
+
+        day2 = next(d for d in result.new_itinerary["days"] if d["day_index"] == 2)
+        assert day2["theme"] == "室内文化与休闲体验"
+        assert len(day2["slots"]) == 3
+        assert [slot["slot"] for slot in day2["slots"]] == ["上午", "下午", "晚上"]
+        assert all(slot["activity"] != "室内" for slot in day2["slots"])
+        assert all(slot["place"] != "室内" for slot in day2["slots"])
+        assert any(slot["place"] == "香港故宫文化博物馆" for slot in day2["slots"])
 
 
 # ---------- end-to-end: parse → apply ----------

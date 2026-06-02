@@ -280,23 +280,22 @@ class TravelQueryProcessor:
         has_edit_hint = any(self._contains_hint(query, lower_q, word) for word in QP_RULES.edit_hints)
         has_day_ref = bool(QP_RULES.edit_day_pattern.search(lower_q))
         is_question = bool(QP_RULES.qa_question_pattern.search(query))
-        has_edit_signal = has_edit_hint or (has_day_ref and not is_question)
-        if has_edit_signal:
-            constraints = self._extract_constraints(query)
-            is_full_create = (
-                bool(constraints.destination_city)
-                and constraints.days is not None
-                and constraints.budget is not None
-            )
-            if not is_full_create:
-                return "edit", "edit_day"
+        constraints = self._extract_constraints(query)
+        is_full_create = (
+            bool(constraints.destination_city)
+            and constraints.days is not None
+            and constraints.budget is not None
+        )
 
         if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.evidence_qa_hints):
             return "qa", "qa_evidence"
-        if is_question:
+        if is_question and not has_edit_hint:
+            return "qa", "qa_local"
+        if has_edit_hint and not is_full_create:
+            return "edit", "edit_day"
+        if has_day_ref and not is_full_create:
             return "qa", "qa_local"
 
-        constraints = self._extract_constraints(query)
         has_any_travel_signal = (
             bool(constraints.destination_city)
             or constraints.days is not None

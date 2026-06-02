@@ -58,10 +58,34 @@ def test_qp_intent_edit():
 
 def test_qp_day_question_is_qa_not_edit():
     processor = TravelQueryProcessor()
-    for query in ("第2天安排是什么？", "第1天几点出发?", "day 2 有什么安排？"):
+    for query in (
+        "第2天安排是什么？",
+        "第1天几点出发?",
+        "day 2 有什么安排？",
+        "第三天下午去哪里",
+        "第三天下午去哪",
+        "第二天晚上有什么",
+        "第2天安排啥",
+    ):
         out = processor.process(query)
         assert out["intent"] == "qa"
         assert out["intent_detail"] == "qa_local"
+
+
+def test_qp_day_reference_without_mutation_is_read_only_qa():
+    processor = TravelQueryProcessor()
+    for query in ("第三天下午", "第二天室内一点", "day 2 afternoon"):
+        out = processor.process(query)
+        assert out["intent"] == "qa"
+        assert out["intent_detail"] == "qa_local"
+
+
+def test_qp_explicit_mutation_still_routes_to_edit():
+    processor = TravelQueryProcessor()
+    for query in ("能不能把第二天改成室内？", "第二天别太赶", "删掉第3天晚上"):
+        out = processor.process(query)
+        assert out["intent"] == "edit"
+        assert out["intent_detail"] == "edit_day"
 
 
 def test_qp_intent_qa_evidence():
@@ -88,6 +112,22 @@ def test_qp_create_with_duration_and_qualitative_budget_is_not_edit():
     assert out["constraints"]["days"] == 3
     assert out["constraints"]["budget"] == 6000.0
     assert out["missing_required"] == []
+
+
+def test_qp_create_with_planning_prefix_extracts_destination_before_duration():
+    processor = TravelQueryProcessor()
+    for query, city in (
+        ("帮我规划深圳3天，预算中等", "深圳"),
+        ("安排澳门5天，预算人均5000", "澳门"),
+        ("做一个成都4天行程，预算中等", "成都"),
+    ):
+        out = processor.process(query)
+        assert out["intent"] == "create"
+        assert out["intent_detail"] == "first_create"
+        assert out["constraints"]["destination_city"] == city
+        assert out["constraints"]["days"] is not None
+        assert out["constraints"]["budget"] is not None
+        assert out["missing_required"] == []
 
 
 def test_qp_extracts_per_person_budget_for_create():
