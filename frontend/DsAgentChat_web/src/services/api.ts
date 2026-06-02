@@ -48,7 +48,7 @@ export interface TravelSseCallbacks {
   onEditDiff?: (envelope: TravelEventEnvelope<{
     old_revision_id: string | null
     new_revision_id: string
-    change_summary: { changed_days: number[]; diff_items: string[] }
+    change_summary: { changed_days: number[]; diff_items: string[]; failed_ops?: number }
     explanation: string
   }>) => void
   onResetDone?: (envelope: TravelEventEnvelope<{ text: string }>) => void
@@ -175,7 +175,7 @@ export class ApiService {
           envelope as TravelEventEnvelope<{
             old_revision_id: string | null
             new_revision_id: string
-            change_summary: { changed_days: number[]; diff_items: string[] }
+            change_summary: { changed_days: number[]; diff_items: string[]; failed_ops?: number }
             explanation: string
           }>
         )

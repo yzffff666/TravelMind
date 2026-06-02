@@ -88,6 +88,7 @@ export interface ItineraryResult {
 export interface ChangeSummary {
   changed_days: number[]
   diff_items: string[]
+  failed_ops?: number
 }
 
 export interface EditDiffData {

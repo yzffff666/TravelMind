@@ -49,6 +49,7 @@ class SmokeCase:
     conversation_alias: str
     reset_conversation: bool = False
     expect_events: tuple[str, ...] = ()
+    forbid_events: tuple[str, ...] = ()
 
 
 CASE_SETS: dict[str, list[SmokeCase]] = {
@@ -65,13 +66,20 @@ CASE_SETS: dict[str, list[SmokeCase]] = {
             query="帮我规划 3 天成都亲子游，预算中等，节奏轻松",
             conversation_alias="domestic",
             reset_conversation=True,
-            expect_events=("intent_routed",),
+            expect_events=("intent_routed", "final_itinerary"),
         ),
         SmokeCase(
             name="domestic_edit",
             query="把第二天下午改成更轻松的室内活动",
             conversation_alias="domestic",
-            expect_events=("intent_routed",),
+            expect_events=("intent_routed", "edit_diff", "final_itinerary"),
+        ),
+        SmokeCase(
+            name="domestic_edit_missing_target",
+            query="把第99天上午改成去博物馆",
+            conversation_alias="domestic",
+            expect_events=("intent_routed", "final_text"),
+            forbid_events=("edit_diff", "final_itinerary"),
         ),
         SmokeCase(
             name="domestic_qa",
@@ -93,7 +101,7 @@ CASE_SETS: dict[str, list[SmokeCase]] = {
             query="帮我规划 3 天成都亲子游，预算中等，节奏轻松",
             conversation_alias="domestic",
             reset_conversation=True,
-            expect_events=("intent_routed",),
+            expect_events=("intent_routed", "final_itinerary"),
         ),
         SmokeCase(
             name="overseas_create",
@@ -106,7 +114,14 @@ CASE_SETS: dict[str, list[SmokeCase]] = {
             name="domestic_edit",
             query="把第二天下午改成更轻松的室内活动",
             conversation_alias="domestic",
-            expect_events=("intent_routed",),
+            expect_events=("intent_routed", "edit_diff", "final_itinerary"),
+        ),
+        SmokeCase(
+            name="domestic_edit_missing_target",
+            query="把第99天上午改成去博物馆",
+            conversation_alias="domestic",
+            expect_events=("intent_routed", "final_text"),
+            forbid_events=("edit_diff", "final_itinerary"),
         ),
         SmokeCase(
             name="domestic_qa",
@@ -133,7 +148,7 @@ CASE_SETS: dict[str, list[SmokeCase]] = {
             name="english_edit",
             query="Change day 2 afternoon to an indoor activity",
             conversation_alias="english",
-            expect_events=("intent_routed", "final_itinerary"),
+            expect_events=("intent_routed", "edit_diff", "final_itinerary"),
         ),
         SmokeCase(
             name="mixed_poi_create",
@@ -303,6 +318,7 @@ def build_run_metadata(
                 "elapsed_ms": result.get("elapsed_ms"),
                 "event_count": result.get("event_count"),
                 "missing_expected_events": result.get("missing_expected_events") or [],
+                "forbidden_observed_events": result.get("forbidden_observed_events") or [],
             }
             for result in results
         ],
@@ -344,6 +360,7 @@ def run_case(
 
     event_names = _event_names(events)
     missing_events = [name for name in case.expect_events if name not in event_names]
+    forbidden_observed_events = [name for name in case.forbid_events if name in event_names]
     events_path = output_dir / f"{case.name}.events.jsonl"
     _write_jsonl(events_path, events)
 
@@ -356,6 +373,7 @@ def run_case(
         "event_count": len(events),
         "event_names": event_names,
         "missing_expected_events": missing_events,
+        "forbidden_observed_events": forbidden_observed_events,
         "events_path": str(events_path),
     }
 
@@ -371,13 +389,14 @@ def render_run_report(results: list[dict[str, Any]], *, base_url: str, query_pat
         "",
         "## Case Results",
         "",
-        "| Case | Elapsed ms | Events | Missing expected events |",
-        "|------|------------|--------|-------------------------|",
+        "| Case | Elapsed ms | Events | Missing expected events | Forbidden observed events |",
+        "|------|------------|--------|-------------------------|---------------------------|",
     ]
     for result in results:
         missing = ", ".join(result["missing_expected_events"]) or "-"
+        forbidden = ", ".join(result.get("forbidden_observed_events") or []) or "-"
         lines.append(
-            f"| `{result['name']}` | {result['elapsed_ms']} | {result['event_count']} | {missing} |"
+            f"| `{result['name']}` | {result['elapsed_ms']} | {result['event_count']} | {missing} | {forbidden} |"
         )
 
     lines.extend(["", "## Event Names", ""])
@@ -396,6 +415,13 @@ def render_run_report(results: list[dict[str, Any]], *, base_url: str, query_pat
     return "\n".join(lines)
 
 
+def has_contract_failures(results: list[dict[str, Any]]) -> bool:
+    return any(
+        result.get("missing_expected_events") or result.get("forbidden_observed_events")
+        for result in results
+    )
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run TravelMind observation smoke cases.")
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL, help="Backend base URL.")
@@ -409,6 +435,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("logs/structured.log"),
         help="Structured log path used to generate summary if present.",
+    )
+    parser.add_argument(
+        "--allow-contract-failures",
+        action="store_true",
+        help="Write artifacts but return 0 even when expected/forbidden event contracts fail.",
     )
     return parser
 
@@ -511,6 +542,9 @@ def main(argv: list[str] | None = None) -> int:
     write_candidate_dataset_manifest_artifacts(args.output_dir)
 
     print(f"Observation smoke artifacts written to: {run_dir}")
+    if has_contract_failures(results) and not args.allow_contract_failures:
+        print("Observation smoke event contract failed; inspect smoke-report.md.")
+        return 1
     return 0
 
 

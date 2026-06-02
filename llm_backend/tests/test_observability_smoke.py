@@ -5,6 +5,7 @@ from scripts.observability_smoke import (
     _conversation_id_from_events,
     _event_names,
     _file_size,
+    has_contract_failures,
     _iter_log_events_since,
     _parse_sse_events,
     build_run_metadata,
@@ -30,6 +31,27 @@ def test_case_sets_include_bilingual_language_coverage():
     assert "What is the plan" in cases["english_qa"].query
     assert "Phuket Old Town" in cases["mixed_poi_create"].query
     assert "查龙寺" in cases["mixed_poi_create"].query
+    assert "edit_diff" in cases["english_edit"].expect_events
+
+
+def test_case_sets_include_edit_success_and_failure_contracts():
+    cases = {case.name: case for case in CASE_SETS["mini"]}
+
+    assert cases["domestic_create"].expect_events == ("intent_routed", "final_itinerary")
+    assert cases["domestic_edit"].expect_events == (
+        "intent_routed",
+        "edit_diff",
+        "final_itinerary",
+    )
+    assert cases["domestic_edit_missing_target"].conversation_alias == "domestic"
+    assert cases["domestic_edit_missing_target"].expect_events == (
+        "intent_routed",
+        "final_text",
+    )
+    assert cases["domestic_edit_missing_target"].forbid_events == (
+        "edit_diff",
+        "final_itinerary",
+    )
 
 
 def test_case_sets_include_single_live_probe():
@@ -106,6 +128,7 @@ def test_render_run_report_contains_case_summary():
                 "event_count": 1,
                 "event_names": ["intent_routed"],
                 "missing_expected_events": ["final_text"],
+                "forbidden_observed_events": ["final_itinerary"],
             },
         ],
         base_url="http://127.0.0.1:8000",
@@ -117,6 +140,8 @@ def test_render_run_report_contains_case_summary():
     assert "`/api/travel/query`" in report
     assert "`domestic_create`" in report
     assert "final_text" in report
+    assert "Forbidden observed events" in report
+    assert "final_itinerary" in report
 
 
 def test_json_serializable_result_shape():
@@ -127,6 +152,18 @@ def test_json_serializable_result_shape():
     }
 
     assert json.loads(json.dumps(payload))["name"] == "case"
+
+
+def test_has_contract_failures_detects_missing_or_forbidden_events():
+    assert not has_contract_failures(
+        [{"missing_expected_events": [], "forbidden_observed_events": []}]
+    )
+    assert has_contract_failures(
+        [{"missing_expected_events": ["final_itinerary"], "forbidden_observed_events": []}]
+    )
+    assert has_contract_failures(
+        [{"missing_expected_events": [], "forbidden_observed_events": ["edit_diff"]}]
+    )
 
 
 def test_iter_log_events_since_reads_only_new_lines(tmp_path):
@@ -282,6 +319,7 @@ def test_build_run_metadata_captures_dataset_provenance(tmp_path):
                 "elapsed_ms": 123.4,
                 "event_count": 10,
                 "missing_expected_events": [],
+                "forbidden_observed_events": [],
                 "event_names": ["intent_routed", "final_itinerary"],
             }
         ],
@@ -299,6 +337,7 @@ def test_build_run_metadata_captures_dataset_provenance(tmp_path):
             "elapsed_ms": 123.4,
             "event_count": 10,
             "missing_expected_events": [],
+            "forbidden_observed_events": [],
         }
     ]
     assert "generated_at" in metadata
