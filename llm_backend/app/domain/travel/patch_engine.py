@@ -246,22 +246,38 @@ def apply_patch(
     failed = 0
     for op in ops:
         try:
-            pre_len = len(diff_items)
+            applied = False
             if op.op == PatchOpType.REPLACE_SLOT:
-                _apply_replace(itinerary, op, changed_days, diff_items)
+                applied = _apply_replace(itinerary, op, changed_days, diff_items)
             elif op.op == PatchOpType.DELETE_SLOT:
-                _apply_delete(itinerary, op, changed_days, diff_items)
+                applied = _apply_delete(itinerary, op, changed_days, diff_items)
             elif op.op == PatchOpType.INSERT_SLOT:
-                _apply_insert(itinerary, op, changed_days, diff_items)
+                applied = _apply_insert(itinerary, op, changed_days, diff_items)
             elif op.op == PatchOpType.REPLAN_DAY:
-                _apply_replan_day(itinerary, op, changed_days, diff_items)
+                applied = _apply_replan_day(itinerary, op, changed_days, diff_items)
             elif op.op == PatchOpType.UPDATE_CONSTRAINT:
-                _apply_constraint(itinerary, op, diff_items)
-            succeeded += 1
+                applied = _apply_constraint(itinerary, op, diff_items)
+            if applied:
+                succeeded += 1
+            else:
+                failed += 1
         except Exception as e:
             logger.warning(f"Patch op {op.op} failed: {e}")
             diff_items.append(f"操作 {op.op.value} 执行失败: {str(e)}")
             failed += 1
+
+    if succeeded <= 0:
+        error = "；".join(diff_items) if diff_items else "编辑未命中任何行程内容"
+        return PatchResult(
+            success=False,
+            change_summary={
+                "changed_days": [],
+                "diff_items": diff_items,
+                "failed_ops": failed,
+            },
+            explanation=error,
+            error=error,
+        )
 
     # 更新行程 revision id
     itinerary["revision_id"] = new_revision_id
@@ -271,6 +287,7 @@ def apply_patch(
     itinerary["change_summary"] = {
         "changed_days": sorted(changed_days),
         "diff_items": diff_items,
+        "failed_ops": failed,
     }
     _recompute_lightweight_coverage(itinerary)
 
@@ -293,6 +310,7 @@ def apply_patch(
         change_summary={
             "changed_days": sorted(changed_days),
             "diff_items": diff_items,
+            "failed_ops": failed,
         },
         explanation=explanation,
     )
@@ -413,15 +431,14 @@ def _find_slot(day: dict, slot_label: str) -> dict | None:
     return None
 
 
-def _apply_replace(itinerary: dict, op: PatchOp, changed_days: set, diff_items: list):
+def _apply_replace(itinerary: dict, op: PatchOp, changed_days: set, diff_items: list) -> bool:
     if not op.day_index:
         diff_items.append("未指定修改哪一天，请说明第N天")
-        return
+        return False
     day = _find_day(itinerary, op.day_index)
     if not day:
         diff_items.append(f"未找到第{op.day_index}天")
-        return
-    changed_days.add(op.day_index)
+        return False
 
     if op.slot_label:
         slot = _find_slot(day, op.slot_label)
@@ -432,8 +449,11 @@ def _apply_replace(itinerary: dict, op: PatchOp, changed_days: set, diff_items: 
             slot["place"] = op.payload.get("place") or _infer_place_from_activity(new_activity)
             _clear_slot_verification(slot)
             diff_items.append(f"第{op.day_index}天{op.slot_label}：「{old_activity}」→「{new_activity}」")
+            changed_days.add(op.day_index)
+            return True
         else:
             diff_items.append(f"未找到第{op.day_index}天的{op.slot_label}时段")
+            return False
     else:
         first_slot = day.get("slots", [None])[0]
         if first_slot:
@@ -443,41 +463,53 @@ def _apply_replace(itinerary: dict, op: PatchOp, changed_days: set, diff_items: 
             first_slot["place"] = op.payload.get("place") or _infer_place_from_activity(new_activity)
             _clear_slot_verification(first_slot)
             diff_items.append(f"第{op.day_index}天首个时段：「{old_activity}」→「{new_activity}」")
+            changed_days.add(op.day_index)
+            return True
+        diff_items.append(f"第{op.day_index}天没有可修改的时段")
+        return False
 
 
-def _apply_delete(itinerary: dict, op: PatchOp, changed_days: set, diff_items: list):
+def _apply_delete(itinerary: dict, op: PatchOp, changed_days: set, diff_items: list) -> bool:
     if not op.day_index:
         diff_items.append("未指定删除哪一天，请说明第N天")
-        return
+        return False
     day = _find_day(itinerary, op.day_index)
     if not day:
         diff_items.append(f"未找到第{op.day_index}天")
-        return
-    changed_days.add(op.day_index)
+        return False
 
     if op.slot_label:
         slots = day.get("slots", [])
         original_len = len(slots)
-        day["slots"] = [s for s in slots if s.get("slot") != op.slot_label]
+        target_slot = _normalize_slot(op.slot_label)
+        day["slots"] = [
+            s for s in slots
+            if _normalize_slot(s.get("slot")) != target_slot
+        ]
         if len(day["slots"]) < original_len:
             diff_items.append(f"已删除第{op.day_index}天{op.slot_label}时段")
+            changed_days.add(op.day_index)
         else:
             diff_items.append(f"未找到第{op.day_index}天的{op.slot_label}时段")
+            return False
         if not day["slots"]:
             day["slots"] = [{"slot": "上午", "activity": "自由活动", "place": None, "transit": None}]
             diff_items.append(f"第{op.day_index}天已无时段，保留默认自由活动")
+        return True
     else:
         removed_activities = [s.get("activity", "") for s in day.get("slots", [])]
         day["slots"] = [{"slot": "上午", "activity": "自由活动", "place": None, "transit": None}]
         diff_items.append(f"已清空第{op.day_index}天所有时段（原有：{'、'.join(removed_activities)}）")
+        changed_days.add(op.day_index)
+        return True
 
 
-def _apply_insert(itinerary: dict, op: PatchOp, changed_days: set, diff_items: list):
+def _apply_insert(itinerary: dict, op: PatchOp, changed_days: set, diff_items: list) -> bool:
     day_index = op.day_index or len(itinerary.get("days", [])) or 1
     day = _find_day(itinerary, day_index)
     if not day:
         diff_items.append(f"未找到第{day_index}天，无法插入")
-        return
+        return False
     changed_days.add(day_index)
 
     new_slot = {
@@ -488,16 +520,17 @@ def _apply_insert(itinerary: dict, op: PatchOp, changed_days: set, diff_items: l
     }
     day.get("slots", []).append(new_slot)
     diff_items.append(f"第{day_index}天新增{new_slot['slot']}时段：{new_slot['activity']}")
+    return True
 
 
-def _apply_replan_day(itinerary: dict, op: PatchOp, changed_days: set, diff_items: list):
+def _apply_replan_day(itinerary: dict, op: PatchOp, changed_days: set, diff_items: list) -> bool:
     if not op.day_index:
         diff_items.append("未指定重新规划哪一天，请说明第N天")
-        return
+        return False
     day = _find_day(itinerary, op.day_index)
     if not day:
         diff_items.append(f"未找到第{op.day_index}天")
-        return
+        return False
 
     constraints = list(op.payload.get("constraints") or [])
     old_slots = [slot.get("activity", "") for slot in day.get("slots", [])]
@@ -508,6 +541,7 @@ def _apply_replan_day(itinerary: dict, op: PatchOp, changed_days: set, diff_item
     old_desc = "、".join([s for s in old_slots if s][:3]) or "原安排"
     constraint_desc = "、".join(_constraint_label(c) for c in constraints) or "新偏好"
     diff_items.append(f"第{op.day_index}天按「{constraint_desc}」重新规划（原安排：{old_desc}）")
+    return True
 
 
 def _build_replan_theme(constraints: list[str]) -> str:
@@ -591,10 +625,11 @@ def _constraint_label(constraint: str) -> str:
     return labels.get(constraint, constraint)
 
 
-def _apply_constraint(itinerary: dict, op: PatchOp, diff_items: list):
+def _apply_constraint(itinerary: dict, op: PatchOp, diff_items: list) -> bool:
     profile = itinerary.get("trip_profile", {})
     constraints = profile.get("constraints", {})
     budget_summary = itinerary.get("budget_summary", {})
+    modified = False
 
     if "budget" in op.payload:
         new_budget = op.payload["budget"]
@@ -602,13 +637,18 @@ def _apply_constraint(itinerary: dict, op: PatchOp, diff_items: list):
         budget_summary["total_estimate"] = new_budget
         constraints["budget_range"] = f"约 {int(new_budget)} 元"
         diff_items.append(f"预算：{int(old_budget)} → {int(new_budget)} 元")
+        modified = True
 
     if "preferences" in op.payload:
         old_prefs = constraints.get("preferences", [])
         new_prefs = op.payload["preferences"]
         constraints["preferences"] = new_prefs
         diff_items.append(f"偏好：{'、'.join(old_prefs) or '无'} → {'、'.join(new_prefs)}")
+        modified = True
 
     profile["constraints"] = constraints
     itinerary["trip_profile"] = profile
     itinerary["budget_summary"] = budget_summary
+    if not modified:
+        diff_items.append("未识别到可更新的约束")
+    return modified

@@ -6,6 +6,7 @@ T-M2-012 / T-M2-013 集成测试：
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 
@@ -142,6 +143,40 @@ class TestEditDiffEvent:
         assert pm.location is not None
         assert pm.location.lat == pytest.approx(31.2304)
         assert pm.location.lng == pytest.approx(121.4737)
+
+    def test_stream_edit_missing_target_returns_text_not_itinerary(self):
+        """A failed edit should not emit final_itinerary or advance revision."""
+        from app.api.travel import _stream_edit_result
+
+        async def collect_lines() -> list[str]:
+            return [
+                line
+                async for line in _stream_edit_result(
+                    utterance="把第99天上午改成去博物馆",
+                    current_itinerary=_make_itinerary(),
+                    request_id="req-edit-miss",
+                    conversation_id="conv-edit-miss",
+                    intent="edit",
+                    intent_detail="edit_itinerary",
+                    user_id=1,
+                )
+            ]
+
+        lines = asyncio.run(collect_lines())
+        event_names = [
+            line.split("\n", 1)[0].replace("event: ", "")
+            for line in lines
+            if line.startswith("event: ")
+        ]
+        assert "final_text" in event_names
+        assert "final_itinerary" not in event_names
+        assert "edit_diff" not in event_names
+
+        final_text_line = next(line for line in lines if line.startswith("event: final_text"))
+        data_line = next(line for line in final_text_line.split("\n") if line.startswith("data: "))
+        data = json.loads(data_line[6:])
+        assert data["revision_id"] is None
+        assert "未指定修改哪一天" in data["payload"]["text"]
 
 
 # ---------- QA 回答（函数逻辑直接测试） ----------

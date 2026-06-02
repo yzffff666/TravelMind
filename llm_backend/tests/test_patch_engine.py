@@ -183,6 +183,46 @@ class TestApplyPatch:
         assert not result.success
         assert result.error
 
+    def test_missing_target_day_returns_failure_without_revision(self):
+        it = _make_itinerary()
+        ops = [
+            PatchOp(
+                op=PatchOpType.REPLACE_SLOT,
+                day_index=99,
+                slot_label="上午",
+                payload={"activity": "去博物馆"},
+            )
+        ]
+        result = apply_patch(it, ops)
+        assert not result.success
+        assert result.new_itinerary is None
+        assert result.new_revision_id is None
+        assert "未找到第99天" in result.error
+
+    def test_missing_target_slot_returns_failure_without_revision(self):
+        it = _make_itinerary()
+        ops = [
+            PatchOp(
+                op=PatchOpType.DELETE_SLOT,
+                day_index=1,
+                slot_label="凌晨",
+            )
+        ]
+        result = apply_patch(it, ops)
+        assert not result.success
+        assert result.new_itinerary is None
+        assert "未找到第1天的凌晨时段" in result.error
+
+    def test_delete_slot_matches_normalized_label(self):
+        it = _make_itinerary()
+        ops = [PatchOp(op=PatchOpType.DELETE_SLOT, day_index=2, slot_label="morning")]
+        result = apply_patch(it, ops)
+        assert result.success
+        day2 = next(d for d in result.new_itinerary["days"] if d["day_index"] == 2)
+        slot_labels = [s["slot"] for s in day2["slots"]]
+        assert "上午" not in slot_labels
+        assert result.change_summary["failed_ops"] == 0
+
     def test_original_not_mutated(self):
         it = _make_itinerary()
         original_rev = it["revision_id"]
