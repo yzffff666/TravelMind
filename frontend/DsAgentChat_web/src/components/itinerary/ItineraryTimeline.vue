@@ -60,7 +60,7 @@
               </div>
 
               <div class="pc-bottom">
-                <StatusBadge v-if="slotCost(slot)" tone="warning">
+                <StatusBadge v-if="slotCost(slot)" class="pc-cost" tone="warning">
                   &yen;{{ fmt(slotCost(slot)!) }}
                 </StatusBadge>
                 <StatusBadge v-if="slot.transit" tone="neutral">
@@ -68,6 +68,7 @@
                 </StatusBadge>
                 <StatusBadge
                   v-if="slot.evidence_refs && slot.evidence_refs.length > 0"
+                  class="pc-evidence"
                   tone="success"
                   :title="`${slot.evidence_refs.length} 条数据源佐证`"
                 >

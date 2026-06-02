@@ -1,5 +1,9 @@
 <template>
-  <GlassCard v-if="phase !== 'idle'" class="phase-indicator">
+  <GlassCard
+    v-if="phase !== 'idle'"
+    class="phase-indicator"
+    :class="`phase-indicator--${phase}`"
+  >
     <div class="phase-indicator__glow" aria-hidden="true" />
     <div class="phase-indicator__content">
       <StatusBadge :tone="tone">

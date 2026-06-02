@@ -8,7 +8,7 @@
         </svg>
       </div>
       <div>
-        <StatusBadge tone="warning">行程已修改</StatusBadge>
+        <StatusBadge class="diff-title" tone="warning">行程已修改</StatusBadge>
         <p class="diff-kicker">已按你的要求更新 itinerary 片段</p>
       </div>
     </div>
@@ -26,6 +26,7 @@
       <StatusBadge
         v-for="d in diff.summary.changed_days"
         :key="d"
+        class="diff-day-tag"
         tone="info"
       >第 {{ d }} 天</StatusBadge>
     </div>

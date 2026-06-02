@@ -44,17 +44,17 @@ describe('PhaseIndicator', () => {
 
   it('has pulse animation on active phases', () => {
     const planning = mountWith('planning')
-    expect(planning.find('.status-dot').classes()).toContain('pulse')
+    expect(planning.find('.phase-indicator__pulse').exists()).toBe(true)
 
     const done = mountWith('done')
-    expect(done.find('.status-dot').classes()).not.toContain('pulse')
+    expect(done.find('.phase-indicator__pulse').exists()).toBe(false)
   })
 
   it('applies correct CSS class for each phase', () => {
     const phases: PlannerPhase[] = ['planning', 'editing', 'clarifying', 'done', 'error']
     for (const phase of phases) {
       const wrapper = mountWith(phase)
-      expect(wrapper.find(`.st-${phase}`).exists()).toBe(true)
+      expect(wrapper.find(`.phase-indicator--${phase}`).exists()).toBe(true)
     }
   })
 })
