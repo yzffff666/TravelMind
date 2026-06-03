@@ -1,0 +1,43 @@
+{"id":"create_zh_chengdu_family","category":"create","query":"帮我规划 3 天成都亲子游，预算中等，节奏轻松","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"成都","days":3,"budget":6000.0,"pace":"relaxed"},"missing_required":[]}}
+{"id":"create_zh_shanghai_couple","category":"create","query":"上海 4 天，预算 6000，情侣，偏好文化+美食","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"上海","days":4,"budget":6000.0,"traveler_type":"情侣"},"missing_required":[]}}
+{"id":"create_zh_shenzhen_prefix","category":"create","query":"帮我规划深圳3天，预算中等","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"深圳","days":3,"budget":6000.0},"missing_required":[]}}
+{"id":"create_zh_macau_prefix","category":"create","query":"安排澳门5天，预算人均5000","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"澳门","days":5,"budget":5000.0},"missing_required":[]}}
+{"id":"create_zh_hk_per_person","category":"create","query":"我想去香港，3天，人均2000","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"香港","days":3,"budget":2000.0},"missing_required":[]}}
+{"id":"create_zh_beijing_budget_range","category":"create","query":"北京 3天 预算4000-6000 亲子","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"北京","days":3,"budget":5000.0,"traveler_type":"亲子"},"missing_required":[]}}
+{"id":"create_zh_xiamen_food","category":"create","query":"制定厦门4天旅行，预算7000，偏好美食和海边","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"厦门","days":4,"budget":7000.0}}}
+{"id":"create_zh_phuket_mixed","category":"create","query":"帮我规划 3 天 Phuket 轻松行程，预算 6000，偏好美食","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"Phuket","days":3,"budget":6000.0}}}
+{"id":"create_en_shanghai","category":"create","query":"travel to shanghai for 4 days, budget 6000, couple, prefer culture and food","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"shanghai","days":4,"budget":6000.0},"missing_required":[]}}
+{"id":"create_en_phuket","category":"create","query":"Plan a 3 day trip to Phuket with budget 6000 CNY, relaxed food and beaches","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"Phuket","days":3,"budget":6000.0},"missing_required":[]}}
+{"id":"create_en_visit_tokyo","category":"create","query":"visit Tokyo for 5 days with budget 9000","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"Tokyo","days":5,"budget":9000.0},"missing_required":[]}}
+{"id":"create_en_trip_seoul","category":"create","query":"trip to Seoul 2 days budget 3000","expected":{"intent":"create","intent_detail":"first_create","constraints":{"destination_city":"Seoul","days":2,"budget":3000.0},"missing_required":[]}}
+{"id":"edit_zh_change_day2","category":"edit","query":"把第二天下午改成更轻松的室内活动","expected":{"intent":"edit","intent_detail":"edit_day"}}
+{"id":"edit_zh_modify_day1","category":"edit","query":"把第1天上午改成博物馆","expected":{"intent":"edit","intent_detail":"edit_day"}}
+{"id":"edit_zh_delete_day3_night","category":"edit","query":"删除第3天晚上","expected":{"intent":"edit","intent_detail":"edit_day"}}
+{"id":"edit_zh_adjust_itinerary","category":"edit","query":"调整一下行程","expected":{"intent":"edit","intent_detail":"edit_day"}}
+{"id":"edit_zh_replace_activity","category":"edit","query":"替换成别的活动","expected":{"intent":"edit","intent_detail":"edit_day"}}
+{"id":"edit_zh_cancel_day1_night","category":"edit","query":"取消第一天晚上安排","expected":{"intent":"edit","intent_detail":"edit_day"}}
+{"id":"edit_zh_add_museum","category":"edit","query":"加上一个博物馆","expected":{"intent":"edit","intent_detail":"edit_day"}}
+{"id":"edit_zh_not_too_rushed","category":"edit","query":"第二天别太赶","expected":{"intent":"edit","intent_detail":"edit_day"}}
+{"id":"qa_zh_day2_plan","category":"qa","query":"第 2 天安排是什么？","expected":{"intent":"qa","intent_detail":"qa_local"}}
+{"id":"qa_zh_day3_afternoon_where","category":"qa","query":"第三天下午去哪里","expected":{"intent":"qa","intent_detail":"qa_local"}}
+{"id":"qa_zh_day1_time","category":"qa","query":"第1天几点出发？","expected":{"intent":"qa","intent_detail":"qa_local"}}
+{"id":"qa_zh_address","category":"qa","query":"这个景点地址在哪里？","expected":{"intent":"qa","intent_detail":"qa_local"}}
+{"id":"qa_zh_ticket","category":"qa","query":"门票多少钱？","expected":{"intent":"qa","intent_detail":"qa_local"}}
+{"id":"qa_zh_evidence_why","category":"qa_evidence","query":"为什么推荐这个？","expected":{"intent":"qa","intent_detail":"qa_evidence"}}
+{"id":"qa_zh_evidence_source","category":"qa_evidence","query":"证据在哪里","expected":{"intent":"qa","intent_detail":"qa_evidence"}}
+{"id":"qa_zh_evidence_link","category":"qa_evidence","query":"来源链接是什么","expected":{"intent":"qa","intent_detail":"qa_evidence"}}
+{"id":"qa_en_day2_plan","category":"qa","query":"What is the plan for day 2?","expected":{"intent":"qa","intent_detail":"qa_local"}}
+{"id":"qa_en_day2_readonly","category":"qa","query":"day 2 afternoon","expected":{"intent":"qa","intent_detail":"qa_local"}}
+{"id":"qa_en_transit_time","category":"qa","query":"How long does day 1 transit take?","expected":{"intent":"qa","intent_detail":"qa_local"}}
+{"id":"qa_en_evidence_ref","category":"qa_evidence","query":"show me the ref for this recommendation","expected":{"intent":"qa","intent_detail":"qa_evidence"}}
+{"id":"reset_zh_plain","category":"reset","query":"重置","expected":{"intent":"reset","intent_detail":"reset_all"}}
+{"id":"reset_zh_restart","category":"reset","query":"重新开始","expected":{"intent":"reset","intent_detail":"reset_all"}}
+{"id":"reset_zh_clear","category":"reset","query":"清空行程","expected":{"intent":"reset","intent_detail":"reset_all"}}
+{"id":"reset_en_reset","category":"reset","query":"reset","expected":{"intent":"reset","intent_detail":"reset_all"}}
+{"id":"reset_en_restart","category":"reset","query":"restart","expected":{"intent":"reset","intent_detail":"reset_all"}}
+{"id":"chat_zh_hello","category":"chat","query":"你好","expected":{"intent":"chat","intent_detail":"general_chat"}}
+{"id":"chat_en_hello","category":"chat","query":"hello there","expected":{"intent":"chat","intent_detail":"general_chat"}}
+{"id":"known_gap_create_clarify_missing_fields","category":"known_gap","strict":false,"query":"想去海边玩几天，轻松一点","expected":{"intent":"create","intent_detail":"first_create"},"note":"Current rule treats open-ended duration questions as QA; target behavior is create clarification."}
+{"id":"known_gap_en_edit_change_day2","category":"known_gap","strict":false,"query":"Change day 2 afternoon to an indoor activity","expected":{"intent":"edit","intent_detail":"edit_day"},"note":"English mutation verbs are not yet part of edit_hints, so this currently routes as QA."}
+{"id":"known_gap_en_edit_remove_day1","category":"known_gap","strict":false,"query":"Remove day 1 evening plan","expected":{"intent":"edit","intent_detail":"edit_day"},"note":"English delete/remove mutations are tracked for the bilingual rule phase."}
+{"id":"known_gap_general_weather_question","category":"known_gap","strict":false,"query":"今天天气怎么样？","expected":{"intent":"chat","intent_detail":"general_chat"},"note":"Generic non-travel questions with a question mark currently route to QA."}

@@ -79,6 +79,16 @@ _QUALITATIVE_BUDGETS = (
 
 def extract_budget(query: str, config: DraftConfig = DRAFT_CONFIG) -> float | None:
     normalized = (query or "").strip()
+    # Budget ranges should be interpreted as a concrete midpoint before the
+    # generic budget pattern captures only the lower bound.
+    m = _BUDGET_RANGE_PATTERN.search(query)
+    if m:
+        low = float(m.group(1))
+        high = float(m.group(2))
+        if high < low:
+            low, high = high, low
+        return max((low + high) / 2.0, 0.0)
+
     match = config.budget_pattern.search(query)
     if match:
         return max(float(match.group(1)), 0.0)
@@ -122,15 +132,6 @@ def extract_budget(query: str, config: DraftConfig = DRAFT_CONFIG) -> float | No
     m = _BUDGET_CONTEXT_PATTERN.search(query)
     if m:
         return max(float(m.group(1)), 0.0)
-
-    m = _BUDGET_RANGE_PATTERN.search(query)
-    if m:
-        low = float(m.group(1))
-        high = float(m.group(2))
-        if high < low:
-            low, high = high, low
-        # Use midpoint so downstream planning has a concrete number.
-        return max((low + high) / 2.0, 0.0)
 
     m = _STANDALONE_BUDGET_PATTERN.match(normalized)
     if m:
