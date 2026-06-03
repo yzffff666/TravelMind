@@ -23,8 +23,16 @@ from app.domain.travel.structured_qp import (
 IntentType = Literal["create", "edit", "qa", "reset", "chat"]
 IntentDetailType = Literal["first_create", "edit_day", "qa_evidence", "qa_local", "reset_all", "general_chat"]
 
+_ENGLISH_RESET_HINT_PATTERN = re.compile(
+    r"\b(start over|begin again|clear (?:trip|itinerary)|new trip)\b",
+    re.IGNORECASE,
+)
 _ENGLISH_EDIT_HINT_PATTERN = re.compile(
-    r"\b(change|modify|adjust|replace|switch|swap|remove|delete|cancel|add|insert)\b",
+    r"\b(change|modify|adjust|replace|switch|swap|remove|delete|cancel|add|insert|make|move|reschedule)\b",
+    re.IGNORECASE,
+)
+_ENGLISH_EVIDENCE_HINT_PATTERN = re.compile(
+    r"\b(evidence|source|sources|reference|references)\b",
     re.IGNORECASE,
 )
 _TRAVEL_QA_TOPIC_PATTERN = re.compile(
@@ -286,7 +294,9 @@ class TravelQueryProcessor:
 
     def _detect_intent(self, query: str) -> tuple[IntentType, IntentDetailType]:
         lower_q = query.lower()
-        if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.reset_hints):
+        if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.reset_hints) or bool(
+            _ENGLISH_RESET_HINT_PATTERN.search(lower_q)
+        ):
             return "reset", "reset_all"
 
         rule_edit_hint = any(self._contains_hint(query, lower_q, word) for word in QP_RULES.edit_hints)
@@ -302,7 +312,9 @@ class TravelQueryProcessor:
             and constraints.budget is not None
         )
 
-        if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.evidence_qa_hints):
+        if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.evidence_qa_hints) or bool(
+            _ENGLISH_EVIDENCE_HINT_PATTERN.search(lower_q)
+        ):
             return "qa", "qa_evidence"
         if is_question and has_travel_qa_topic and not has_edit_hint:
             return "qa", "qa_local"

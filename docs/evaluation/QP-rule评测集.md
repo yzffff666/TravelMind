@@ -34,19 +34,19 @@ py -X utf8 -m scripts.evaluate_qp_rules `
 最近一次本地结果：
 
 ```text
-QP rule eval: 43/43 strict passed; 0/0 tracked known gaps mismatched
+QP rule eval: 96/96 strict passed; 0/0 tracked known gaps mismatched
 ```
 
 分类分布：
 
 | 类别 | 用例数 | 通过 | 失败 |
 |------|--------|------|------|
-| create | 13 | 13 | 0 |
-| edit | 10 | 10 | 0 |
-| qa | 8 | 8 | 0 |
-| qa_evidence | 4 | 4 | 0 |
-| reset | 5 | 5 | 0 |
-| chat | 3 | 3 | 0 |
+| create | 30 | 30 | 0 |
+| edit | 22 | 22 | 0 |
+| qa | 17 | 17 | 0 |
+| qa_evidence | 8 | 8 | 0 |
+| reset | 9 | 9 | 0 |
+| chat | 10 | 10 | 0 |
 | known_gap | 0 | 0 | 0 |
 
 ## 已知 gap
@@ -74,6 +74,12 @@ QP rule eval: 43/43 strict passed; 0/0 tracked known gaps mismatched
 
 - 英文 mutation verbs：`change / remove / replace / add ...` 会进入 edit，而不是被 `day N` 读成 QA。
 - QA topic gate：问号不再自动等于 itinerary QA，只有命中行程/景点/预算/交通/证据等旅行主题时才进入 QA，普通聊天问题保留为 chat。
+
+扩展到 96 条后，又补了三类解析稳定性：
+
+- `2日游`、`三日游` 等中文日制表达可以抽取天数。
+- `预算2w` 会按 `20000` 解析，不会被通用数字预算截成 `2`。
+- `杭州玩两天`、`适合父母的苏州`、`巴黎三日游`、`厦门半个月` 这类口语化目的地表达会做轻量清洗或 fallback 抽取。
 
 ## 后续用法
 

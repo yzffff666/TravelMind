@@ -11,6 +11,7 @@ _CN_NUM = {
 _CN_WEEK_PATTERN = re.compile(r"([一二两三四五六七八九十])\s*周")
 _CN_DAY_PATTERN = re.compile(r"([一二两三四五六七八九十]+)\s*[天日]")
 _DIGIT_WEEK_PATTERN = re.compile(r"(\d+)\s*周")
+_DIGIT_DAY_PATTERN = re.compile(r"(\d+)\s*日")
 _HALF_MONTH_PATTERN = re.compile(r"半个?月")
 
 
@@ -28,6 +29,10 @@ def extract_days(query: str, config: DraftConfig = DRAFT_CONFIG) -> int | None:
     match = config.days_pattern.search(query)
     if match:
         return max(config.min_days, min(int(match.group(1)), config.max_days))
+
+    m = _DIGIT_DAY_PATTERN.search(query)
+    if m:
+        return max(config.min_days, min(int(m.group(1)), config.max_days))
 
     m = _DIGIT_WEEK_PATTERN.search(query)
     if m:
@@ -89,10 +94,7 @@ def extract_budget(query: str, config: DraftConfig = DRAFT_CONFIG) -> float | No
             low, high = high, low
         return max((low + high) / 2.0, 0.0)
 
-    match = config.budget_pattern.search(query)
-    if match:
-        return max(float(match.group(1)), 0.0)
-
+    # Compact units like "2w" should beat the generic "预算2" match.
     m = _DIGIT_W_PATTERN.search(query)
     if m:
         return max(float(m.group(1)) * 10000, 0.0)
@@ -100,6 +102,10 @@ def extract_budget(query: str, config: DraftConfig = DRAFT_CONFIG) -> float | No
     m = _DIGIT_K_PATTERN.search(query)
     if m:
         return max(float(m.group(1)) * 1000, 0.0)
+
+    match = config.budget_pattern.search(query)
+    if match:
+        return max(float(match.group(1)), 0.0)
 
     m = _DIGIT_YUAN_PATTERN.search(query)
     if m:
@@ -145,18 +151,37 @@ def extract_budget(query: str, config: DraftConfig = DRAFT_CONFIG) -> float | No
     return None
 
 _TRAILING_PARTICLES = re.compile(r"(?:旅游|旅行|度假|游玩|亲子游|情侣游|家庭游|自由行|转转|看看|走走|玩玩|玩|游|了|吧|呢|啊|的|呀|哦|哈|嘛|吗)+$")
+_TRAILING_DURATION = re.compile(r"(?:玩)?(?:\d+|[一二两三四五六七八九十]+)\s*[天日](?:游)?$")
+_LEADING_DESTINATION_QUALIFIER = re.compile(r"^(?:适合[^的]{1,12}的|给[^的]{1,12}的)")
+_DESTINATION_BEFORE_DURATION_PATTERNS = (
+    re.compile(r"(?:去|到|规划|安排|制定|做一个|做一份|生成|设计|我想去|想去)?\s*([A-Za-z\u4e00-\u9fa5]{2,20})\s*半个?月"),
+    re.compile(r"(?:去|到|规划|安排|制定|做一个|做一份|生成|设计|我想去|想去)?\s*([A-Za-z\u4e00-\u9fa5]{2,20})\s*(?:\d+|[一二两三四五六七八九十]+)\s*[天日](?:游)?"),
+)
 _DESTINATION_NOISE_HINTS = ("规划", "安排", "帮我", "帮忙", "制定", "预算", "budget")
 _DESTINATION_SUFFIX_NOISE = ("亲子", "情侣", "家庭", "朋友")
+
+
+def _clean_destination_candidate(raw: str) -> str:
+    cleaned = _TRAILING_PARTICLES.sub("", raw).strip()
+    cleaned = _TRAILING_DURATION.sub("", cleaned).strip()
+    cleaned = _LEADING_DESTINATION_QUALIFIER.sub("", cleaned).strip()
+    for suffix in _DESTINATION_SUFFIX_NOISE:
+        cleaned = re.sub(rf"{suffix}$", "", cleaned).strip()
+    return cleaned
 
 
 def extract_destination(query: str, config: DraftConfig = DRAFT_CONFIG) -> str | None:
     for pattern in config.destination_patterns:
         match = pattern.search(query)
         if match:
-            raw = match.group(1)
-            cleaned = _TRAILING_PARTICLES.sub("", raw).strip()
-            for suffix in _DESTINATION_SUFFIX_NOISE:
-                cleaned = re.sub(rf"{suffix}$", "", cleaned).strip()
+            cleaned = _clean_destination_candidate(match.group(1))
+            if not cleaned or any(hint in cleaned for hint in _DESTINATION_NOISE_HINTS):
+                continue
+            return cleaned
+    for pattern in _DESTINATION_BEFORE_DURATION_PATTERNS:
+        match = pattern.search(query)
+        if match:
+            cleaned = _clean_destination_candidate(match.group(1))
             if not cleaned or any(hint in cleaned for hint in _DESTINATION_NOISE_HINTS):
                 continue
             return cleaned
