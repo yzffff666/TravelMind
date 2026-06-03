@@ -19,18 +19,18 @@ def test_default_qp_rule_eval_strict_gate_passes():
     assert summary["strict_cases"] >= 35
     assert summary["strict_failed"] == 0
     assert summary["strict_accuracy"] == 1.0
-    assert summary["tracked_cases"] > 0
+    assert summary["tracked_cases"] == 0
 
 
 def test_qp_rule_eval_tracks_known_gaps_without_blocking_gate():
     summary = evaluate_cases(
         [
             {
-                "id": "known_gap_en_edit",
+                "id": "synthetic_known_gap",
                 "category": "known_gap",
                 "strict": False,
-                "query": "Change day 2 afternoon to an indoor activity",
-                "expected": {"intent": "edit", "intent_detail": "edit_day"},
+                "query": "hello there",
+                "expected": {"intent": "reset", "intent_detail": "reset_all"},
             }
         ]
     )
@@ -45,12 +45,12 @@ def test_qp_rule_eval_markdown_includes_known_gap_section():
     summary = evaluate_cases(
         [
             {
-                "id": "known_gap_chat_question",
+                "id": "synthetic_known_gap",
                 "category": "known_gap",
                 "strict": False,
-                "query": "今天天气怎么样？",
-                "expected": {"intent": "chat", "intent_detail": "general_chat"},
-                "note": "Generic question should not be itinerary QA.",
+                "query": "hello there",
+                "expected": {"intent": "reset", "intent_detail": "reset_all"},
+                "note": "Synthetic non-strict mismatch used to exercise report rendering.",
             }
         ]
     )
@@ -59,4 +59,4 @@ def test_qp_rule_eval_markdown_includes_known_gap_section():
 
     assert "# QP Rule Evaluation" in markdown
     assert "Tracked Known Gaps" in markdown
-    assert "known_gap_chat_question" in markdown
+    assert "synthetic_known_gap" in markdown

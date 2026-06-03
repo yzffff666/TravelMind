@@ -36,8 +36,8 @@
 {"id":"reset_en_reset","category":"reset","query":"reset","expected":{"intent":"reset","intent_detail":"reset_all"}}
 {"id":"reset_en_restart","category":"reset","query":"restart","expected":{"intent":"reset","intent_detail":"reset_all"}}
 {"id":"chat_zh_hello","category":"chat","query":"你好","expected":{"intent":"chat","intent_detail":"general_chat"}}
+{"id":"chat_zh_weather_question","category":"chat","query":"今天天气怎么样？","expected":{"intent":"chat","intent_detail":"general_chat"}}
 {"id":"chat_en_hello","category":"chat","query":"hello there","expected":{"intent":"chat","intent_detail":"general_chat"}}
-{"id":"known_gap_create_clarify_missing_fields","category":"known_gap","strict":false,"query":"想去海边玩几天，轻松一点","expected":{"intent":"create","intent_detail":"first_create"},"note":"Current rule treats open-ended duration questions as QA; target behavior is create clarification."}
-{"id":"known_gap_en_edit_change_day2","category":"known_gap","strict":false,"query":"Change day 2 afternoon to an indoor activity","expected":{"intent":"edit","intent_detail":"edit_day"},"note":"English mutation verbs are not yet part of edit_hints, so this currently routes as QA."}
-{"id":"known_gap_en_edit_remove_day1","category":"known_gap","strict":false,"query":"Remove day 1 evening plan","expected":{"intent":"edit","intent_detail":"edit_day"},"note":"English delete/remove mutations are tracked for the bilingual rule phase."}
-{"id":"known_gap_general_weather_question","category":"known_gap","strict":false,"query":"今天天气怎么样？","expected":{"intent":"chat","intent_detail":"general_chat"},"note":"Generic non-travel questions with a question mark currently route to QA."}
+{"id":"create_zh_open_beach_clarification","category":"create","query":"想去海边玩几天，轻松一点","expected":{"intent":"create","intent_detail":"first_create"}}
+{"id":"edit_en_change_day2","category":"edit","query":"Change day 2 afternoon to an indoor activity","expected":{"intent":"edit","intent_detail":"edit_day"}}
+{"id":"edit_en_remove_day1","category":"edit","query":"Remove day 1 evening plan","expected":{"intent":"edit","intent_detail":"edit_day"}}

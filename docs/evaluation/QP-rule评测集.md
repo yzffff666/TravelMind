@@ -34,30 +34,31 @@ py -X utf8 -m scripts.evaluate_qp_rules `
 最近一次本地结果：
 
 ```text
-QP rule eval: 39/39 strict passed; 3/4 tracked known gaps mismatched
+QP rule eval: 43/43 strict passed; 0/0 tracked known gaps mismatched
 ```
 
 分类分布：
 
 | 类别 | 用例数 | 通过 | 失败 |
 |------|--------|------|------|
-| create | 12 | 12 | 0 |
-| edit | 8 | 8 | 0 |
+| create | 13 | 13 | 0 |
+| edit | 10 | 10 | 0 |
 | qa | 8 | 8 | 0 |
 | qa_evidence | 4 | 4 | 0 |
 | reset | 5 | 5 | 0 |
-| chat | 2 | 2 | 0 |
-| known_gap | 4 | 1 | 3 |
+| chat | 3 | 3 | 0 |
+| known_gap | 0 | 0 | 0 |
 
 ## 已知 gap
 
-当前跟踪但不阻塞门禁的问题：
+当前默认评测集没有 tracked known gap。英文编辑、英文删除、泛问题误路由已经进入 strict gate：
 
-- 英文编辑：`Change day 2 afternoon to an indoor activity` 当前会被 rule baseline 判成 QA，目标应是 edit。
-- 英文删除：`Remove day 1 evening plan` 当前会被判成 QA，目标应是 edit。
-- 泛问题：`今天天气怎么样？` 当前会被问号规则判成 QA，目标应是普通 chat。
+- `Change day 2 afternoon to an indoor activity`：判为 edit。
+- `Remove day 1 evening plan`：判为 edit。
+- `今天天气怎么样？`：判为 chat。
+- `想去海边玩几天，轻松一点`：判为 create，由后续澄清门处理缺失字段。
 
-这些 gap 正好对应下一阶段 rule-based 优化优先级：先补英文 mutation hints，再收紧 QA 问句触发条件，避免非旅行问题误入 itinerary QA。
+如果后续发现暂不修的 badcase，可以重新以 `strict: false` 加回 known gap，但需要在 `note` 里写清楚为什么暂不进入门禁。
 
 ## 本轮顺手修复
 
@@ -68,6 +69,11 @@ QP rule eval: 39/39 strict passed; 3/4 tracked known gaps mismatched
 ```
 
 修复前会被解析成 `4000`，因为通用 `预算数字` 正则先命中低位数。现在 `extract_budget()` 会优先识别区间，并使用中位数 `5000` 作为可执行预算。
+
+本轮还补了两个入口规则：
+
+- 英文 mutation verbs：`change / remove / replace / add ...` 会进入 edit，而不是被 `day N` 读成 QA。
+- QA topic gate：问号不再自动等于 itinerary QA，只有命中行程/景点/预算/交通/证据等旅行主题时才进入 QA，普通聊天问题保留为 chat。
 
 ## 后续用法
 

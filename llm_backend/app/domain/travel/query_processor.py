@@ -23,6 +23,18 @@ from app.domain.travel.structured_qp import (
 IntentType = Literal["create", "edit", "qa", "reset", "chat"]
 IntentDetailType = Literal["first_create", "edit_day", "qa_evidence", "qa_local", "reset_all", "general_chat"]
 
+_ENGLISH_EDIT_HINT_PATTERN = re.compile(
+    r"\b(change|modify|adjust|replace|switch|swap|remove|delete|cancel|add|insert)\b",
+    re.IGNORECASE,
+)
+_TRAVEL_QA_TOPIC_PATTERN = re.compile(
+    r"(第\s*(?:\d+|[一二两三四五六七八九十]+)\s*天|day\s*\d+|"
+    r"行程|安排|景点|活动|门票|交通|地址|预算|花费|费用|推荐|证据|来源|链接|"
+    r"itinerary|plan|activity|ticket|transit|transport|address|budget|cost|"
+    r"recommendation|recommend|ref|reference|source|where|when|how\s+long)",
+    re.IGNORECASE,
+)
+
 @dataclass(slots=True)
 class QPConstraints:
     destination_city: str | None = None
@@ -277,9 +289,12 @@ class TravelQueryProcessor:
         if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.reset_hints):
             return "reset", "reset_all"
 
-        has_edit_hint = any(self._contains_hint(query, lower_q, word) for word in QP_RULES.edit_hints)
+        rule_edit_hint = any(self._contains_hint(query, lower_q, word) for word in QP_RULES.edit_hints)
+        english_edit_hint = bool(_ENGLISH_EDIT_HINT_PATTERN.search(lower_q))
+        has_edit_hint = rule_edit_hint or english_edit_hint
         has_day_ref = bool(QP_RULES.edit_day_pattern.search(lower_q))
         is_question = bool(QP_RULES.qa_question_pattern.search(query))
+        has_travel_qa_topic = bool(_TRAVEL_QA_TOPIC_PATTERN.search(query))
         constraints = self._extract_constraints(query)
         is_full_create = (
             bool(constraints.destination_city)
@@ -289,7 +304,7 @@ class TravelQueryProcessor:
 
         if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.evidence_qa_hints):
             return "qa", "qa_evidence"
-        if is_question and not has_edit_hint:
+        if is_question and has_travel_qa_topic and not has_edit_hint:
             return "qa", "qa_local"
         if has_edit_hint and not is_full_create:
             return "edit", "edit_day"
