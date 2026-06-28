@@ -1,0 +1,19 @@
+{
+  "name": "local-quality-gate",
+  "gates": [
+    {
+      "type": "qp_eval",
+      "name": "qp_eval",
+      "cases": "evaluation/qp_rule_eval_cases.jsonl"
+    },
+    {
+      "type": "pytest",
+      "name": "backend_core_tests",
+      "targets": [
+        "tests/test_qp_rule_evaluation.py",
+        "tests/test_travel_m2_011.py",
+        "tests/test_travel_sse_envelope.py"
+      ]
+    }
+  ]
+}
