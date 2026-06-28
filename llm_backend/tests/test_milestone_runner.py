@@ -1,4 +1,12 @@
-from scripts.milestone_runner import build_status, render_summary, run_qp_eval_gate, write_artifacts
+import sys
+
+from scripts.milestone_runner import (
+    build_status,
+    render_summary,
+    run_command_gate,
+    run_qp_eval_gate,
+    write_artifacts,
+)
 
 
 def test_qp_eval_gate_passes_default_cases():
@@ -31,3 +39,33 @@ def test_summary_includes_gate_status():
 
     assert "status=passed" in summary
     assert "- qp_eval: passed" in summary
+
+
+def test_command_gate_passes_and_captures_output():
+    result = run_command_gate(
+        {
+            "type": "command",
+            "name": "command_smoke",
+            "cmd": [sys.executable, "-c", "print('command gate ok')"],
+        }
+    )
+
+    assert result.status == "passed"
+    assert result.summary["returncode"] == 0
+    assert "command gate ok" in result.summary["output_tail"]
+    assert result.failures == []
+
+
+def test_command_gate_reports_failure_output():
+    result = run_command_gate(
+        {
+            "type": "command",
+            "name": "command_failure",
+            "cmd": [sys.executable, "-c", "import sys; print('bad gate'); sys.exit(3)"],
+        }
+    )
+
+    assert result.status == "failed"
+    assert result.summary["returncode"] == 3
+    assert result.failures[0]["returncode"] == 3
+    assert "bad gate" in result.failures[0]["output_tail"]

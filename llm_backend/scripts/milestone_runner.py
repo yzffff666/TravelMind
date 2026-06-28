@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -133,12 +134,107 @@ def run_pytest_gate(gate: dict[str, Any]) -> GateResult:
     )
 
 
+def _command_display(cmd: Any) -> str:
+    if isinstance(cmd, list):
+        return " ".join(str(item) for item in cmd)
+    return str(cmd)
+
+
+def run_command_gate(gate: dict[str, Any]) -> GateResult:
+    """Run a trusted local command as a generic milestone gate.
+
+    This is intentionally config-driven so the same runner can gate backend tests,
+    frontend builds, smoke scripts, dataset checks, or model evaluations.
+    """
+
+    start = time.perf_counter()
+    cmd = gate.get("cmd")
+    command = _command_display(cmd)
+    timeout_sec = float(gate.get("timeout_sec") or 300)
+    cwd = Path(str(gate["cwd"])) if gate.get("cwd") else None
+    env = os.environ.copy()
+    env.update({str(key): str(value) for key, value in (gate.get("env") or {}).items()})
+
+    failures: list[dict[str, Any]] = []
+    if not isinstance(cmd, (str, list)) or (isinstance(cmd, list) and not cmd):
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        failure = {"error": "command gate requires a non-empty 'cmd' string or list"}
+        return GateResult(
+            name=str(gate.get("name") or "command"),
+            type="command",
+            status="failed",
+            elapsed_ms=elapsed_ms,
+            summary=failure,
+            failures=[failure],
+        )
+
+    shell = bool(gate.get("shell")) or isinstance(cmd, str)
+    try:
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+            env=env,
+            shell=shell,
+            timeout=timeout_sec,
+        )
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        output_tail = _tail((completed.stdout or "") + "\n" + (completed.stderr or ""))
+        if completed.returncode != 0:
+            failures.append(
+                {
+                    "command": command,
+                    "cwd": str(cwd) if cwd else None,
+                    "returncode": completed.returncode,
+                    "output_tail": output_tail,
+                }
+            )
+        return GateResult(
+            name=str(gate.get("name") or "command"),
+            type="command",
+            status="passed" if completed.returncode == 0 else "failed",
+            elapsed_ms=elapsed_ms,
+            summary={
+                "command": command,
+                "cwd": str(cwd) if cwd else None,
+                "returncode": completed.returncode,
+                "timeout_sec": timeout_sec,
+                "output_tail": output_tail,
+            },
+            failures=failures,
+        )
+    except subprocess.TimeoutExpired as exc:
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        output_tail = _tail((exc.stdout or "") + "\n" + (exc.stderr or ""))
+        failure = {
+            "command": command,
+            "cwd": str(cwd) if cwd else None,
+            "timeout_sec": timeout_sec,
+            "timeout": True,
+            "output_tail": output_tail,
+        }
+        return GateResult(
+            name=str(gate.get("name") or "command"),
+            type="command",
+            status="failed",
+            elapsed_ms=elapsed_ms,
+            summary=failure,
+            failures=[failure],
+        )
+
+
 def run_gate(gate: dict[str, Any]) -> GateResult:
     gate_type = str(gate.get("type") or "")
     if gate_type == "qp_eval":
         return run_qp_eval_gate(gate)
     if gate_type == "pytest":
         return run_pytest_gate(gate)
+    if gate_type == "command":
+        return run_command_gate(gate)
     return GateResult(
         name=str(gate.get("name") or gate_type or "unknown"),
         type=gate_type or "unknown",
