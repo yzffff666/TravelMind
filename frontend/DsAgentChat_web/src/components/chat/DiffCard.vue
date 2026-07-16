@@ -31,15 +31,31 @@
       >第 {{ d }} 天</StatusBadge>
     </div>
 
-    <p v-if="diff.explanation" class="diff-explanation">{{ diff.explanation }}</p>
+    <p v-if="visibleExplanation" class="diff-explanation">{{ visibleExplanation }}</p>
   </GlassCard>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { EditDiffData } from '../../types/itinerary'
 import { GlassCard, StatusBadge } from '../ui'
 
-defineProps<{ diff: EditDiffData }>()
+const props = defineProps<{ diff: EditDiffData }>()
+
+const normalizeText = (value: string) => value.replace(/[。；;，,\s]/g, '')
+
+const visibleExplanation = computed(() => {
+  const explanation = props.diff.explanation?.trim()
+  if (!explanation) return ''
+
+  const normalizedExplanation = normalizeText(explanation)
+  const isRepeated = props.diff.summary.diff_items.some((item) => {
+    const normalizedItem = normalizeText(item)
+    return normalizedItem && normalizedExplanation.includes(normalizedItem)
+  })
+
+  return isRepeated ? '' : explanation
+})
 </script>
 
 <style scoped>

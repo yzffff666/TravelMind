@@ -68,4 +68,16 @@ describe('DiffCard', () => {
     const wrapper = mount(DiffCard, { props: { diff } })
     expect(wrapper.find('.diff-explanation').exists()).toBe(false)
   })
+
+  it('hides explanation when it repeats a diff item', () => {
+    const diff = makeDiff({
+      summary: {
+        changed_days: [2],
+        diff_items: ['第2天按「室内」重新规划（原安排：豫园、田子坊）'],
+      },
+      explanation: '已修改 第2天。第2天按「室内」重新规划（原安排：豫园、田子坊）。',
+    })
+    const wrapper = mount(DiffCard, { props: { diff } })
+    expect(wrapper.find('.diff-explanation').exists()).toBe(false)
+  })
 })

@@ -463,7 +463,7 @@ const submitQuery = async (queryText: string) => {
           activeDayIndex.value = 1
           activeSlotIndex.value = undefined
           const explanation = envelope.payload.explanation || ''
-          if (explanation) {
+          if (explanation && !(currentIntent.value === 'edit' && editDiff.value)) {
             addChatEntry('assistant', explanation)
           }
           scrollItineraryToTop()

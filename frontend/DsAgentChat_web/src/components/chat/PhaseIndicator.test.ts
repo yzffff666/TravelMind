@@ -32,6 +32,11 @@ describe('PhaseIndicator', () => {
     expect(wrapper.text()).toContain('已完成')
   })
 
+  it('uses QA-specific done description', () => {
+    const wrapper = mountWith('done', '行程问答')
+    expect(wrapper.text()).toContain('已回答你的问题，行程内容保持不变。')
+  })
+
   it('shows "请求失败" for error phase', () => {
     const wrapper = mountWith('error')
     expect(wrapper.text()).toContain('请求失败')

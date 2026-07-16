@@ -46,7 +46,10 @@ const description = computed(() => {
     case 'planning': return '正在把对话、证据和地图点位整理成可浏览的旅行叙事。'
     case 'editing': return '正在保留原行程结构，仅重写你指定的片段。'
     case 'clarifying': return '还需要补充一个关键信息，才能继续生成可靠行程。'
-    case 'done': return '行程已更新，可继续追问、调整或查看地图。'
+    case 'done':
+      if (props.intentLabel === '行程问答') return '已回答你的问题，行程内容保持不变。'
+      if (props.intentLabel === '重置会话') return '当前会话已重置，可以重新开始规划。'
+      return '行程已更新，可继续追问、调整或查看地图。'
     case 'error': return '当前请求没有完成，可以调整输入后重试。'
     default: return ''
   }
