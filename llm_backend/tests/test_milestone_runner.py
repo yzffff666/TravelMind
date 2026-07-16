@@ -1,6 +1,7 @@
 import sys
 
 from scripts.milestone_runner import (
+    DEFAULT_CONFIG,
     build_status,
     render_summary,
     run_command_gate,
@@ -39,6 +40,24 @@ def test_summary_includes_gate_status():
 
     assert "status=passed" in summary
     assert "- qp_eval: passed" in summary
+
+
+def test_default_config_covers_core_integration_gates():
+    gate_names = {gate["name"] for gate in DEFAULT_CONFIG["gates"]}
+
+    assert DEFAULT_CONFIG["name"] == "travelmind-core-integration-gate"
+    assert {
+        "qp_eval",
+        "backend_core_integration_tests",
+        "frontend_chat_component_tests",
+        "frontend_type_check",
+        "frontend_production_build",
+    }.issubset(gate_names)
+
+    backend_gate = next(gate for gate in DEFAULT_CONFIG["gates"] if gate["name"] == "backend_core_integration_tests")
+    assert "tests/test_patch_engine.py" in backend_gate["targets"]
+    assert "tests/test_day_replan_service.py" in backend_gate["targets"]
+    assert "tests/test_travel_m2_012_013.py" in backend_gate["targets"]
 
 
 def test_command_gate_passes_and_captures_output():

@@ -1,5 +1,5 @@
 {
-  "name": "local-quality-gate",
+  "name": "travelmind-core-integration-gate",
   "gates": [
     {
       "type": "qp_eval",
@@ -8,22 +8,51 @@
     },
     {
       "type": "pytest",
-      "name": "backend_core_tests",
+      "name": "backend_core_integration_tests",
       "targets": [
         "tests/test_qp_rule_evaluation.py",
         "tests/test_travel_m2_011.py",
+        "tests/test_patch_engine.py",
+        "tests/test_day_replan_service.py",
+        "tests/test_travel_m2_012_013.py",
         "tests/test_travel_sse_envelope.py"
       ]
     },
     {
       "type": "command",
-      "name": "command_smoke",
+      "name": "frontend_chat_component_tests",
       "cmd": [
-        ".venv312\\Scripts\\python.exe",
-        "-c",
-        "print('command gate ok')"
+        "npm",
+        "run",
+        "test",
+        "--",
+        "DiffCard",
+        "PhaseIndicator"
       ],
-      "timeout_sec": 30
+      "cwd": "../frontend/DsAgentChat_web",
+      "timeout_sec": 60
+    },
+    {
+      "type": "command",
+      "name": "frontend_type_check",
+      "cmd": [
+        "npm",
+        "run",
+        "type-check"
+      ],
+      "cwd": "../frontend/DsAgentChat_web",
+      "timeout_sec": 120
+    },
+    {
+      "type": "command",
+      "name": "frontend_production_build",
+      "cmd": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "cwd": "../frontend/DsAgentChat_web",
+      "timeout_sec": 120
     }
   ]
 }

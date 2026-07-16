@@ -26,13 +26,38 @@ DEFAULT_OUTPUT_ROOT = Path("reports/milestone-runs")
 DEFAULT_PYTEST_TARGETS = (
     "tests/test_qp_rule_evaluation.py",
     "tests/test_travel_m2_011.py",
+    "tests/test_patch_engine.py",
+    "tests/test_day_replan_service.py",
+    "tests/test_travel_m2_012_013.py",
     "tests/test_travel_sse_envelope.py",
+    "tests/test_milestone_runner.py",
 )
 DEFAULT_CONFIG: dict[str, Any] = {
-    "name": "local-quality-gate",
+    "name": "travelmind-core-integration-gate",
     "gates": [
         {"type": "qp_eval", "name": "qp_eval", "cases": str(DEFAULT_CASES_PATH)},
-        {"type": "pytest", "name": "backend_core_tests", "targets": list(DEFAULT_PYTEST_TARGETS)},
+        {"type": "pytest", "name": "backend_core_integration_tests", "targets": list(DEFAULT_PYTEST_TARGETS)},
+        {
+            "type": "command",
+            "name": "frontend_chat_component_tests",
+            "cwd": "../frontend/DsAgentChat_web",
+            "cmd": ["npm", "run", "test", "--", "DiffCard", "PhaseIndicator"],
+            "timeout_sec": 60,
+        },
+        {
+            "type": "command",
+            "name": "frontend_type_check",
+            "cwd": "../frontend/DsAgentChat_web",
+            "cmd": ["npm", "run", "type-check"],
+            "timeout_sec": 120,
+        },
+        {
+            "type": "command",
+            "name": "frontend_production_build",
+            "cwd": "../frontend/DsAgentChat_web",
+            "cmd": ["npm", "run", "build"],
+            "timeout_sec": 120,
+        },
     ],
 }
 
