@@ -26,6 +26,8 @@ DEFAULT_OUTPUT_ROOT = Path("reports/milestone-runs")
 DEFAULT_PYTEST_TARGETS = (
     "tests/test_qp_rule_evaluation.py",
     "tests/test_travel_m2_011.py",
+    "tests/test_ranking_eval_report.py",
+    "tests/test_geo_bounds.py",
     "tests/test_patch_engine.py",
     "tests/test_day_replan_service.py",
     "tests/test_travel_m2_012_013.py",
@@ -36,6 +38,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "name": "travelmind-core-integration-gate",
     "gates": [
         {"type": "qp_eval", "name": "qp_eval", "cases": str(DEFAULT_CASES_PATH)},
+        {"type": "ranking_eval", "name": "ranking_eval", "cases": "evaluation/ranking_eval_cases.json"},
         {"type": "pytest", "name": "backend_core_integration_tests", "targets": list(DEFAULT_PYTEST_TARGETS)},
         {
             "type": "command",
@@ -117,6 +120,40 @@ def run_qp_eval_gate(gate: dict[str, Any]) -> GateResult:
             "tracked_cases": summary.get("tracked_cases"),
             "tracked_mismatched": summary.get("tracked_mismatched"),
             "strict_accuracy": summary.get("strict_accuracy"),
+        },
+        failures=failures,
+    )
+
+
+def run_ranking_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from scripts.ranking_eval_report import build_report, load_cases
+
+    start = time.perf_counter()
+    cases_path = Path(gate.get("cases") or "evaluation/ranking_eval_cases.json")
+    report = build_report(load_cases(cases_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    failures: list[dict[str, Any]] = []
+    if report.get("status") != "passed":
+        failures = [
+            {
+                "case_id": case.get("case_id"),
+                "missing_expected_rejected_ids": case.get("missing_expected_rejected_ids"),
+                "unexpected_rejected_good_ids": case.get("unexpected_rejected_good_ids"),
+                "reject_reason_mismatches": case.get("reject_reason_mismatches"),
+            }
+            for case in report.get("cases") or []
+            if case.get("status") != "passed"
+        ]
+    return GateResult(
+        name=str(gate.get("name") or "ranking_eval"),
+        type="ranking_eval",
+        status="passed" if report.get("status") == "passed" else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "case_count": report.get("case_count"),
+            "passed_cases": report.get("passed_cases"),
+            "failed_cases": report.get("failed_cases"),
+            **(report.get("summary") or {}),
         },
         failures=failures,
     )
@@ -256,6 +293,8 @@ def run_gate(gate: dict[str, Any]) -> GateResult:
     gate_type = str(gate.get("type") or "")
     if gate_type == "qp_eval":
         return run_qp_eval_gate(gate)
+    if gate_type == "ranking_eval":
+        return run_ranking_eval_gate(gate)
     if gate_type == "pytest":
         return run_pytest_gate(gate)
     if gate_type == "command":
@@ -305,6 +344,13 @@ def render_summary(status: dict[str, Any]) -> str:
             lines.append(
                 f"- {gate['name']}: {gate['status']} "
                 f"({summary.get('strict_passed')}/{summary.get('strict_cases')} strict)"
+            )
+        elif gate.get("type") == "ranking_eval":
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
+                f"good_hit={summary.get('good_hit_rate')}, "
+                f"expected_reject={summary.get('rejected_expected_rate')})"
             )
         else:
             lines.append(f"- {gate['name']}: {gate['status']} ({round(gate.get('elapsed_ms', 0))} ms)")

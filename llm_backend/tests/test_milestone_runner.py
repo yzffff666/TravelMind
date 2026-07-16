@@ -6,6 +6,7 @@ from scripts.milestone_runner import (
     render_summary,
     run_command_gate,
     run_qp_eval_gate,
+    run_ranking_eval_gate,
     write_artifacts,
 )
 
@@ -42,12 +43,23 @@ def test_summary_includes_gate_status():
     assert "- qp_eval: passed" in summary
 
 
+def test_ranking_eval_gate_passes_default_cases():
+    result = run_ranking_eval_gate({"type": "ranking_eval", "name": "ranking_eval"})
+
+    assert result.status == "passed"
+    assert result.summary["case_count"] >= 1
+    assert result.summary["good_hit_rate"] == 1.0
+    assert result.summary["rejected_expected_rate"] == 1.0
+    assert result.failures == []
+
+
 def test_default_config_covers_core_integration_gates():
     gate_names = {gate["name"] for gate in DEFAULT_CONFIG["gates"]}
 
     assert DEFAULT_CONFIG["name"] == "travelmind-core-integration-gate"
     assert {
         "qp_eval",
+        "ranking_eval",
         "backend_core_integration_tests",
         "frontend_chat_component_tests",
         "frontend_type_check",
@@ -55,6 +67,8 @@ def test_default_config_covers_core_integration_gates():
     }.issubset(gate_names)
 
     backend_gate = next(gate for gate in DEFAULT_CONFIG["gates"] if gate["name"] == "backend_core_integration_tests")
+    assert "tests/test_ranking_eval_report.py" in backend_gate["targets"]
+    assert "tests/test_geo_bounds.py" in backend_gate["targets"]
     assert "tests/test_patch_engine.py" in backend_gate["targets"]
     assert "tests/test_day_replan_service.py" in backend_gate["targets"]
     assert "tests/test_travel_m2_012_013.py" in backend_gate["targets"]

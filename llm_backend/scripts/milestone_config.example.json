@@ -7,11 +7,18 @@
       "cases": "evaluation/qp_rule_eval_cases.jsonl"
     },
     {
+      "type": "ranking_eval",
+      "name": "ranking_eval",
+      "cases": "evaluation/ranking_eval_cases.json"
+    },
+    {
       "type": "pytest",
       "name": "backend_core_integration_tests",
       "targets": [
         "tests/test_qp_rule_evaluation.py",
         "tests/test_travel_m2_011.py",
+        "tests/test_ranking_eval_report.py",
+        "tests/test_geo_bounds.py",
         "tests/test_patch_engine.py",
         "tests/test_day_replan_service.py",
         "tests/test_travel_m2_012_013.py",

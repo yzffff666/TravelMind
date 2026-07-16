@@ -4,6 +4,28 @@ from __future__ import annotations
 # Coarse destination bounds used only as a safety check to reject obvious cross-region POI matches.
 # Values are intentionally wider than city administrative borders to allow nearby airports and day trips.
 _DESTINATION_BOUNDS: dict[str, tuple[float, float, float, float]] = {
+    "上海": (30.6, 31.9, 120.8, 122.2),
+    "shanghai": (30.6, 31.9, 120.8, 122.2),
+    "北京": (39.4, 41.1, 115.4, 117.6),
+    "beijing": (39.4, 41.1, 115.4, 117.6),
+    "深圳": (22.3, 22.9, 113.7, 114.7),
+    "shenzhen": (22.3, 22.9, 113.7, 114.7),
+    "香港": (22.1, 22.6, 113.8, 114.5),
+    "hong kong": (22.1, 22.6, 113.8, 114.5),
+    "hongkong": (22.1, 22.6, 113.8, 114.5),
+    "澳门": (22.05, 22.25, 113.45, 113.7),
+    "macau": (22.05, 22.25, 113.45, 113.7),
+    "macao": (22.05, 22.25, 113.45, 113.7),
+    "广州": (22.8, 23.6, 112.9, 114.1),
+    "guangzhou": (22.8, 23.6, 112.9, 114.1),
+    "杭州": (29.8, 30.7, 119.7, 120.8),
+    "hangzhou": (29.8, 30.7, 119.7, 120.8),
+    "成都": (30.2, 31.2, 103.4, 104.7),
+    "chengdu": (30.2, 31.2, 103.4, 104.7),
+    "南京": (31.4, 32.5, 118.2, 119.3),
+    "nanjing": (31.4, 32.5, 118.2, 119.3),
+    "西安": (33.7, 34.8, 108.4, 109.6),
+    "xian": (33.7, 34.8, 108.4, 109.6),
     "普吉": (7.3, 8.3, 97.9, 99.1),
     "普吉岛": (7.3, 8.3, 97.9, 99.1),
     "phuket": (7.3, 8.3, 97.9, 99.1),
@@ -25,6 +47,8 @@ _DESTINATION_BOUNDS: dict[str, tuple[float, float, float, float]] = {
     "london": (51.2, 51.8, -0.6, 0.3),
     "罗马": (41.6, 42.1, 12.2, 12.8),
     "rome": (41.6, 42.1, 12.2, 12.8),
+    "旧金山": (37.5, 37.95, -122.65, -122.25),
+    "san francisco": (37.5, 37.95, -122.65, -122.25),
 }
 
 

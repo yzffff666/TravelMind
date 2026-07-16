@@ -1,0 +1,184 @@
+[
+  {
+    "case_id": "phuket_bbox_and_alias_quality",
+    "destination": "普吉岛",
+    "preferences": ["海边", "文化"],
+    "budget": 3000,
+    "days": 3,
+    "top_k": 3,
+    "expected_good_ids": ["kata_beach", "old_phuket_town"],
+    "expected_rejected": {
+      "eiffel_tower": ["bbox_invalid"],
+      "generic_day_plan": ["generic_activity"],
+      "kata_beach_duplicate": ["duplicate_poi"]
+    },
+    "candidates": [
+      {
+        "candidate_id": "eiffel_tower",
+        "source": "serp_map",
+        "title": "Eiffel Tower",
+        "snippet": "Paris landmark with many reviews",
+        "score": 0.99,
+        "tags": ["landmark"],
+        "extra": {
+          "lat": 48.8584,
+          "lng": 2.2945,
+          "address": "Champ de Mars, Paris",
+          "rating": 4.8,
+          "url": "https://example.com/eiffel",
+          "photos": ["https://example.com/eiffel.jpg"],
+          "reviews_count": 100000
+        }
+      },
+      {
+        "candidate_id": "kata_beach",
+        "source": "geoapify_map",
+        "title": "Kata Beach",
+        "snippet": "Phuket beach for sea views and relaxed travel",
+        "score": 0.82,
+        "tags": ["海边", "beach"],
+        "extra": {
+          "lat": 7.8196,
+          "lng": 98.2993,
+          "address": "Kata, Phuket",
+          "rating": 4.6,
+          "url": "https://example.com/kata",
+          "photos": ["https://example.com/kata.jpg"],
+          "provider_confidence": 0.9,
+          "alias_hit": true,
+          "cost_estimate": 120,
+          "reviews_count": 4200
+        }
+      },
+      {
+        "candidate_id": "old_phuket_town",
+        "source": "serp_map",
+        "title": "Old Phuket Town",
+        "snippet": "Culture, food, and Sino-Portuguese architecture in Phuket",
+        "score": 0.78,
+        "tags": ["文化", "美食"],
+        "extra": {
+          "lat": 7.8841,
+          "lng": 98.3883,
+          "address": "Phuket Old Town",
+          "rating": 4.5,
+          "url": "https://example.com/old-phuket-town",
+          "photos": ["https://example.com/old-town.jpg"],
+          "provider_confidence": 0.86,
+          "alias_hit": true,
+          "cost_estimate": 80,
+          "reviews_count": 3600
+        }
+      },
+      {
+        "candidate_id": "generic_day_plan",
+        "source": "mock",
+        "title": "第1天核心景点参观",
+        "snippet": "核心景点参观和自由活动",
+        "score": 0.74,
+        "tags": ["景点"],
+        "extra": {
+          "is_generic_activity": true,
+          "reviews_count": 0
+        }
+      },
+      {
+        "candidate_id": "kata_beach_duplicate",
+        "source": "amap_search",
+        "title": " Kata Beach ",
+        "snippet": "Duplicate candidate for Kata Beach",
+        "score": 0.93,
+        "tags": ["海边"],
+        "extra": {
+          "lat": 7.8196,
+          "lng": 98.2993,
+          "address": "Kata, Phuket",
+          "rating": 4.6,
+          "url": "https://example.com/kata-dup",
+          "photos": ["https://example.com/kata-dup.jpg"],
+          "cost_estimate": 120,
+          "reviews_count": 4200
+        }
+      }
+    ]
+  },
+  {
+    "case_id": "shanghai_indoor_quality",
+    "destination": "上海",
+    "preferences": ["室内", "文化"],
+    "budget": 6000,
+    "days": 3,
+    "top_k": 3,
+    "expected_good_ids": ["shanghai_museum", "power_station_art"],
+    "expected_rejected": {
+      "tokyo_tower": ["bbox_invalid"],
+      "generic_indoor_activity": ["generic_activity"]
+    },
+    "candidates": [
+      {
+        "candidate_id": "tokyo_tower",
+        "source": "serp_map",
+        "title": "Tokyo Tower",
+        "snippet": "Popular city landmark",
+        "score": 0.96,
+        "tags": ["landmark"],
+        "extra": {
+          "lat": 35.6586,
+          "lng": 139.7454,
+          "address": "Tokyo",
+          "rating": 4.7,
+          "url": "https://example.com/tokyo-tower",
+          "photos": ["https://example.com/tokyo.jpg"],
+          "reviews_count": 80000
+        }
+      },
+      {
+        "candidate_id": "shanghai_museum",
+        "source": "amap_search",
+        "title": "上海博物馆",
+        "snippet": "上海室内文化博物馆",
+        "score": 0.84,
+        "tags": ["室内", "文化", "博物馆"],
+        "extra": {
+          "lat": 31.2304,
+          "lng": 121.4737,
+          "address": "人民大道201号",
+          "rating": 4.8,
+          "url": "https://example.com/shanghai-museum",
+          "photos": ["https://example.com/shmuseum.jpg"],
+          "cost_estimate": 0,
+          "reviews_count": 50000
+        }
+      },
+      {
+        "candidate_id": "power_station_art",
+        "source": "amap_search",
+        "title": "上海当代艺术博物馆",
+        "snippet": "室内艺术展览和文化体验",
+        "score": 0.80,
+        "tags": ["室内", "文化", "艺术"],
+        "extra": {
+          "lat": 31.2057,
+          "lng": 121.4901,
+          "address": "花园港路200号",
+          "rating": 4.5,
+          "url": "https://example.com/psa",
+          "photos": ["https://example.com/psa.jpg"],
+          "cost_estimate": 100,
+          "reviews_count": 13000
+        }
+      },
+      {
+        "candidate_id": "generic_indoor_activity",
+        "source": "mock",
+        "title": "室内休闲活动",
+        "snippet": "按新偏好安排室内休闲活动",
+        "score": 0.75,
+        "tags": ["室内"],
+        "extra": {
+          "is_generic_activity": true
+        }
+      }
+    ]
+  }
+]

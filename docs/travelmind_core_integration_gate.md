@@ -43,6 +43,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 | Gate | 覆盖内容 |
 | --- | --- |
 | `qp_eval` | 96 条 QP 规则评测，防止 create / edit / qa / reset 路由退化 |
+| `ranking_eval` | 离线 POI 排序 badcase 评测，验证好候选 Top-K 命中、bbox/duplicate/generic 拒绝 |
 | `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、runner 自测 |
 | `frontend_chat_component_tests` | DiffCard 与 PhaseIndicator，防止编辑结果重复展示、QA 状态误导 |
 | `frontend_type_check` | Vue/TypeScript 类型契约 |
@@ -53,7 +54,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=5/5 passed
+gates=6/6 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -69,9 +70,34 @@ llm_backend/reports/milestone-runs/<run_id>/failures.json
 建议在这些场景运行：
 
 - 修改 QP / intent routing 之后。
+- 修改 `POIRankingPolicy`、bbox 或候选排序权重之后。
 - 修改 patch engine / day replan 之后。
 - 修改 SSE event payload 或前端聊天展示之后。
 - 准备演示或 push 前。
+
+## 单独运行排序评估
+
+如果只想验证 POI 候选排序策略，可以运行：
+
+```bash
+cd llm_backend
+./.venv/bin/python -m scripts.ranking_eval_report --output-dir reports/ranking-eval/latest
+```
+
+报告会输出：
+
+```text
+reports/ranking-eval/latest/
+├── ranking-eval-report.json
+└── ranking-eval-report.md
+```
+
+当前评估集覆盖：
+
+- 目的地 bbox 错误：例如普吉岛候选混入巴黎 POI、上海候选混入东京 POI。
+- 重复 POI：同一地点来自不同 provider 时只保留高质量候选。
+- 泛活动：拒绝“核心景点参观”“室内休闲活动”这类不可落地图的泛化候选。
+- 好候选 Top-K：检查高证据、高可解析、目的地一致的 POI 是否进入 policy top。
 
 ## 边界
 
@@ -91,4 +117,3 @@ cd frontend/DsAgentChat_web && npm run dev
 把第二天改轻松一点
 第三天下午去哪里
 ```
-
