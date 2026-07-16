@@ -170,9 +170,17 @@ class ValidationResult(BaseModel):
 
 
 # 这是用来定义行程的变更 summary。
+class ReplanRequest(BaseModel):
+    day_index: int = Field(..., ge=1)
+    constraints: List[str] = Field(default_factory=list)
+    raw_request: Optional[str] = None
+
+
 class ChangeSummary(BaseModel):
     changed_days: List[int] = Field(default_factory=list)
     diff_items: List[str] = Field(default_factory=list)
+    failed_ops: int = 0
+    replan_requests: List[ReplanRequest] = Field(default_factory=list)
 
 
 # 这是用来定义行程的最终结果。
@@ -224,4 +232,3 @@ class ItineraryV1(BaseModel):
             "DEGRADE_STRATEGY": FIELD_DEGRADE_STRATEGY,
             "REVISION_RULES": REVISION_RULES,
         }
-

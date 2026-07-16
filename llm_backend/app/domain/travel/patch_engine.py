@@ -98,7 +98,7 @@ _BUDGET_PATTERN = re.compile(r"预算[改调]?[成为到]?\s*(\d+)")
 _PREFERENCE_PATTERN = re.compile(r"偏好[改调]?[成为到]?\s*(.+?)(?:\s|$)")
 _DAY_REPLAN_CONSTRAINT_KEYWORDS: dict[str, tuple[str, ...]] = {
     "indoor": ("室内", "下雨", "避雨", "少晒", "不晒", "博物馆", "美术馆", "展馆", "商场"),
-    "relaxed": ("轻松", "悠闲", "慢一点", "慢节奏", "少走路", "别太累", "不要太累", "不赶"),
+    "relaxed": ("轻松", "悠闲", "慢一点", "慢节奏", "少走路", "别太累", "不要太累", "别太赶", "不要太赶", "不赶"),
     "food": ("美食", "吃喝", "逛吃", "小吃", "茶餐厅", "餐厅"),
     "culture": ("文化", "历史", "人文", "艺术", "展览"),
 }
@@ -146,7 +146,10 @@ _PLACE_TRAILING_ACTIONS = (
 def has_mutation_intent(utterance: str) -> bool:
     """Return whether the utterance explicitly asks to write/change itinerary state."""
     text = (utterance or "").strip()
-    return bool(text) and any(hint in text for hint in _MUTATION_HINTS)
+    return bool(text) and (
+        any(hint in text for hint in _MUTATION_HINTS)
+        or _has_contextual_day_replan_intent(text)
+    )
 
 # 解析编辑操作
 def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
@@ -166,7 +169,7 @@ def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
     # Collect all matching ops (no early return — supports multi-op edits)
 
     day_replan_constraints = _extract_day_replan_constraints(text)
-    if target_day and not target_slot and day_replan_constraints and _match_any(text, _DAY_REPLAN_HINTS):
+    if target_day and not target_slot and day_replan_constraints and has_mutation_intent(text):
         ops.append(PatchOp(
             op=PatchOpType.REPLAN_DAY,
             day_index=target_day,
@@ -242,6 +245,7 @@ def apply_patch(
     new_revision_id = str(uuid.uuid4())
     changed_days: set[int] = set()
     diff_items: list[str] = []
+    replan_requests: list[dict[str, Any]] = []
     succeeded = 0
     failed = 0
     for op in ops:
@@ -254,7 +258,7 @@ def apply_patch(
             elif op.op == PatchOpType.INSERT_SLOT:
                 applied = _apply_insert(itinerary, op, changed_days, diff_items)
             elif op.op == PatchOpType.REPLAN_DAY:
-                applied = _apply_replan_day(itinerary, op, changed_days, diff_items)
+                applied = _apply_replan_day(itinerary, op, changed_days, diff_items, replan_requests)
             elif op.op == PatchOpType.UPDATE_CONSTRAINT:
                 applied = _apply_constraint(itinerary, op, diff_items)
             if applied:
@@ -288,6 +292,7 @@ def apply_patch(
         "changed_days": sorted(changed_days),
         "diff_items": diff_items,
         "failed_ops": failed,
+        "replan_requests": replan_requests,
     }
     _recompute_lightweight_coverage(itinerary)
 
@@ -311,6 +316,7 @@ def apply_patch(
             "changed_days": sorted(changed_days),
             "diff_items": diff_items,
             "failed_ops": failed,
+            "replan_requests": replan_requests,
         },
         explanation=explanation,
     )
@@ -352,6 +358,16 @@ def _extract_day_replan_constraints(text: str) -> list[str]:
         if any(keyword in text for keyword in keywords):
             constraints.append(constraint)
     return constraints
+
+
+def _has_contextual_day_replan_intent(text: str) -> bool:
+    if not _DAY_PATTERN.search(text):
+        return False
+    if any(qa_hint in text for qa_hint in ("是什么", "去哪里", "怎么安排", "安排呢", "有没有", "有无", "是否", "吗", "？", "?")):
+        return False
+    if not _extract_day_replan_constraints(text):
+        return False
+    return any(action in text for action in ("改", "换", "安排", "调整", "重排", "重新规划"))
 
 
 def _match_any(text: str, hints: tuple[str, ...]) -> bool:
@@ -523,7 +539,13 @@ def _apply_insert(itinerary: dict, op: PatchOp, changed_days: set, diff_items: l
     return True
 
 
-def _apply_replan_day(itinerary: dict, op: PatchOp, changed_days: set, diff_items: list) -> bool:
+def _apply_replan_day(
+    itinerary: dict,
+    op: PatchOp,
+    changed_days: set,
+    diff_items: list,
+    replan_requests: list[dict[str, Any]],
+) -> bool:
     if not op.day_index:
         diff_items.append("未指定重新规划哪一天，请说明第N天")
         return False
@@ -537,6 +559,11 @@ def _apply_replan_day(itinerary: dict, op: PatchOp, changed_days: set, diff_item
     day["theme"] = _build_replan_theme(constraints)
     day["slots"] = _build_replanned_slots(itinerary, constraints)
     changed_days.add(op.day_index)
+    replan_requests.append({
+        "day_index": op.day_index,
+        "constraints": constraints,
+        "raw_request": op.payload.get("raw_request"),
+    })
 
     old_desc = "、".join([s for s in old_slots if s][:3]) or "原安排"
     constraint_desc = "、".join(_constraint_label(c) for c in constraints) or "新偏好"

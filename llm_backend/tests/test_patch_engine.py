@@ -60,6 +60,8 @@ class TestParseEditOps:
         assert has_mutation_intent("把第二天改成室内")
         assert has_mutation_intent("删掉第3天晚上")
         assert has_mutation_intent("第二天别太赶")
+        assert has_mutation_intent("把第二天改轻松一点")
+        assert has_mutation_intent("把第三天安排轻松一点")
         assert not has_mutation_intent("第三天下午去哪里")
         assert not has_mutation_intent("第2天安排是什么")
 
@@ -116,6 +118,33 @@ class TestParseEditOps:
         assert ops[0].op == PatchOpType.REPLAN_DAY
         assert ops[0].day_index == 2
         assert "indoor" in ops[0].payload["constraints"]
+
+    def test_day_level_relaxed_edit_becomes_replan_day_without_replace_hint(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("第二天别太赶", it)
+        assert len(ops) == 1
+        assert ops[0].op == PatchOpType.REPLAN_DAY
+        assert ops[0].day_index == 2
+
+    def test_day_level_relaxed_edit_with_plain_gai_becomes_replan_day(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("把第二天改轻松一点", it)
+        assert len(ops) == 1
+        assert ops[0].op == PatchOpType.REPLAN_DAY
+        assert ops[0].day_index == 2
+        assert "relaxed" in ops[0].payload["constraints"]
+
+    def test_day_level_arrange_relaxed_becomes_replan_day(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("把第三天安排轻松一点", it)
+        assert len(ops) == 1
+        assert ops[0].op == PatchOpType.REPLAN_DAY
+        assert ops[0].day_index == 3
+        assert "relaxed" in ops[0].payload["constraints"]
+
+    def test_day_level_constraint_question_does_not_become_replan_day(self):
+        it = _make_itinerary()
+        assert not has_mutation_intent("第二天有没有室内安排")
 
 
 # ---------- apply_patch ----------
@@ -261,6 +290,8 @@ class TestApplyPatch:
         assert result.success
         assert 2 in result.change_summary["changed_days"]
         assert "重新规划" in result.change_summary["diff_items"][0]
+        assert result.change_summary["replan_requests"][0]["day_index"] == 2
+        assert "indoor" in result.change_summary["replan_requests"][0]["constraints"]
 
         assert next(d for d in result.new_itinerary["days"] if d["day_index"] == 1) == original_day1
         assert next(d for d in result.new_itinerary["days"] if d["day_index"] == 3) == original_day3

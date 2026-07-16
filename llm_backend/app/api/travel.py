@@ -29,8 +29,10 @@ from app.lg_agent.utils import new_uuid
 from app.models.user import User
 from app.services.conversation_service import ConversationService
 from app.services.coverage_tracker import CoverageTracker
+from app.services.day_replan_service import DayReplanService
 from app.services.deepseek_service import DeepseekService
 from app.services.location_backfill_service import LocationBackfillService
+from app.services.providers.base import ProviderCallContext
 from app.services.travel_clarification_service import TravelClarificationService
 from app.schemas.itinerary_v1 import ItineraryV1
 
@@ -46,6 +48,7 @@ edit_backfill_service = LocationBackfillService(
     provider_timeout_seconds=1.5,
     total_budget_seconds=3.0,
 )
+day_replan_service = DayReplanService()
 _active_request_fingerprints: dict[str, float] = {}
 
 
@@ -726,6 +729,35 @@ async def _stream_edit_result(
             return
 
         try:
+            replan_requests = result.change_summary.get("replan_requests") or []
+            if replan_requests and result.new_itinerary:
+                replan_report = await day_replan_service.replan_days(
+                    result.new_itinerary,
+                    replan_requests,
+                    context=ProviderCallContext(
+                        request_id=request_id,
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                    ),
+                )
+                if replan_report.assumptions:
+                    validation = result.new_itinerary.setdefault("validation", {})
+                    assumptions = validation.setdefault("assumptions", [])
+                    existing = set(assumptions)
+                    for assumption in replan_report.assumptions:
+                        if assumption not in existing:
+                            assumptions.append(assumption)
+                            existing.add(assumption)
+                if replan_report.diff_items:
+                    result.change_summary.setdefault("diff_items", []).extend(replan_report.diff_items)
+                    result.new_itinerary["change_summary"] = result.change_summary
+                    result.explanation = (
+                        result.explanation.rstrip("。")
+                        + "。"
+                        + "；".join(replan_report.diff_items[:2])
+                        + "。"
+                    )
+
             edited_model = ItineraryV1.model_validate(result.new_itinerary)
             changed_days = result.change_summary.get("changed_days") or []
             report = await edit_backfill_service.backfill_changed_days(edited_model, changed_days)

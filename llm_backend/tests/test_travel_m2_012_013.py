@@ -178,6 +178,121 @@ class TestEditDiffEvent:
         assert data["revision_id"] is None
         assert "未指定修改哪一天" in data["payload"]["text"]
 
+    def test_stream_edit_day_replan_uses_candidate_service(self, monkeypatch):
+        """Day-level edits should call candidate-driven replan before final_itinerary."""
+        import app.api.travel as travel_api
+
+        class FakeDayReplanService:
+            async def replan_days(self, itinerary, replan_requests, *, context=None):
+                assert replan_requests[0]["day_index"] == 2
+                day2 = next(day for day in itinerary["days"] if day["day_index"] == 2)
+                day2["theme"] = "候选驱动的室内体验"
+                day2["slots"] = [
+                    {
+                        "slot": "上午",
+                        "activity": "上海博物馆室内参观",
+                        "place": "上海博物馆",
+                        "transit": "公共交通/步行",
+                        "alternatives": [],
+                        "evidence_refs": ["fake:上海博物馆"],
+                    },
+                    {
+                        "slot": "下午",
+                        "activity": "上海当代艺术博物馆室内参观",
+                        "place": "上海当代艺术博物馆",
+                        "transit": "公共交通/步行",
+                        "alternatives": [],
+                        "evidence_refs": ["fake:上海当代艺术博物馆"],
+                    },
+                    {
+                        "slot": "晚上",
+                        "activity": "K11购物艺术中心室内休闲与用餐",
+                        "place": "K11购物艺术中心",
+                        "transit": "公共交通/步行",
+                        "alternatives": [],
+                        "evidence_refs": ["fake:K11购物艺术中心"],
+                    },
+                ]
+
+                class Report:
+                    assumptions = []
+                    diff_items = ["第2天已基于候选POI重新规划（候选3个，来源召回排序）。"]
+
+                return Report()
+
+        class FakeBackfillService:
+            async def backfill_changed_days(self, edited_model, changed_days):
+                class Report:
+                    assumptions = []
+
+                return Report()
+
+        async def fake_persist(**kwargs):
+            return None
+
+        monkeypatch.setattr(travel_api, "day_replan_service", FakeDayReplanService())
+        monkeypatch.setattr(travel_api, "edit_backfill_service", FakeBackfillService())
+        monkeypatch.setattr(travel_api.ConversationService, "upsert_travel_conversation_state", fake_persist)
+
+        async def collect_lines() -> list[str]:
+            return [
+                line
+                async for line in travel_api._stream_edit_result(
+                    utterance="把第二天改成室内",
+                    current_itinerary=_make_itinerary(),
+                    request_id="req-edit-replan",
+                    conversation_id="conv-edit-replan",
+                    intent="edit",
+                    intent_detail="edit_itinerary",
+                    user_id=1,
+                )
+            ]
+
+        lines = asyncio.run(collect_lines())
+        final_itinerary_line = next(line for line in lines if line.startswith("event: final_itinerary"))
+        data_line = next(line for line in final_itinerary_line.split("\n") if line.startswith("data: "))
+        data = json.loads(data_line[6:])
+        itinerary = data["payload"]["itinerary"]
+        day2 = next(day for day in itinerary["days"] if day["day_index"] == 2)
+
+        assert day2["theme"] == "候选驱动的室内体验"
+        assert [slot["place"] for slot in day2["slots"]] == [
+            "上海博物馆",
+            "上海当代艺术博物馆",
+            "K11购物艺术中心",
+        ]
+        assert itinerary["change_summary"]["replan_requests"][0]["day_index"] == 2
+        assert any("候选POI重新规划" in item for item in itinerary["change_summary"]["diff_items"])
+
+    def test_stream_edit_constraint_question_does_not_mutate_itinerary(self):
+        """Constraint-looking questions should not be treated as day replan edits."""
+        from app.api.travel import _stream_edit_result
+
+        async def collect_lines() -> list[str]:
+            return [
+                line
+                async for line in _stream_edit_result(
+                    utterance="第二天有没有室内安排",
+                    current_itinerary=_make_itinerary(),
+                    request_id="req-edit-question",
+                    conversation_id="conv-edit-question",
+                    intent="edit",
+                    intent_detail="edit_itinerary",
+                    user_id=1,
+                )
+            ]
+
+        lines = asyncio.run(collect_lines())
+        event_names = [
+            line.split("\n", 1)[0].replace("event: ", "")
+            for line in lines
+            if line.startswith("event: ")
+        ]
+
+        assert "final_text" in event_names
+        assert "edit_diff" not in event_names
+        assert "final_itinerary" not in event_names
+
 
 # ---------- QA 回答（函数逻辑直接测试） ----------
 
