@@ -751,10 +751,15 @@ async def _stream_edit_result(
                 if replan_report.diff_items:
                     result.change_summary.setdefault("diff_items", []).extend(replan_report.diff_items)
                     result.new_itinerary["change_summary"] = result.change_summary
+                    replan_explanation = "；".join(
+                        item.rstrip("。")
+                        for item in replan_report.diff_items[:2]
+                        if item
+                    )
                     result.explanation = (
                         result.explanation.rstrip("。")
                         + "。"
-                        + "；".join(replan_report.diff_items[:2])
+                        + replan_explanation
                         + "。"
                     )
 

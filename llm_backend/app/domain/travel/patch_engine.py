@@ -556,6 +556,7 @@ def _apply_replan_day(
 
     constraints = list(op.payload.get("constraints") or [])
     old_slots = [slot.get("activity", "") for slot in day.get("slots", [])]
+    anchor_locations = _slot_anchor_locations(day.get("slots", []))
     day["theme"] = _build_replan_theme(constraints)
     day["slots"] = _build_replanned_slots(itinerary, constraints)
     changed_days.add(op.day_index)
@@ -563,6 +564,7 @@ def _apply_replan_day(
         "day_index": op.day_index,
         "constraints": constraints,
         "raw_request": op.payload.get("raw_request"),
+        "anchor_locations": anchor_locations,
     })
 
     old_desc = "、".join([s for s in old_slots if s][:3]) or "原安排"
@@ -583,6 +585,20 @@ def _build_replan_theme(constraints: list[str]) -> str:
     if "relaxed" in constraints:
         return "轻松慢节奏体验"
     return "按新偏好调整的一日行程"
+
+
+def _slot_anchor_locations(slots: list[dict]) -> list[dict[str, float]]:
+    anchors: list[dict[str, float]] = []
+    for slot in slots:
+        location = slot.get("location") or {}
+        try:
+            lat = float(location.get("lat"))
+            lng = float(location.get("lng"))
+        except (TypeError, ValueError):
+            continue
+        if -90 <= lat <= 90 and -180 <= lng <= 180:
+            anchors.append({"lat": lat, "lng": lng})
+    return anchors
 
 
 def _build_replanned_slots(itinerary: dict, constraints: list[str]) -> list[dict]:

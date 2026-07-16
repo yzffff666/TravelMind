@@ -60,20 +60,28 @@ class _FakeRecall:
         )
 
 
-def _candidate(title: str, *, rating: float = 4.7) -> ProviderCandidate:
+def _candidate(
+    title: str,
+    *,
+    rating: float = 4.7,
+    lat: float = 31.2304,
+    lng: float = 121.4737,
+    tags: list[str] | None = None,
+    snippet: str | None = None,
+) -> ProviderCandidate:
     return ProviderCandidate(
         candidate_id=f"{title}-上海",
         source="fake",
         title=title,
-        snippet=f"{title} 适合室内文化体验",
+        snippet=snippet if snippet is not None else f"{title} 适合室内文化体验",
         score=rating / 5,
-        tags=["上海", "室内", "文化", "博物馆"],
+        tags=tags or ["上海", "室内", "文化", "博物馆"],
         extra={
             "address": f"{title}地址",
             "rating": rating,
             "cost_estimate": 80,
-            "lat": 31.2304,
-            "lng": 121.4737,
+            "lat": lat,
+            "lng": lng,
             "photos": [f"https://example.com/{title}.jpg"],
         },
     )
@@ -132,3 +140,82 @@ async def test_day_replan_keeps_existing_day_when_candidates_are_insufficient():
     assert report.candidate_counts[2] == 1
     assert itinerary["days"][1] == original_day2
     assert any("候选不足" in assumption for assumption in report.assumptions)
+
+
+@pytest.mark.asyncio
+async def test_day_replan_prefers_compact_candidates_near_anchor():
+    itinerary = _make_itinerary()
+    recall = _FakeRecall([
+        _candidate("远郊高分公园", rating=5.0, lat=31.3787, lng=121.3183),
+        _candidate("上海博物馆", rating=4.6, lat=31.231, lng=121.474),
+        _candidate("新天地", rating=4.5, lat=31.2195, lng=121.475),
+        _candidate("田子坊", rating=4.4, lat=31.2106, lng=121.468),
+    ])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{
+            "day_index": 2,
+            "constraints": ["relaxed"],
+            "raw_request": "把第二天改轻松一点",
+            "anchor_locations": [
+                {"lat": 31.231, "lng": 121.474},
+                {"lat": 31.2195, "lng": 121.475},
+            ],
+        }],
+    )
+
+    assert report.applied_days == [2]
+    day2 = itinerary["days"][1]
+    places = [slot["place"] for slot in day2["slots"]]
+    assert "远郊高分公园" not in places
+    assert places == ["上海博物馆", "新天地", "田子坊"]
+
+
+@pytest.mark.asyncio
+async def test_day_replan_filters_low_quality_sub_poi_titles():
+    itinerary = _make_itinerary()
+    recall = _FakeRecall([
+        _candidate("人民公园-相亲角", rating=5.0),
+        _candidate("中华艺术宫-问询台", rating=4.9),
+        _candidate("上海博物馆", rating=4.6),
+        _candidate("新天地", rating=4.5),
+        _candidate("田子坊", rating=4.4),
+    ])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "constraints": ["relaxed"], "raw_request": "把第二天改轻松一点"}],
+    )
+
+    assert report.applied_days == [2]
+    places = [slot["place"] for slot in itinerary["days"][1]["slots"]]
+    assert "人民公园-相亲角" not in places
+    assert "中华艺术宫-问询台" not in places
+    assert places == ["上海博物馆", "新天地", "田子坊"]
+
+
+@pytest.mark.asyncio
+async def test_indoor_replan_requires_indoor_candidate_relevance():
+    itinerary = _make_itinerary()
+    recall = _FakeRecall([
+        _candidate("外滩", rating=5.0, tags=["地标", "夜景"], snippet="上海黄浦江边户外地标"),
+        _candidate("南京路步行街", rating=4.9, tags=["步行街", "美食"], snippet="上海户外商业步行街"),
+        _candidate("上海博物馆", rating=4.6),
+        _candidate("上海当代艺术博物馆", rating=4.5),
+        _candidate("K11购物艺术中心", rating=4.4, tags=["购物中心", "艺术中心"]),
+    ])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "constraints": ["indoor"], "raw_request": "把第二天改成室内"}],
+    )
+
+    assert report.applied_days == [2]
+    places = [slot["place"] for slot in itinerary["days"][1]["slots"]]
+    assert "外滩" not in places
+    assert "南京路步行街" not in places
+    assert places == ["上海博物馆", "上海当代艺术博物馆", "K11购物艺术中心"]

@@ -281,6 +281,8 @@ class TestApplyPatch:
     def test_replan_day_replaces_whole_day_with_constraint_plan(self):
         it = _make_itinerary()
         it["trip_profile"]["destination_city"] = "香港"
+        target_day = next(d for d in it["days"] if d["day_index"] == 2)
+        target_day["slots"][0]["location"] = {"lat": 22.3027, "lng": 114.1772}
         original_day1 = copy.deepcopy(next(d for d in it["days"] if d["day_index"] == 1))
         original_day3 = copy.deepcopy(next(d for d in it["days"] if d["day_index"] == 3))
 
@@ -292,6 +294,9 @@ class TestApplyPatch:
         assert "重新规划" in result.change_summary["diff_items"][0]
         assert result.change_summary["replan_requests"][0]["day_index"] == 2
         assert "indoor" in result.change_summary["replan_requests"][0]["constraints"]
+        assert result.change_summary["replan_requests"][0]["anchor_locations"] == [
+            {"lat": 22.3027, "lng": 114.1772}
+        ]
 
         assert next(d for d in result.new_itinerary["days"] if d["day_index"] == 1) == original_day1
         assert next(d for d in result.new_itinerary["days"] if d["day_index"] == 3) == original_day3

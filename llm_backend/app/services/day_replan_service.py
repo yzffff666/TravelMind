@@ -6,6 +6,7 @@ the same recall/ranking decision path used by the draft pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import atan2, cos, radians, sin, sqrt
 from typing import Any
 
 from app.services.providers.base import ProviderCallContext, ProviderCandidate
@@ -23,6 +24,8 @@ class DayReplanReport:
 
 _SLOT_LABELS = ("上午", "下午", "晚上")
 _MIN_CANDIDATES = 2
+_ANCHOR_RADIUS_KM = 18.0
+_PAIRWISE_RADIUS_KM = 14.0
 _GENERIC_TITLE_TERMS = (
     "自由活动",
     "待定",
@@ -32,6 +35,17 @@ _GENERIC_TITLE_TERMS = (
     "餐厅",
     "景点",
     "按新偏好",
+)
+_LOW_QUALITY_TITLE_TERMS = (
+    "问询台",
+    "售票处",
+    "检票口",
+    "出入口",
+    "停车场",
+    "卫生间",
+    "游客中心",
+    "相亲角",
+    "打卡点",
 )
 _CONSTRAINT_TERMS: dict[str, tuple[str, ...]] = {
     "indoor": ("室内", "博物馆", "美术馆", "展馆", "购物中心", "文化"),
@@ -45,6 +59,23 @@ _CONSTRAINT_THEMES = {
     "food": "候选驱动的在地美食",
     "culture": "候选驱动的人文探索",
 }
+_INDOOR_MATCH_TERMS = (
+    "室内",
+    "博物馆",
+    "美术馆",
+    "展馆",
+    "展览",
+    "艺术馆",
+    "艺术宫",
+    "艺术中心",
+    "文化中心",
+    "购物中心",
+    "商场",
+    "剧院",
+    "影院",
+    "图书馆",
+    "书店",
+)
 
 
 class DayReplanService:
@@ -102,7 +133,14 @@ class DayReplanService:
                 days=len(itinerary.get("days") or []),
                 top_k=12,
             )
-            selected = _select_candidates(ranked, destination=destination, limit=len(_SLOT_LABELS))
+            anchor = _anchor_location(request)
+            selected = _select_candidates(
+                ranked,
+                destination=destination,
+                limit=len(_SLOT_LABELS),
+                anchor=anchor,
+                constraints=constraints,
+            )
             report.candidate_counts[day_index] = len(selected)
 
             if len(selected) < self._min_candidates:
@@ -167,14 +205,22 @@ def _select_candidates(
     *,
     destination: str,
     limit: int,
+    anchor: tuple[float, float] | None = None,
+    constraints: list[str] | None = None,
 ) -> list[ScoredCandidate]:
     selected: list[ScoredCandidate] = []
     seen: set[str] = set()
-    for scored in ranked:
+    for scored in _rank_for_replan(ranked, anchor=anchor):
         title = (scored.candidate.title or "").strip()
         if not title:
             continue
         if _is_generic_title(title, destination):
+            continue
+        if not _matches_hard_constraints(scored.candidate, constraints or []):
+            continue
+        if anchor and not _is_near_anchor(scored.candidate, anchor):
+            continue
+        if anchor and not _is_compact_with_selected(scored.candidate, selected):
             continue
         key = title.lower()
         if key in seen:
@@ -186,13 +232,89 @@ def _select_candidates(
     return selected
 
 
+def _matches_hard_constraints(candidate: ProviderCandidate, constraints: list[str]) -> bool:
+    if "indoor" not in constraints:
+        return True
+    haystack = " ".join([
+        candidate.title or "",
+        candidate.snippet or "",
+        " ".join(candidate.tags or []),
+    ])
+    return any(term in haystack for term in _INDOOR_MATCH_TERMS)
+
+
+def _rank_for_replan(
+    ranked: list[ScoredCandidate],
+    *,
+    anchor: tuple[float, float] | None,
+) -> list[ScoredCandidate]:
+    if anchor is None:
+        return ranked
+
+    def adjusted_score(scored: ScoredCandidate) -> float:
+        location = _candidate_location(scored.candidate)
+        if location is None:
+            return scored.total_score - 0.15
+        distance = _haversine_km(anchor[0], anchor[1], location[0], location[1])
+        return scored.total_score - min(distance / 40.0, 0.6)
+
+    return sorted(ranked, key=adjusted_score, reverse=True)
+
+
+def _anchor_location(request: dict[str, Any]) -> tuple[float, float] | None:
+    anchors = request.get("anchor_locations") or []
+    coords: list[tuple[float, float]] = []
+    for item in anchors:
+        if not isinstance(item, dict):
+            continue
+        lat = _to_float(item.get("lat"))
+        lng = _to_float(item.get("lng"))
+        if lat is None or lng is None:
+            continue
+        if -90 <= lat <= 90 and -180 <= lng <= 180:
+            coords.append((lat, lng))
+    if not coords:
+        return None
+    return (
+        sum(lat for lat, _ in coords) / len(coords),
+        sum(lng for _, lng in coords) / len(coords),
+    )
+
+
+def _is_near_anchor(candidate: ProviderCandidate, anchor: tuple[float, float]) -> bool:
+    location = _candidate_location(candidate)
+    if location is None:
+        return True
+    return _haversine_km(anchor[0], anchor[1], location[0], location[1]) <= _ANCHOR_RADIUS_KM
+
+
+def _is_compact_with_selected(
+    candidate: ProviderCandidate,
+    selected: list[ScoredCandidate],
+) -> bool:
+    location = _candidate_location(candidate)
+    if location is None:
+        return True
+    for scored in selected:
+        selected_location = _candidate_location(scored.candidate)
+        if selected_location is None:
+            continue
+        distance = _haversine_km(location[0], location[1], selected_location[0], selected_location[1])
+        if distance > _PAIRWISE_RADIUS_KM:
+            return False
+    return True
+
+
 def _is_generic_title(title: str, destination: str) -> bool:
     normalized = title.strip()
     if normalized == destination:
         return True
     if len(normalized) <= 1:
         return True
-    return any(term in normalized for term in _GENERIC_TITLE_TERMS)
+    return (
+        any(term in normalized for term in _GENERIC_TITLE_TERMS)
+        or any(term in normalized for term in _LOW_QUALITY_TITLE_TERMS)
+    )
 
 
 def _theme_for_constraints(constraints: list[str]) -> str:
@@ -259,7 +381,7 @@ def _fill_missing_slots(slots: list[dict[str, Any]], fallback_slots: list[dict[s
 def _activity_text(candidate: ProviderCandidate, slot_label: str, constraints: list[str]) -> str:
     title = candidate.title
     if "indoor" in constraints:
-        suffix = "室内参观" if slot_label != "晚上" else "室内休闲与用餐"
+        suffix = "室内参观" if slot_label != "晚上" else "室内轻松参观"
     elif "food" in constraints:
         suffix = "在地美食体验"
     elif "culture" in constraints:
@@ -291,13 +413,28 @@ def _evidence_ref(candidate: ProviderCandidate) -> str:
 
 
 def _location(candidate: ProviderCandidate) -> dict[str, float] | None:
+    location = _candidate_location(candidate)
+    if location is None:
+        return None
+    return {"lat": location[0], "lng": location[1]}
+
+
+def _candidate_location(candidate: ProviderCandidate) -> tuple[float, float] | None:
     lat = _to_float(candidate.extra.get("lat"))
     lng = _to_float(candidate.extra.get("lng"))
     if lat is None or lng is None:
         return None
     if not (-90 <= lat <= 90 and -180 <= lng <= 180):
         return None
-    return {"lat": lat, "lng": lng}
+    return lat, lng
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    radius = 6371.0
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    return radius * 2 * atan2(sqrt(a), sqrt(1 - a))
 
 
 def _to_float(value: Any) -> float | None:
