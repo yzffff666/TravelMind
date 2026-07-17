@@ -102,6 +102,21 @@ _DAY_REPLAN_CONSTRAINT_KEYWORDS: dict[str, tuple[str, ...]] = {
     "food": ("美食", "吃喝", "逛吃", "小吃", "茶餐厅", "餐厅"),
     "culture": ("文化", "历史", "人文", "艺术", "展览"),
 }
+_READONLY_DAY_QUESTION_HINTS = (
+    "是什么",
+    "有什么",
+    "去哪里",
+    "去哪",
+    "哪里",
+    "怎么安排",
+    "安排呢",
+    "有没有",
+    "有无",
+    "是否",
+    "吗",
+    "？",
+    "?",
+)
 _INDOOR_POI_SEEDS: dict[str, tuple[tuple[str, str, str], ...]] = {
     "香港": (
         ("上午", "香港故宫文化博物馆室内参观", "香港故宫文化博物馆"),
@@ -156,6 +171,8 @@ def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
     """从用户自然语言中解析出结构化 patch 操作列表。"""
     ops: list[PatchOp] = []
     text = utterance.strip()
+    if _is_readonly_day_question(text):
+        return []
     # 获取当前行程的天数
     days = current_itinerary.get("days", [])
     # 获取总天数
@@ -363,11 +380,15 @@ def _extract_day_replan_constraints(text: str) -> list[str]:
 def _has_contextual_day_replan_intent(text: str) -> bool:
     if not _DAY_PATTERN.search(text):
         return False
-    if any(qa_hint in text for qa_hint in ("是什么", "去哪里", "怎么安排", "安排呢", "有没有", "有无", "是否", "吗", "？", "?")):
+    if _is_readonly_day_question(text):
         return False
     if not _extract_day_replan_constraints(text):
         return False
     return any(action in text for action in ("改", "换", "安排", "调整", "重排", "重新规划"))
+
+
+def _is_readonly_day_question(text: str) -> bool:
+    return bool(_DAY_PATTERN.search(text)) and any(hint in text for hint in _READONLY_DAY_QUESTION_HINTS)
 
 
 def _match_any(text: str, hints: tuple[str, ...]) -> bool:

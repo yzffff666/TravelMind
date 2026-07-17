@@ -43,6 +43,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 | Gate | 覆盖内容 |
 | --- | --- |
 | `qp_eval` | 96 条 QP 规则评测，防止 create / edit / qa / reset 路由退化 |
+| `golden_demo_eval` | 演示主链路 golden cases，覆盖深圳/香港/澳门/旧金山 create、QA 只读、局部重规划、跨城 bbox |
 | `ranking_eval` | 离线 POI 排序 badcase 评测，验证好候选 Top-K 命中、bbox/duplicate/generic 拒绝 |
 | `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、runner 自测 |
 | `frontend_chat_component_tests` | DiffCard 与 PhaseIndicator，防止编辑结果重复展示、QA 状态误导 |
@@ -54,7 +55,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=6/6 passed
+gates=7/7 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -70,12 +71,28 @@ llm_backend/reports/milestone-runs/<run_id>/failures.json
 建议在这些场景运行：
 
 - 修改 QP / intent routing 之后。
+- 修改演示主链路、QA/edit 边界、局部重规划之后。
 - 修改 `POIRankingPolicy`、bbox 或候选排序权重之后。
 - 修改 patch engine / day replan 之后。
 - 修改 SSE event payload 或前端聊天展示之后。
 - 准备演示或 push 前。
 
 ## 单独运行排序评估
+
+如果只想验证演示主链路 golden cases，可以运行：
+
+```bash
+cd llm_backend
+./.venv/bin/python -m scripts.golden_demo_eval --output-dir reports/golden-demo-eval/latest
+```
+
+报告会输出：
+
+```text
+reports/golden-demo-eval/latest/
+├── golden-demo-eval.json
+└── golden-demo-eval.md
+```
 
 如果只想验证 POI 候选排序策略，可以运行：
 

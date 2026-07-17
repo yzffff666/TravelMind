@@ -7,6 +7,11 @@
       "cases": "evaluation/qp_rule_eval_cases.jsonl"
     },
     {
+      "type": "golden_demo_eval",
+      "name": "golden_demo_eval",
+      "cases": "evaluation/golden_demo_cases.json"
+    },
+    {
       "type": "ranking_eval",
       "name": "ranking_eval",
       "cases": "evaluation/ranking_eval_cases.json"
@@ -17,6 +22,7 @@
       "targets": [
         "tests/test_qp_rule_evaluation.py",
         "tests/test_travel_m2_011.py",
+        "tests/test_golden_demo_eval.py",
         "tests/test_ranking_eval_report.py",
         "tests/test_geo_bounds.py",
         "tests/test_patch_engine.py",

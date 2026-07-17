@@ -145,6 +145,8 @@ class TestParseEditOps:
     def test_day_level_constraint_question_does_not_become_replan_day(self):
         it = _make_itinerary()
         assert not has_mutation_intent("第二天有没有室内安排")
+        assert parse_edit_ops("第二天有没有室内安排", it) == []
+        assert parse_edit_ops("第三天下午去哪里", it) == []
 
 
 # ---------- apply_patch ----------

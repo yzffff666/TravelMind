@@ -5,6 +5,7 @@ from scripts.milestone_runner import (
     build_status,
     render_summary,
     run_command_gate,
+    run_golden_demo_eval_gate,
     run_qp_eval_gate,
     run_ranking_eval_gate,
     write_artifacts,
@@ -53,12 +54,22 @@ def test_ranking_eval_gate_passes_default_cases():
     assert result.failures == []
 
 
+def test_golden_demo_eval_gate_passes_default_cases():
+    result = run_golden_demo_eval_gate({"type": "golden_demo_eval", "name": "golden_demo_eval"})
+
+    assert result.status == "passed"
+    assert result.summary["case_count"] >= 1
+    assert result.summary["failed_cases"] == 0
+    assert result.failures == []
+
+
 def test_default_config_covers_core_integration_gates():
     gate_names = {gate["name"] for gate in DEFAULT_CONFIG["gates"]}
 
     assert DEFAULT_CONFIG["name"] == "travelmind-core-integration-gate"
     assert {
         "qp_eval",
+        "golden_demo_eval",
         "ranking_eval",
         "backend_core_integration_tests",
         "frontend_chat_component_tests",
@@ -67,6 +78,7 @@ def test_default_config_covers_core_integration_gates():
     }.issubset(gate_names)
 
     backend_gate = next(gate for gate in DEFAULT_CONFIG["gates"] if gate["name"] == "backend_core_integration_tests")
+    assert "tests/test_golden_demo_eval.py" in backend_gate["targets"]
     assert "tests/test_ranking_eval_report.py" in backend_gate["targets"]
     assert "tests/test_geo_bounds.py" in backend_gate["targets"]
     assert "tests/test_patch_engine.py" in backend_gate["targets"]

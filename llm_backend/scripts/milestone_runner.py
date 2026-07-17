@@ -26,6 +26,7 @@ DEFAULT_OUTPUT_ROOT = Path("reports/milestone-runs")
 DEFAULT_PYTEST_TARGETS = (
     "tests/test_qp_rule_evaluation.py",
     "tests/test_travel_m2_011.py",
+    "tests/test_golden_demo_eval.py",
     "tests/test_ranking_eval_report.py",
     "tests/test_geo_bounds.py",
     "tests/test_patch_engine.py",
@@ -38,6 +39,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "name": "travelmind-core-integration-gate",
     "gates": [
         {"type": "qp_eval", "name": "qp_eval", "cases": str(DEFAULT_CASES_PATH)},
+        {"type": "golden_demo_eval", "name": "golden_demo_eval", "cases": "evaluation/golden_demo_cases.json"},
         {"type": "ranking_eval", "name": "ranking_eval", "cases": "evaluation/ranking_eval_cases.json"},
         {"type": "pytest", "name": "backend_core_integration_tests", "targets": list(DEFAULT_PYTEST_TARGETS)},
         {
@@ -154,6 +156,37 @@ def run_ranking_eval_gate(gate: dict[str, Any]) -> GateResult:
             "passed_cases": report.get("passed_cases"),
             "failed_cases": report.get("failed_cases"),
             **(report.get("summary") or {}),
+        },
+        failures=failures,
+    )
+
+
+def run_golden_demo_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from scripts.golden_demo_eval import evaluate_cases, load_cases
+
+    start = time.perf_counter()
+    cases_path = Path(gate.get("cases") or "evaluation/golden_demo_cases.json")
+    report = evaluate_cases(load_cases(cases_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    failures = [
+        {
+            "case_id": item.get("case_id"),
+            "type": item.get("type"),
+            "errors": item.get("errors") or [],
+            "actual": item.get("actual") or {},
+        }
+        for item in report.get("failures") or []
+    ]
+    return GateResult(
+        name=str(gate.get("name") or "golden_demo_eval"),
+        type="golden_demo_eval",
+        status="passed" if report.get("status") == "passed" else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "case_count": report.get("case_count"),
+            "passed_cases": report.get("passed_cases"),
+            "failed_cases": report.get("failed_cases"),
+            "by_type": report.get("by_type") or {},
         },
         failures=failures,
     )
@@ -293,6 +326,8 @@ def run_gate(gate: dict[str, Any]) -> GateResult:
     gate_type = str(gate.get("type") or "")
     if gate_type == "qp_eval":
         return run_qp_eval_gate(gate)
+    if gate_type == "golden_demo_eval":
+        return run_golden_demo_eval_gate(gate)
     if gate_type == "ranking_eval":
         return run_ranking_eval_gate(gate)
     if gate_type == "pytest":
@@ -344,6 +379,11 @@ def render_summary(status: dict[str, Any]) -> str:
             lines.append(
                 f"- {gate['name']}: {gate['status']} "
                 f"({summary.get('strict_passed')}/{summary.get('strict_cases')} strict)"
+            )
+        elif gate.get("type") == "golden_demo_eval":
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"({summary.get('passed_cases')}/{summary.get('case_count')} cases)"
             )
         elif gate.get("type") == "ranking_eval":
             lines.append(

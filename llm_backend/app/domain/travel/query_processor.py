@@ -158,6 +158,11 @@ class TravelQueryProcessor:
         missing_required = [key for key in HARD_REQUIRED_FIELDS if not presence.get(key, False)]
         # 意图识别
         intent, intent_detail = self._detect_intent(normalized)
+        if intent != "create":
+            # P0 missing fields only block itinerary creation. Read-only QA,
+            # edits, reset, and chat should not carry clarification pressure
+            # just because their text mentions a day number but no budget.
+            missing_required = []
         # 召回查询
         recall_query = self._build_recall_query(normalized, constraints)
 

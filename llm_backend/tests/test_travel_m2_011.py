@@ -70,6 +70,7 @@ def test_qp_day_question_is_qa_not_edit():
         out = processor.process(query)
         assert out["intent"] == "qa"
         assert out["intent_detail"] == "qa_local"
+        assert out["missing_required"] == []
 
 
 def test_qp_day_reference_without_mutation_is_read_only_qa():
@@ -86,6 +87,7 @@ def test_qp_explicit_mutation_still_routes_to_edit():
         out = processor.process(query)
         assert out["intent"] == "edit"
         assert out["intent_detail"] == "edit_day"
+        assert out["missing_required"] == []
 
 
 def test_qp_intent_qa_evidence():
