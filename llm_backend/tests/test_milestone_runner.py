@@ -8,6 +8,7 @@ from scripts.milestone_runner import (
     run_golden_demo_eval_gate,
     run_qp_eval_gate,
     run_ranking_eval_gate,
+    run_unseen_destination_eval_gate,
     write_artifacts,
 )
 
@@ -63,6 +64,18 @@ def test_golden_demo_eval_gate_passes_default_cases():
     assert result.failures == []
 
 
+def test_unseen_destination_eval_gate_passes_default_cases():
+    result = run_unseen_destination_eval_gate(
+        {"type": "unseen_destination_eval", "name": "unseen_destination_eval"}
+    )
+
+    assert result.status == "passed"
+    assert result.summary["case_count"] == 10
+    assert result.summary["ready_cases"] == 8
+    assert result.summary["insufficient_candidate_cases"] == 2
+    assert result.failures == []
+
+
 def test_default_config_covers_core_integration_gates():
     gate_names = {gate["name"] for gate in DEFAULT_CONFIG["gates"]}
 
@@ -71,6 +84,7 @@ def test_default_config_covers_core_integration_gates():
         "qp_eval",
         "golden_demo_eval",
         "ranking_eval",
+        "unseen_destination_eval",
         "backend_core_integration_tests",
         "frontend_chat_component_tests",
         "frontend_type_check",
@@ -80,6 +94,9 @@ def test_default_config_covers_core_integration_gates():
     backend_gate = next(gate for gate in DEFAULT_CONFIG["gates"] if gate["name"] == "backend_core_integration_tests")
     assert "tests/test_golden_demo_eval.py" in backend_gate["targets"]
     assert "tests/test_ranking_eval_report.py" in backend_gate["targets"]
+    assert "tests/test_destination_grounding.py" in backend_gate["targets"]
+    assert "tests/test_destination_grounding_graph.py" in backend_gate["targets"]
+    assert "tests/test_unseen_destination_eval.py" in backend_gate["targets"]
     assert "tests/test_geo_bounds.py" in backend_gate["targets"]
     assert "tests/test_patch_engine.py" in backend_gate["targets"]
     assert "tests/test_day_replan_service.py" in backend_gate["targets"]

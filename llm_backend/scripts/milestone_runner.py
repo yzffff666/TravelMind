@@ -28,6 +28,10 @@ DEFAULT_PYTEST_TARGETS = (
     "tests/test_travel_m2_011.py",
     "tests/test_golden_demo_eval.py",
     "tests/test_ranking_eval_report.py",
+    "tests/test_candidate_audit_dataset.py",
+    "tests/test_destination_grounding.py",
+    "tests/test_destination_grounding_graph.py",
+    "tests/test_unseen_destination_eval.py",
     "tests/test_geo_bounds.py",
     "tests/test_patch_engine.py",
     "tests/test_day_replan_service.py",
@@ -41,6 +45,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {"type": "qp_eval", "name": "qp_eval", "cases": str(DEFAULT_CASES_PATH)},
         {"type": "golden_demo_eval", "name": "golden_demo_eval", "cases": "evaluation/golden_demo_cases.json"},
         {"type": "ranking_eval", "name": "ranking_eval", "cases": "evaluation/ranking_eval_cases.json"},
+        {
+            "type": "unseen_destination_eval",
+            "name": "unseen_destination_eval",
+            "cases": "evaluation/unseen_destination_cases.json",
+        },
         {"type": "pytest", "name": "backend_core_integration_tests", "targets": list(DEFAULT_PYTEST_TARGETS)},
         {
             "type": "command",
@@ -192,6 +201,38 @@ def run_golden_demo_eval_gate(gate: dict[str, Any]) -> GateResult:
     )
 
 
+def run_unseen_destination_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from scripts.unseen_destination_eval import build_report, load_cases
+
+    start = time.perf_counter()
+    cases_path = Path(gate.get("cases") or "evaluation/unseen_destination_cases.json")
+    report = build_report(load_cases(cases_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    failures = [
+        {
+            "case_id": item.get("case_id"),
+            "destination": item.get("destination"),
+            "errors": item.get("errors") or [],
+            "actual_outcome": item.get("actual_outcome"),
+        }
+        for item in report.get("failures") or []
+    ]
+    return GateResult(
+        name=str(gate.get("name") or "unseen_destination_eval"),
+        type="unseen_destination_eval",
+        status="passed" if report.get("status") == "passed" else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "case_count": report.get("case_count"),
+            "passed_cases": report.get("passed_cases"),
+            "failed_cases": report.get("failed_cases"),
+            "ready_cases": report.get("ready_cases"),
+            "insufficient_candidate_cases": report.get("insufficient_candidate_cases"),
+        },
+        failures=failures,
+    )
+
+
 def run_pytest_gate(gate: dict[str, Any]) -> GateResult:
     start = time.perf_counter()
     targets = [str(item) for item in gate.get("targets") or []]
@@ -330,6 +371,8 @@ def run_gate(gate: dict[str, Any]) -> GateResult:
         return run_golden_demo_eval_gate(gate)
     if gate_type == "ranking_eval":
         return run_ranking_eval_gate(gate)
+    if gate_type == "unseen_destination_eval":
+        return run_unseen_destination_eval_gate(gate)
     if gate_type == "pytest":
         return run_pytest_gate(gate)
     if gate_type == "command":

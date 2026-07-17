@@ -12,6 +12,7 @@ from typing import Any
 
 from app.core.logger import get_logger
 from app.schemas.itinerary_v1 import EvidenceItem, ItineraryV1, Location
+from app.services.destination_grounding import DestinationProfile, validate_candidate_destination
 from app.services.geo_bounds import is_coord_within_destination
 from app.services.providers.base import MapProvider
 from app.services.providers.factory import build_registry
@@ -275,7 +276,12 @@ class LocationBackfillService:
         self._min_match_score = min_match_score
         self._max_concurrent_backfills = max(1, max_concurrent_backfills)
 
-    async def backfill_itinerary(self, itinerary: ItineraryV1) -> BackfillReport:
+    async def backfill_itinerary(
+        self,
+        itinerary: ItineraryV1,
+        *,
+        destination_profile: DestinationProfile | None = None,
+    ) -> BackfillReport:
         if not self._providers:
             report = BackfillReport()
             report.assumptions.append("未配置真实地图数据源，缺失坐标无法回填。")
@@ -283,12 +289,14 @@ class LocationBackfillService:
             return report
 
         pending_slots = self._collect_pending_slots(itinerary)
-        return await self._backfill_slots(itinerary, pending_slots)
+        return await self._backfill_slots(itinerary, pending_slots, destination_profile=destination_profile)
 
     async def backfill_changed_days(
         self,
         itinerary: ItineraryV1,
         changed_days: list[int],
+        *,
+        destination_profile: DestinationProfile | None = None,
     ) -> BackfillReport:
         if not self._providers:
             report = BackfillReport()
@@ -307,14 +315,24 @@ class LocationBackfillService:
             for slot in day.slots
             if slot.location is None and (slot.place or slot.activity)
         ][: self._max_slots_per_request]
-        return await self._backfill_slots(itinerary, pending_slots)
+        return await self._backfill_slots(itinerary, pending_slots, destination_profile=destination_profile)
 
-    async def _backfill_slots(self, itinerary: ItineraryV1, pending_slots: list) -> BackfillReport:
+    async def _backfill_slots(
+        self,
+        itinerary: ItineraryV1,
+        pending_slots: list,
+        *,
+        destination_profile: DestinationProfile | None = None,
+    ) -> BackfillReport:
         report = BackfillReport()
         started = time.perf_counter()
 
         destination_raw = itinerary.trip_profile.destination_city or ""
-        destination = self._normalize_destination(destination_raw)
+        destination = (
+            destination_profile.canonical_name
+            if destination_profile is not None and destination_profile.resolved
+            else self._normalize_destination(destination_raw)
+        )
 
         jobs: list[tuple[object, str, int | None]] = []
         for slot in pending_slots:
@@ -355,7 +373,12 @@ class LocationBackfillService:
                     )
                 try:
                     return await asyncio.wait_for(
-                        self._resolve_place(place, destination, started),
+                        self._resolve_place(
+                            place,
+                            destination,
+                            started,
+                            destination_profile=destination_profile,
+                        ),
                         timeout=remaining,
                     )
                 except asyncio.TimeoutError:
@@ -520,7 +543,14 @@ class LocationBackfillService:
                 break
         return selected
 
-    async def _resolve_place(self, place: str, destination: str, started: float) -> _ResolveResult:
+    async def _resolve_place(
+        self,
+        place: str,
+        destination: str,
+        started: float,
+        *,
+        destination_profile: DestinationProfile | None = None,
+    ) -> _ResolveResult:
         all_variants = self._build_variants(place, destination)
         variants = all_variants[: self._max_variants_per_place]
         diagnostics = _BackfillDiagnostics(
@@ -541,7 +571,12 @@ class LocationBackfillService:
                 diagnostics.cache_negative_hit_count += 1
                 continue
 
-            query_result = await self._query_best_candidate(place, destination, variant)
+            query_result = await self._query_best_candidate(
+                place,
+                destination,
+                variant,
+                destination_profile=destination_profile,
+            )
             diagnostics.merge(query_result.diagnostics)
             self._set_cache(cache_key, query_result.resolved)
             if query_result.resolved:
@@ -558,7 +593,14 @@ class LocationBackfillService:
             variant_limit_reached=len(all_variants) > len(variants),
         )
 
-    async def _query_best_candidate(self, place: str, destination: str, variant: str) -> _QueryResult:
+    async def _query_best_candidate(
+        self,
+        place: str,
+        destination: str,
+        variant: str,
+        *,
+        destination_profile: DestinationProfile | None = None,
+    ) -> _QueryResult:
         best: dict | None = None
         best_score = 0.0
         diagnostics = _BackfillDiagnostics()
@@ -605,10 +647,15 @@ class LocationBackfillService:
                     diagnostics.best_candidate_lat = lat
                     diagnostics.best_candidate_lng = lng
                     diagnostics.best_candidate_address = candidate.extra.get("address")
-                if not is_coord_within_destination(destination, lat, lng):
+                if destination_profile is not None and destination_profile.resolved:
+                    grounding_decision = validate_candidate_destination(candidate, destination_profile)
+                    candidate_is_valid = grounding_decision.accepted
+                else:
+                    candidate_is_valid = is_coord_within_destination(destination, lat, lng)
+                if not candidate_is_valid:
                     diagnostics.rejected_bbox_count += 1
                     logger.info(
-                        "Location backfill rejected out-of-bounds candidate %s for %s: %s,%s",
+                        "Location backfill rejected out-of-destination candidate %s for %s: %s,%s",
                         candidate.title,
                         destination,
                         lat,

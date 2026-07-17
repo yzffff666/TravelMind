@@ -2,6 +2,7 @@ import asyncio
 import time
 
 from app.schemas.itinerary_v1 import BudgetSummary, ItineraryDay, ItinerarySlot, ItineraryV1, TripProfile
+from app.services.destination_grounding import DestinationProfile
 from app.services.location_backfill_service import LocationBackfillService, _cache
 from app.services.providers.base import ProviderCandidate, ProviderResponse
 
@@ -312,6 +313,60 @@ def test_backfill_rejects_cross_region_overseas_candidate():
     assert slot.location.lat == 7.8472
     assert slot.location.lng == 98.2931
     assert slot.evidence_refs == ["ev-karon-right"]
+
+
+def test_dynamic_destination_profile_prevents_backfill_from_accepting_cross_city_match():
+    class DynamicProfileProvider:
+        name = "dynamic_profile_provider"
+
+        async def nearby_poi(self, *, city, keywords, top_k=20, context=None):
+            return ProviderResponse(candidates=[
+                ProviderCandidate(
+                    candidate_id="same-name-tokyo",
+                    source=self.name,
+                    title="Dunhuang Museum",
+                    extra={"lat": 35.6586, "lng": 139.7454, "city": "Tokyo"},
+                ),
+                ProviderCandidate(
+                    candidate_id="dunhuang-museum",
+                    source=self.name,
+                    title="Dunhuang Museum",
+                    extra={"lat": 40.134, "lng": 94.662, "city": "敦煌市"},
+                ),
+            ])
+
+    _cache.clear()
+    itinerary = ItineraryV1(
+        itinerary_id="it-dynamic-grounding",
+        revision_id="rev-dynamic-grounding",
+        trip_profile=TripProfile(destination_city="敦煌"),
+        days=[ItineraryDay(day_index=1, slots=[ItinerarySlot(slot="上午", activity="参观", place="Dunhuang Museum")])],
+        budget_summary=BudgetSummary(total_estimate=5000),
+    )
+    profile = DestinationProfile(
+        requested_name="敦煌",
+        canonical_name="敦煌",
+        country="中国",
+        center_lat=40.1421,
+        center_lng=94.6619,
+        radius_km=45,
+        confidence=0.92,
+        source="fixture_geocoder",
+        is_dynamic=True,
+    )
+
+    report = asyncio.run(
+        _service_with_provider(DynamicProfileProvider(), max_variants_per_place=1).backfill_itinerary(
+            itinerary,
+            destination_profile=profile,
+        )
+    )
+
+    assert report.filled == 1
+    slot = itinerary.days[0].slots[0]
+    assert slot.location is not None
+    assert slot.location.lat == 40.134
+    assert slot.location.lng == 94.662
 
 
 def test_backfill_builds_phuket_old_town_aliases():

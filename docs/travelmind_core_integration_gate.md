@@ -45,7 +45,8 @@ llm_backend/reports/milestone-runs/<run_id>/
 | `qp_eval` | 96 条 QP 规则评测，防止 create / edit / qa / reset 路由退化 |
 | `golden_demo_eval` | 演示主链路 golden cases，覆盖深圳/香港/澳门/旧金山 create、QA 只读、局部重规划、跨城 bbox |
 | `ranking_eval` | 离线 POI 排序 badcase 评测，验证好候选 Top-K 命中、bbox/duplicate/generic 拒绝 |
-| `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、runner 自测 |
+| `unseen_destination_eval` | 10 个未配置 bbox/alias 的城市，验证动态目的地 Profile、本地候选接受、跨城候选拒绝与候选不足安全降级 |
+| `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、候选人工审核、目的地 grounding 契约、runner 自测 |
 | `frontend_chat_component_tests` | DiffCard 与 PhaseIndicator，防止编辑结果重复展示、QA 状态误导 |
 | `frontend_type_check` | Vue/TypeScript 类型契约 |
 | `frontend_production_build` | 前端生产构建可用性 |
@@ -55,7 +56,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=7/7 passed
+gates=8/8 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -73,6 +74,7 @@ llm_backend/reports/milestone-runs/<run_id>/failures.json
 - 修改 QP / intent routing 之后。
 - 修改演示主链路、QA/edit 边界、局部重规划之后。
 - 修改 `POIRankingPolicy`、bbox 或候选排序权重之后。
+- 修改动态目的地解析、Provider 地理编码或未见城市候选过滤之后。
 - 修改 patch engine / day replan 之后。
 - 修改 SSE event payload 或前端聊天展示之后。
 - 准备演示或 push 前。
@@ -115,6 +117,28 @@ reports/ranking-eval/latest/
 - 重复 POI：同一地点来自不同 provider 时只保留高质量候选。
 - 泛活动：拒绝“核心景点参观”“室内休闲活动”这类不可落地图的泛化候选。
 - 好候选 Top-K：检查高证据、高可解析、目的地一致的 POI 是否进入 policy top。
+
+## 未见城市与真实 Provider 验证
+
+离线未见城市门禁不依赖外部地图接口，验证的是动态目的地 Profile、跨城候选拒绝、候选不足降级和创建/重规划图级契约：
+
+```bash
+cd llm_backend
+./.venv/bin/python -m scripts.unseen_destination_eval \
+  --output-dir reports/unseen-destination-eval/latest
+```
+
+它固定覆盖 10 个没有生产静态 bbox/alias 的城市，其中 8 个具备足够的本地候选、2 个必须走候选不足降级。
+
+真实 Provider 探测不调用 LLM，默认只跑 6 个国内未见城市；需要显式确认才会发起网络请求：
+
+```bash
+./.venv/bin/python -m scripts.live_destination_grounding_probe \
+  --allow-live \
+  --output reports/live-destination-grounding-probe.json
+```
+
+通过条件是至少 6 个目的地解析成功、至少 4 个目的地获得 3 个以上通过地理校验的候选；任何未通过的城市必须输出 `profile_unresolved` 或 `insufficient_candidates`，而不是交给 LLM 生成串城行程。
 
 ## 边界
 

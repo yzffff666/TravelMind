@@ -729,6 +729,27 @@ python -m scripts.export_candidate_decisions \
   --summary-output reports/candidate-decisions-summary.json
 ```
 
+### Stage 1.5: Destination Grounding v1
+
+已落地动态目的地画像，解决静态 `bbox` 与 alias 只能覆盖少数常见城市的问题：
+
+```text
+destination name
+  -> static bounds fast path (已有常见城市)
+  -> AMap / Geoapify dynamic geocode (未见城市)
+  -> DestinationProfile(center, radius, canonical/admin names)
+  -> candidate geo + city-context validation
+  -> enough verified candidates ? rerank : safe clarification
+```
+
+技术取舍：保留静态 bbox 是因为它零额外延迟、稳定且兼容已有常见城市；但它不再是长尾城市的唯一事实来源。国内未见城市优先走高德地理编码，海外城市预留 Geoapify，二者都设有短 timeout 和进程内 TTL cache。没有在在线链路中使用 LLM judge 或把每个长尾城市写成 alias：前者增加成本和 P95 且难以稳定复现，后者只能制造新的城市白名单。
+
+动态画像对候选使用更严格的规则：必须有合法坐标、落在目的地半径内；高德返回的父级行政区只作为 city context，而不替代用户请求的区县/乡镇名称。例如请求“敦煌”会用“敦煌市”召回，同时允许 Provider 标注“酒泉市”的本地坐标候选通过。这让行政层级差异成为通用解析逻辑，而不是单城市硬编码。
+
+安全策略：动态画像无法解析，或可验证候选少于 3 个时，在 LLM Draft 前结束并请求用户补充；即使 LLM 草案产生未在已验证候选池中的地点，也不发布 `final_itinerary`。Backfill 同样复用同一画像校验，因此不能把其他城市的同名地点回填进去。
+
+验收资产：`evaluation/unseen_destination_cases.json` 固定覆盖 10 个未配置生产 bbox/alias 的城市（8 个 candidate-ready、2 个候选不足）；`scripts/unseen_destination_eval.py` 是确定性离线门禁；`scripts/live_destination_grounding_probe.py --allow-live` 是不调用 LLM、默认 6 个国内城市的预算受控 Provider 验证。当前真实探测结果为 6/6 画像解析成功、4/6 获得至少 3 个通过校验的候选。
+
 ### Stage 2: Rule-based POI Ranking Policy
 
 - 在 `ranking_scorer.py` / `constraint_filter.py` 基础上抽出明确的 `POIRankingPolicy`。
@@ -772,6 +793,38 @@ python -m scripts.export_candidate_decisions \
 
 - 只有在有稳定 query 分布和足够多的 badcase、rubric、偏好数据后，才尝试 pointwise / pairwise / LTR 形式的模型化排序。
 - 这一步是可选增强，不把 TravelMind 定位成传统推荐算法项目，也不和 CodeMind 的后训练主线重叠。
+
+### Stage 8.1: Human Audit Bridge
+
+`candidate_decision_v1` 中的 accepted/rejected 初始是当前 rule policy 的弱标签，不能直接当作模型真值。为此增加一个轻量人工审核桥接层：
+
+```text
+candidate-decisions.jsonl
+  -> candidate_audit_dataset queue
+  -> 人工填写 accepted / rejected / uncertain / not_reviewable
+  -> candidate_audit_dataset summarize
+  -> candidate_audit_label_v1
+```
+
+审核队列只优先抽取 rejected/skipped 和带 risk flag 的 accepted 样本，避免把明显正确的常规样本塞给人工。每条记录保留 destination、原 POI、候选 POI、provider、match score、bbox、risk flags、weak label 和 action type；人工只需要判断候选是否真的是用户要找的地点，以及当前 rule 是否判断正确。
+
+```bash
+cd llm_backend
+
+# 从一次或多次 smoke run 的候选日志生成待审核队列
+./.venv/bin/python -m scripts.candidate_audit_dataset queue \
+  --input reports/observability-candidate-decisions-extended/*/candidate-decisions.jsonl \
+  --output reports/candidate-audit-queue.jsonl \
+  --limit 100
+
+# 在 JSONL 中填写 audit.status/reviewer/rationale/reviewed_at 后，校验并导出二元人工标签
+./.venv/bin/python -m scripts.candidate_audit_dataset summarize \
+  --input reports/candidate-audit-queue.jsonl \
+  --output reports/candidate-audit-summary.json \
+  --labeled-output reports/candidate-audit-labeled.jsonl
+```
+
+技术取舍：这里没有引入 LLM-as-a-judge。当前项目最缺的是可复核、低成本的真实 badcase 标签，而不是再叠一层可能继承相同偏差的自动评分。先用人工审核校准弱标签；当二元人工标签达到约 100 条时，可做小型离线 probe；达到约 500 条且目的地/失败类型分布足够多样时，才有条件稳定比较 semantic rerank 或轻量 ranker。数量只是启动阈值，不替代覆盖度和标签一致性。
 
 ---
 

@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 from math import atan2, cos, radians, sin, sqrt
 from typing import Any
 
+from app.services.destination_grounding import (
+    DestinationResolver,
+    filter_candidates_for_destination,
+)
 from app.services.providers.base import ProviderCallContext, ProviderCandidate
 from app.services.ranking_scorer import RankingScorer, ScoredCandidate
 from app.services.recall_service import RecallResult, RecallService
@@ -20,6 +24,7 @@ class DayReplanReport:
     assumptions: list[str] = field(default_factory=list)
     diff_items: list[str] = field(default_factory=list)
     candidate_counts: dict[int, int] = field(default_factory=dict)
+    grounding_statuses: dict[int, str] = field(default_factory=dict)
 
 
 _SLOT_LABELS = ("上午", "下午", "晚上")
@@ -86,10 +91,12 @@ class DayReplanService:
         *,
         recall_service: RecallService | None = None,
         ranking_scorer: RankingScorer | None = None,
+        destination_resolver: DestinationResolver | None = None,
         min_candidates: int = _MIN_CANDIDATES,
     ) -> None:
         self._recall_service = recall_service or RecallService(include_mock_fallback=True)
         self._ranking_scorer = ranking_scorer or RankingScorer()
+        self._destination_resolver = destination_resolver or DestinationResolver()
         self._min_candidates = max(1, min_candidates)
 
     async def replan_days(
@@ -114,17 +121,37 @@ class DayReplanService:
 
             constraints = [str(c) for c in (request.get("constraints") or []) if c]
             destination = _destination_city(itinerary)
+            profile = await self._destination_resolver.resolve(destination)
+            if not profile.resolved:
+                report.grounding_statuses[day_index] = "unresolved"
+                report.assumptions.append(
+                    f"第{day_index}天未能可靠定位“{destination}”，已保留原行程，避免混入其他城市候选。"
+                )
+                continue
+            report.grounding_statuses[day_index] = "static" if not profile.is_dynamic else "grounded"
             preferences = _user_preferences(itinerary)
             terms = _query_terms(constraints, preferences)
-            query = " ".join([destination, *terms]).strip() or destination
+            query = " ".join([profile.canonical_name, *terms]).strip() or profile.canonical_name
 
             recall_result = await self._recall_service.recall_simple(
                 query=query,
-                city=destination,
+                city=profile.canonical_name,
                 preferences=terms,
                 context=context,
             )
             report.assumptions.extend(recall_result.assumptions)
+            validated_candidates, grounding_decisions = filter_candidates_for_destination(
+                recall_result.candidates,
+                profile,
+            )
+            recall_result.candidates = validated_candidates
+            if profile.is_dynamic and len(validated_candidates) < self._min_candidates:
+                report.grounding_statuses[day_index] = "insufficient_candidates"
+                report.candidate_counts[day_index] = len(validated_candidates)
+                report.assumptions.append(
+                    f"第{day_index}天仅找到 {len(validated_candidates)} 个可验证本地候选，已保留原行程。"
+                )
+                continue
 
             ranked = self._ranking_scorer.rank(
                 recall_result.candidates,

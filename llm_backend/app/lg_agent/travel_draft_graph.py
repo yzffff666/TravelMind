@@ -3,6 +3,7 @@ import json
 import re as _re
 import time
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from hashlib import md5
 from typing import Any, TypedDict
@@ -42,6 +43,11 @@ from app.schemas.itinerary_v1 import (
 )
 from app.services.constraint_filter import ConstraintFilter
 from app.services.coverage_tracker import CoverageTracker
+from app.services.destination_grounding import (
+    DestinationProfile,
+    DestinationResolver,
+    filter_candidates_for_destination,
+)
 from app.services.evidence_builder import EvidenceBuilder, PipelineResult
 from app.services.geo_bounds import is_coord_within_destination
 from app.services.location_backfill_service import LocationBackfillService
@@ -61,6 +67,7 @@ _pipeline_scorer: RankingScorer | None = None
 _pipeline_filter: ConstraintFilter | None = None
 _pipeline_eb: EvidenceBuilder | None = None
 _pipeline_backfill: LocationBackfillService | None = None
+_destination_resolver: DestinationResolver | None = None
 
 
 def _get_pipeline():
@@ -79,6 +86,14 @@ def _get_pipeline():
     if _pipeline_backfill is None:
         _pipeline_backfill = LocationBackfillService()
     return _pipeline_qp, _pipeline_recall, _pipeline_scorer, _pipeline_filter, _pipeline_eb, _pipeline_backfill
+
+
+def _get_destination_resolver() -> DestinationResolver:
+    """Return the process-scoped destination resolver and its TTL cache."""
+    global _destination_resolver
+    if _destination_resolver is None:
+        _destination_resolver = DestinationResolver()
+    return _destination_resolver
 
 
 _MAX_CANDIDATES_IN_PROMPT = 10
@@ -369,6 +384,31 @@ def _postprocess_with_pipeline(
     )
 
 
+def _unverified_dynamic_places(
+    itinerary: ItineraryV1,
+    pipeline_result: PipelineResult | None,
+    destination_profile: dict | None,
+) -> list[str]:
+    """Return concrete LLM places that are not in the verified candidate pool.
+
+    Dynamic destinations deliberately use a stricter contract than legacy
+    demo cities: a named POI in the final itinerary must originate from a
+    candidate which has already passed destination grounding.  This prevents a
+    fluent draft from silently introducing an out-of-city attraction.
+    """
+    profile = DestinationProfile.from_dict(destination_profile)
+    if not profile.is_dynamic or not profile.resolved or pipeline_result is None:
+        return []
+    geo_index = _build_candidate_geo_index(pipeline_result)
+    unverified: list[str] = []
+    for day in itinerary.days:
+        for slot in day.slots:
+            place = (slot.place or "").strip()
+            if place and _fuzzy_geo_lookup(geo_index, place) is None:
+                unverified.append(place)
+    return list(dict.fromkeys(unverified))
+
+
 def _append_budget_validation(
     itinerary: ItineraryV1,
     *,
@@ -434,6 +474,10 @@ class TravelDraftState(TravelDraftInput):
     recall_degraded: bool
     recall_geo_index: dict  # full name→{lat,lng,image_url} from ALL recalled candidates
     poi_ranking_shadow_report: dict
+    destination_profile: dict
+    grounding_status: str
+    grounding_message: str | None
+    grounding_reject_reason_counts: dict
 
     # -- llm_draft_node outputs --
     raw_llm_content: str | None
@@ -733,11 +777,90 @@ async def recall_node(state: TravelDraftState) -> dict:
     recall_degraded = False
     recall_geo_index: dict = {}
     poi_ranking_shadow_report: dict = {}
+    destination_profile: dict = {}
+    grounding_status = "disabled"
+    grounding_message: str | None = None
+    grounding_reject_reason_counts: dict[str, int] = {}
     try:
         qp, recall_svc, scorer, flt, eb, _ = _get_pipeline()
         qp_output = qp.process(state["query"])
+        constraints = dict(qp_output.get("constraints") or {})
+        destination = str(constraints.get("destination_city") or state.get("destination") or "").strip()
+
+        if settings.ENABLE_DESTINATION_GROUNDING:
+            profile = await _get_destination_resolver().resolve(destination)
+            destination_profile = profile.to_dict()
+            if not profile.resolved:
+                grounding_status = "unresolved"
+                grounding_message = (
+                    f"暂时无法可靠定位“{destination}”，为避免混入其他城市的景点，"
+                    "请补充国家/省份或使用更完整的目的地名称。"
+                )
+                logger.info(
+                    "destination_grounding",
+                    extra={
+                        "event_type": "destination_grounding",
+                        "status": grounding_status,
+                        "destination": destination,
+                        "profile": destination_profile,
+                    },
+                )
+                return {
+                    "pipeline_result": None,
+                    "recall_degraded": True,
+                    "recall_geo_index": {},
+                    "poi_ranking_shadow_report": {},
+                    "destination_profile": destination_profile,
+                    "grounding_status": grounding_status,
+                    "grounding_message": grounding_message,
+                    "grounding_reject_reason_counts": {},
+                    "perf": {**state.get("perf", {}), "recall_ms": (time.perf_counter() - t0) * 1000},
+                }
+            grounding_status = "static" if not profile.is_dynamic else "grounded"
+            # Providers receive the normalized destination; user-facing itinerary
+            # still preserves the original destination supplied in extract_node.
+            constraints["destination_city"] = profile.canonical_name
+            qp_output = {**qp_output, "constraints": constraints}
+
         recall_result = await recall_svc.recall_from_qp(qp_output)
-        constraints = qp_output.get("constraints", {})
+        if settings.ENABLE_DESTINATION_GROUNDING:
+            valid_candidates, grounding_decisions = filter_candidates_for_destination(
+                recall_result.candidates,
+                profile,
+            )
+            grounding_reject_reason_counts = dict(
+                Counter(decision.reason for decision in grounding_decisions if not decision.accepted)
+            )
+            recall_result.candidates = valid_candidates
+            if profile.is_dynamic and len(valid_candidates) < settings.DESTINATION_GROUNDING_MIN_CANDIDATES:
+                grounding_status = "insufficient_candidates"
+                grounding_message = (
+                    f"已定位到“{profile.canonical_name}”，但当前只找到 {len(valid_candidates)} 个"
+                    "可验证的本地景点。为避免生成串城行程，请补充更具体的区域或稍后重试。"
+                )
+                logger.info(
+                    "destination_grounding",
+                    extra={
+                        "event_type": "destination_grounding",
+                        "status": grounding_status,
+                        "destination": destination,
+                        "profile": destination_profile,
+                        "candidate_count": len(grounding_decisions),
+                        "validated_candidate_count": len(valid_candidates),
+                        "reject_reason_counts": grounding_reject_reason_counts,
+                    },
+                )
+                return {
+                    "pipeline_result": None,
+                    "recall_degraded": True,
+                    "recall_geo_index": {},
+                    "poi_ranking_shadow_report": {},
+                    "destination_profile": destination_profile,
+                    "grounding_status": grounding_status,
+                    "grounding_message": grounding_message,
+                    "grounding_reject_reason_counts": grounding_reject_reason_counts,
+                    "perf": {**state.get("perf", {}), "recall_ms": (time.perf_counter() - t0) * 1000},
+                }
 
         for rc in recall_result.candidates:
             c = rc.candidate if hasattr(rc, "candidate") else rc
@@ -784,6 +907,19 @@ async def recall_node(state: TravelDraftState) -> dict:
             policy_ranked=policy_ranked,
         )
         logger.info("poi_ranking_shadow", extra=poi_ranking_shadow_report)
+        if settings.ENABLE_DESTINATION_GROUNDING:
+            logger.info(
+                "destination_grounding",
+                extra={
+                    "event_type": "destination_grounding",
+                    "status": grounding_status,
+                    "destination": destination,
+                    "profile": destination_profile,
+                    "candidate_count": len(recall_result.candidates) + sum(grounding_reject_reason_counts.values()),
+                    "validated_candidate_count": len(recall_result.candidates),
+                    "reject_reason_counts": grounding_reject_reason_counts,
+                },
+            )
 
         filter_result = flt.apply_from_qp(ranked, qp_output)
         pipeline_result = eb.build(filter_result, recall_result)
@@ -811,7 +947,20 @@ async def recall_node(state: TravelDraftState) -> dict:
         "recall_degraded": recall_degraded,
         "recall_geo_index": recall_geo_index,
         "poi_ranking_shadow_report": poi_ranking_shadow_report,
+        "destination_profile": destination_profile,
+        "grounding_status": grounding_status,
+        "grounding_message": grounding_message,
+        "grounding_reject_reason_counts": grounding_reject_reason_counts,
         "perf": {**state.get("perf", {}), "recall_ms": elapsed},
+    }
+
+
+async def grounding_exit_node(state: TravelDraftState) -> dict:
+    """Stop before LLM generation when dynamic grounding is not reliable."""
+    return {
+        "final_itinerary": None,
+        "explanation": None,
+        "final_text": state.get("grounding_message") or "目的地候选不足，暂不生成行程。",
     }
 
 
@@ -990,6 +1139,21 @@ async def postprocess_node(state: TravelDraftState) -> dict:
         }
 
     itinerary = ItineraryV1(**itinerary_dict)
+    unverified_places = _unverified_dynamic_places(
+        itinerary,
+        pipeline_result,
+        state.get("destination_profile"),
+    )
+    if unverified_places:
+        sample = "、".join(unverified_places[:3])
+        return {
+            "final_itinerary": None,
+            "explanation": None,
+            "final_text": (
+                f"已定位目的地，但草案包含 {len(unverified_places)} 个未通过本地候选校验的地点"
+                f"（例如：{sample}）。为避免串城，暂不发布该行程，请稍后重试。"
+            ),
+        }
 
     try:
         _, _, _, _, eb, backfill = _get_pipeline()
@@ -1008,7 +1172,11 @@ async def postprocess_node(state: TravelDraftState) -> dict:
     )
 
     if backfill is not None:
-        report = await backfill.backfill_itinerary(itinerary)
+        destination_profile = DestinationProfile.from_dict(state.get("destination_profile"))
+        report = await backfill.backfill_itinerary(
+            itinerary,
+            destination_profile=destination_profile if destination_profile.resolved else None,
+        )
         existing = set(itinerary.validation.assumptions)
         for assumption in report.assumptions:
             if assumption not in existing:
@@ -1041,6 +1209,12 @@ def _should_continue_after_extract(state: TravelDraftState) -> str:
     return "recall_node"
 
 
+def _should_continue_after_recall(state: TravelDraftState) -> str:
+    if state.get("grounding_status") in {"unresolved", "insufficient_candidates"}:
+        return "grounding_exit_node"
+    return "llm_draft_node"
+
+
 # ===================================================================
 # Graph assembly
 # ===================================================================
@@ -1050,6 +1224,7 @@ builder = StateGraph(TravelDraftState)
 builder.add_node("extract_node", extract_node)
 builder.add_node("early_exit_node", early_exit_node)
 builder.add_node("recall_node", recall_node)
+builder.add_node("grounding_exit_node", grounding_exit_node)
 builder.add_node("llm_draft_node", llm_draft_node)
 builder.add_node("postprocess_node", postprocess_node)
 
@@ -1059,7 +1234,11 @@ builder.add_conditional_edges("extract_node", _should_continue_after_extract, {
     "recall_node": "recall_node",
 })
 builder.add_edge("early_exit_node", END)
-builder.add_edge("recall_node", "llm_draft_node")
+builder.add_conditional_edges("recall_node", _should_continue_after_recall, {
+    "grounding_exit_node": "grounding_exit_node",
+    "llm_draft_node": "llm_draft_node",
+})
+builder.add_edge("grounding_exit_node", END)
 builder.add_edge("llm_draft_node", "postprocess_node")
 builder.add_edge("postprocess_node", END)
 

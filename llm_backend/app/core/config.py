@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     GEOAPIFY_RATE_LIMIT_COOLDOWN_SECONDS: int = 86400
     GEOAPIFY_BUDGET_STATE_DIR: str = "reports/provider-budget"
 
+    # Destination grounding (dynamic city profile for unseen destinations)
+    ENABLE_DESTINATION_GROUNDING: bool = True
+    DESTINATION_GROUNDING_TIMEOUT_SECONDS: float = 3.0
+    DESTINATION_GROUNDING_CACHE_TTL_SECONDS: int = 86400
+    DESTINATION_GROUNDING_RADIUS_KM: float = 40.0
+    DESTINATION_GROUNDING_MIN_CANDIDATES: int = 3
+
     # Amap (高德地图) settings
     AMAP_API_KEY: str = ""
     AMAP_ENABLED: bool = True

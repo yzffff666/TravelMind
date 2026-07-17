@@ -17,6 +17,11 @@
       "cases": "evaluation/ranking_eval_cases.json"
     },
     {
+      "type": "unseen_destination_eval",
+      "name": "unseen_destination_eval",
+      "cases": "evaluation/unseen_destination_cases.json"
+    },
+    {
       "type": "pytest",
       "name": "backend_core_integration_tests",
       "targets": [
@@ -24,6 +29,10 @@
         "tests/test_travel_m2_011.py",
         "tests/test_golden_demo_eval.py",
         "tests/test_ranking_eval_report.py",
+        "tests/test_candidate_audit_dataset.py",
+        "tests/test_destination_grounding.py",
+        "tests/test_destination_grounding_graph.py",
+        "tests/test_unseen_destination_eval.py",
         "tests/test_geo_bounds.py",
         "tests/test_patch_engine.py",
         "tests/test_day_replan_service.py",

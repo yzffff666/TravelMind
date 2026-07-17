@@ -51,7 +51,8 @@ def _bool_score(value: Any) -> int:
     return 1 if value is True else 0
 
 
-def _risk_priority(sample: dict[str, Any]) -> int:
+def risk_priority(sample: dict[str, Any]) -> int:
+    """Return the cross-tool priority used for badcase review ordering."""
     quality = sample.get("quality_breakdown") if isinstance(sample.get("quality_breakdown"), dict) else {}
     risk_flags = sample.get("risk_flags") if isinstance(sample.get("risk_flags"), list) else []
     fallback_reason = sample.get("fallback_reason")
@@ -93,8 +94,8 @@ def _to_badcase(sample: dict[str, Any]) -> dict[str, Any]:
     quality = sample.get("quality_breakdown") if isinstance(sample.get("quality_breakdown"), dict) else {}
     risk_flags = sample.get("risk_flags") if isinstance(sample.get("risk_flags"), list) else []
     return {
-        "priority": _risk_priority(sample),
-        "action_type": _action_type(sample, quality, risk_flags),
+        "priority": risk_priority(sample),
+        "action_type": classify_action_type(sample, quality, risk_flags),
         "decision": sample.get("decision"),
         "label": sample.get("label"),
         "destination": sample.get("destination"),
@@ -126,7 +127,8 @@ def _to_badcase(sample: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _action_type(sample: dict[str, Any], quality: dict[str, Any], risk_flags: list[Any]) -> str:
+def classify_action_type(sample: dict[str, Any], quality: dict[str, Any], risk_flags: list[Any]) -> str:
+    """Map a candidate failure to the team or policy that can act on it."""
     fallback_reason = str(sample.get("fallback_reason") or "")
     provider_counts = (
         sample.get("provider_status_counts")

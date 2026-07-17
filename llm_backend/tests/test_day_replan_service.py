@@ -6,6 +6,7 @@ import uuid
 import pytest
 
 from app.services.day_replan_service import DayReplanService
+from app.services.destination_grounding import DestinationProfile, DestinationResolver
 from app.services.providers.base import ProviderCandidate
 from app.services.recall_service import RecallResult
 
@@ -57,6 +58,25 @@ class _FakeRecall:
             city=city,
             recall_query=query,
             calls_made=1,
+        )
+
+
+class _DunhuangLookup:
+    name = "fixture_geocoder"
+
+    async def lookup(self, destination: str):
+        if destination != "敦煌":
+            return None
+        return DestinationProfile(
+            requested_name=destination,
+            canonical_name="敦煌",
+            country="中国",
+            center_lat=40.1421,
+            center_lng=94.6619,
+            radius_km=45,
+            confidence=0.92,
+            source=self.name,
+            is_dynamic=True,
         )
 
 
@@ -219,3 +239,38 @@ async def test_indoor_replan_requires_indoor_candidate_relevance():
     assert "外滩" not in places
     assert "南京路步行街" not in places
     assert places == ["上海博物馆", "上海当代艺术博物馆", "K11购物艺术中心"]
+
+
+@pytest.mark.asyncio
+async def test_day_replan_for_unseen_city_filters_cross_city_candidates_before_selection():
+    itinerary = _make_itinerary()
+    itinerary["trip_profile"]["destination_city"] = "敦煌"
+    original_day1 = copy.deepcopy(itinerary["days"][0])
+    original_day3 = copy.deepcopy(itinerary["days"][2])
+    recall = _FakeRecall([
+        _candidate("莫高窟", lat=40.1424, lng=94.6615, tags=["敦煌", "文化", "室内", "博物馆"]),
+        _candidate("敦煌博物馆", lat=40.1340, lng=94.6620, tags=["敦煌", "文化", "室内", "博物馆"]),
+        _candidate("敦煌市图书馆", lat=40.1380, lng=94.6700, tags=["敦煌", "文化", "室内", "图书馆"]),
+        _candidate("东京塔", lat=35.6586, lng=139.7454, tags=["东京", "夜景"]),
+    ])
+    for candidate in recall.candidates[:3]:
+        candidate.extra["city"] = "敦煌市"
+    recall.candidates[-1].extra["city"] = "Tokyo"
+    resolver = DestinationResolver(lookups=[_DunhuangLookup()])
+    service = DayReplanService(recall_service=recall, destination_resolver=resolver)
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "constraints": ["indoor"], "raw_request": "把第二天改成室内"}],
+    )
+
+    assert report.applied_days == [2]
+    assert report.grounding_statuses == {2: "grounded"}
+    assert report.candidate_counts[2] == 3
+    assert [slot["place"] for slot in itinerary["days"][1]["slots"]] == [
+        "莫高窟",
+        "敦煌博物馆",
+        "敦煌市图书馆",
+    ]
+    assert itinerary["days"][0] == original_day1
+    assert itinerary["days"][2] == original_day3
