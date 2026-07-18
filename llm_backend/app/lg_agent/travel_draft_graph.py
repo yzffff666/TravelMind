@@ -23,6 +23,7 @@ from app.domain.travel.draft_builder import (
 )
 from app.domain.travel.draft_prompts import (
     TRAVEL_DRAFT_CANDIDATES_SECTION,
+    TRAVEL_DRAFT_PLAN_SECTION,
     TRAVEL_DRAFT_SYSTEM_PROMPT,
     TRAVEL_DRAFT_USER_PROMPT_TEMPLATE,
 )
@@ -41,7 +42,7 @@ from app.schemas.itinerary_v1 import (
     TripProfile,
     ValidationResult,
 )
-from app.services.constraint_filter import ConstraintFilter
+from app.services.constraint_filter import ConstraintFilter, FilterResult
 from app.services.coverage_tracker import CoverageTracker
 from app.services.destination_grounding import (
     DestinationProfile,
@@ -51,6 +52,11 @@ from app.services.destination_grounding import (
 from app.services.evidence_builder import EvidenceBuilder, PipelineResult
 from app.services.geo_bounds import is_coord_within_destination
 from app.services.location_backfill_service import LocationBackfillService
+from app.services.itinerary_planner import (
+    ConstraintAwareItineraryPlanner,
+    PlannerResult,
+    apply_plan_skeleton,
+)
 from app.services.poi_ranking_policy import POIRankingPolicy, build_ranking_shadow_report
 from app.services.ranking_scorer import RankingScorer
 from app.services.recall_service import RecallService
@@ -68,6 +74,7 @@ _pipeline_filter: ConstraintFilter | None = None
 _pipeline_eb: EvidenceBuilder | None = None
 _pipeline_backfill: LocationBackfillService | None = None
 _destination_resolver: DestinationResolver | None = None
+_itinerary_planner: ConstraintAwareItineraryPlanner | None = None
 
 
 def _get_pipeline():
@@ -94,6 +101,14 @@ def _get_destination_resolver() -> DestinationResolver:
     if _destination_resolver is None:
         _destination_resolver = DestinationResolver()
     return _destination_resolver
+
+
+def _get_itinerary_planner() -> ConstraintAwareItineraryPlanner:
+    """Return the process-scoped deterministic candidate planner."""
+    global _itinerary_planner
+    if _itinerary_planner is None:
+        _itinerary_planner = ConstraintAwareItineraryPlanner()
+    return _itinerary_planner
 
 
 _MAX_CANDIDATES_IN_PROMPT = 10
@@ -126,6 +141,30 @@ def _format_candidates_for_prompt(pipeline_result: PipelineResult | None) -> str
         count=len(lines),
         candidate_lines="\n".join(lines),
     )
+
+
+def _format_plan_skeleton_for_prompt(planner_result: PlannerResult | None) -> str:
+    if not planner_result or not planner_result.feasible or not planner_result.skeleton:
+        return ""
+    lines: list[str] = []
+    for day in planner_result.skeleton.days:
+        slots = "；".join(f"{selection.slot}：{selection.title}" for selection in day.selections)
+        lines.append(f"第{day.day_index}天（{day.theme}）：{slots}")
+    return TRAVEL_DRAFT_PLAN_SECTION.format(plan_lines="\n".join(lines))
+
+
+def _planner_constraints(query: str) -> list[str]:
+    """Map create-query wording to the compact planner constraint vocabulary."""
+    constraints: list[str] = []
+    if "室内" in query:
+        constraints.append("indoor")
+    if any(term in query for term in ("轻松", "不累", "慢一点", "慢游")):
+        constraints.append("relaxed")
+    if any(term in query for term in ("美食", "吃", "小吃", "餐厅")):
+        constraints.append("food")
+    if any(term in query for term in ("文化", "历史", "博物馆", "艺术")):
+        constraints.append("culture")
+    return constraints
 
 
 def _count_prompt_candidates(pipeline_result: PipelineResult | None) -> int:
@@ -478,6 +517,9 @@ class TravelDraftState(TravelDraftInput):
     grounding_status: str
     grounding_message: str | None
     grounding_reject_reason_counts: dict
+    planner_result: PlannerResult | None
+    plan_skeleton: dict
+    planner_status: str
 
     # -- llm_draft_node outputs --
     raw_llm_content: str | None
@@ -781,6 +823,9 @@ async def recall_node(state: TravelDraftState) -> dict:
     grounding_status = "disabled"
     grounding_message: str | None = None
     grounding_reject_reason_counts: dict[str, int] = {}
+    planner_result: PlannerResult | None = None
+    plan_skeleton: dict = {}
+    planner_status = "disabled"
     try:
         qp, recall_svc, scorer, flt, eb, _ = _get_pipeline()
         qp_output = qp.process(state["query"])
@@ -921,7 +966,55 @@ async def recall_node(state: TravelDraftState) -> dict:
                 },
             )
 
-        filter_result = flt.apply_from_qp(ranked, qp_output)
+        if settings.ENABLE_CONSTRAINT_PLANNER and ranked:
+            planner_result = _get_itinerary_planner().plan(
+                ranked,
+                destination=destination,
+                days=int(state.get("days_count") or constraints.get("days") or 1),
+                total_budget=state.get("total_budget") or constraints.get("budget"),
+                preferences=constraints.get("preferences") or state.get("preferences") or [],
+                pace=constraints.get("pace") or state.get("pace"),
+                constraints=_planner_constraints(state.get("query") or ""),
+            )
+            plan_skeleton = planner_result.skeleton.to_dict() if planner_result.skeleton else {}
+            planner_status = "planned" if planner_result.feasible else "infeasible"
+            logger.info(
+                "itinerary_planner",
+                extra={
+                    "event_type": "itinerary_planner",
+                    "destination": destination,
+                    **planner_result.to_dict(),
+                },
+            )
+            if not planner_result.feasible:
+                grounding_status = "planner_infeasible"
+                grounding_message = (
+                    f"已找到“{destination}”的候选地点，但不足以组成 {state.get('days_count') or constraints.get('days')} 天"
+                    "不重复且满足约束的行程。请缩短天数、补充偏好或稍后重试。"
+                )
+                return {
+                    "pipeline_result": None,
+                    "recall_degraded": True,
+                    "recall_geo_index": {},
+                    "poi_ranking_shadow_report": poi_ranking_shadow_report,
+                    "destination_profile": destination_profile,
+                    "grounding_status": grounding_status,
+                    "grounding_message": grounding_message,
+                    "grounding_reject_reason_counts": grounding_reject_reason_counts,
+                    "planner_result": planner_result,
+                    "plan_skeleton": plan_skeleton,
+                    "planner_status": planner_status,
+                    "perf": {**state.get("perf", {}), "recall_ms": (time.perf_counter() - t0) * 1000},
+                }
+            filter_result = FilterResult(
+                accepted=planner_result.skeleton.selected_candidates,
+                assumptions=[
+                    f"约束规划器已从 {planner_result.eligible_count} 个合格候选中选出 "
+                    f"{len(planner_result.skeleton.selections)} 个行程 POI。"
+                ],
+            )
+        else:
+            filter_result = flt.apply_from_qp(ranked, qp_output)
         pipeline_result = eb.build(filter_result, recall_result)
         recall_degraded = pipeline_result.degraded
 
@@ -951,6 +1044,9 @@ async def recall_node(state: TravelDraftState) -> dict:
         "grounding_status": grounding_status,
         "grounding_message": grounding_message,
         "grounding_reject_reason_counts": grounding_reject_reason_counts,
+        "planner_result": planner_result,
+        "plan_skeleton": plan_skeleton,
+        "planner_status": planner_status,
         "perf": {**state.get("perf", {}), "recall_ms": elapsed},
     }
 
@@ -1003,9 +1099,13 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
         )
 
         candidates_section = _format_candidates_for_prompt(pipeline_result)
+        plan_section = _format_plan_skeleton_for_prompt(state.get("planner_result"))
         if candidates_section:
             user_prompt += candidates_section
             logger.info(f"Injected candidates into LLM prompt")
+        if plan_section:
+            user_prompt += plan_section
+            logger.info("Injected constraint plan skeleton into LLM prompt")
 
         messages = [
             {"role": "system", "content": TRAVEL_DRAFT_SYSTEM_PROMPT},
@@ -1022,6 +1122,8 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             "user_prompt_chars": len(user_prompt),
             "candidate_section_chars": len(candidates_section),
             "candidate_count": _count_prompt_candidates(pipeline_result),
+            "plan_section_chars": len(plan_section),
+            "planner_status": state.get("planner_status", "disabled"),
             "response_language": response_language,
         }
         logger.info(f"Calling LLM for travel draft: {destination} {days_count}天 预算{int(total_budget)}")
@@ -1042,6 +1144,9 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             preferences=preferences,
             assumptions=assumptions,
         )
+        planner_result = state.get("planner_result")
+        if planner_result and planner_result.feasible and planner_result.skeleton:
+            itinerary = apply_plan_skeleton(itinerary, planner_result.skeleton)
         parse_status = "parsed"
         explanation = _format_draft_explanation(
             destination=destination,
@@ -1095,6 +1200,9 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
             traveler_type=traveler_type,
             assumptions=assumptions,
         )
+        planner_result = state.get("planner_result")
+        if planner_result and planner_result.feasible and planner_result.skeleton:
+            itinerary = apply_plan_skeleton(itinerary, planner_result.skeleton)
         explanation = _format_draft_explanation(
             destination=destination,
             days_count=days_count,
@@ -1210,7 +1318,7 @@ def _should_continue_after_extract(state: TravelDraftState) -> str:
 
 
 def _should_continue_after_recall(state: TravelDraftState) -> str:
-    if state.get("grounding_status") in {"unresolved", "insufficient_candidates"}:
+    if state.get("grounding_status") in {"unresolved", "insufficient_candidates", "planner_infeasible"}:
         return "grounding_exit_node"
     return "llm_draft_node"
 

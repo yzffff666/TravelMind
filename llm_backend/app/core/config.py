@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     DESTINATION_GROUNDING_CACHE_TTL_SECONDS: int = 86400
     DESTINATION_GROUNDING_RADIUS_KM: float = 40.0
     DESTINATION_GROUNDING_MIN_CANDIDATES: int = 3
+    ENABLE_CONSTRAINT_PLANNER: bool = True
 
     # Amap (高德地图) settings
     AMAP_API_KEY: str = ""

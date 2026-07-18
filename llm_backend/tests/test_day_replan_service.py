@@ -133,11 +133,11 @@ async def test_day_replan_uses_ranked_candidates_for_target_day_only():
 
     day2 = itinerary["days"][1]
     assert day2["theme"] == "候选驱动的室内体验"
-    assert [slot["place"] for slot in day2["slots"]] == [
+    assert {slot["place"] for slot in day2["slots"]} == {
         "上海博物馆",
         "上海当代艺术博物馆",
         "K11购物艺术中心",
-    ]
+    }
     assert all(slot["activity"] != "室内" for slot in day2["slots"])
     assert all(slot["evidence_refs"] for slot in day2["slots"])
     assert all(slot.get("location") for slot in day2["slots"])
@@ -190,7 +190,7 @@ async def test_day_replan_prefers_compact_candidates_near_anchor():
     day2 = itinerary["days"][1]
     places = [slot["place"] for slot in day2["slots"]]
     assert "远郊高分公园" not in places
-    assert places == ["上海博物馆", "新天地", "田子坊"]
+    assert set(places) == {"上海博物馆", "新天地", "田子坊"}
 
 
 @pytest.mark.asyncio
@@ -214,7 +214,7 @@ async def test_day_replan_filters_low_quality_sub_poi_titles():
     places = [slot["place"] for slot in itinerary["days"][1]["slots"]]
     assert "人民公园-相亲角" not in places
     assert "中华艺术宫-问询台" not in places
-    assert places == ["上海博物馆", "新天地", "田子坊"]
+    assert set(places) == {"上海博物馆", "新天地", "田子坊"}
 
 
 @pytest.mark.asyncio
@@ -238,7 +238,7 @@ async def test_indoor_replan_requires_indoor_candidate_relevance():
     places = [slot["place"] for slot in itinerary["days"][1]["slots"]]
     assert "外滩" not in places
     assert "南京路步行街" not in places
-    assert places == ["上海博物馆", "上海当代艺术博物馆", "K11购物艺术中心"]
+    assert set(places) == {"上海博物馆", "上海当代艺术博物馆", "K11购物艺术中心"}
 
 
 @pytest.mark.asyncio
@@ -267,10 +267,36 @@ async def test_day_replan_for_unseen_city_filters_cross_city_candidates_before_s
     assert report.applied_days == [2]
     assert report.grounding_statuses == {2: "grounded"}
     assert report.candidate_counts[2] == 3
-    assert [slot["place"] for slot in itinerary["days"][1]["slots"]] == [
+    assert {slot["place"] for slot in itinerary["days"][1]["slots"]} == {
         "莫高窟",
         "敦煌博物馆",
         "敦煌市图书馆",
-    ]
+    }
     assert itinerary["days"][0] == original_day1
     assert itinerary["days"][2] == original_day3
+
+
+@pytest.mark.asyncio
+async def test_day_replan_uses_shared_planner_to_avoid_pois_locked_on_other_days():
+    itinerary = _make_itinerary()
+    itinerary["days"][0]["slots"][0]["place"] = "上海博物馆"
+    original_day1 = copy.deepcopy(itinerary["days"][0])
+    recall = _FakeRecall([
+        _candidate("上海博物馆", rating=5.0),
+        _candidate("上海当代艺术博物馆", rating=4.8),
+        _candidate("K11购物艺术中心", rating=4.7),
+        _candidate("上海图书馆", rating=4.6),
+    ])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "constraints": ["indoor"], "raw_request": "把第二天改成室内"}],
+    )
+
+    day2_places = {slot["place"] for slot in itinerary["days"][1]["slots"]}
+    assert report.applied_days == [2]
+    assert report.planner_statuses == {2: "planned"}
+    assert "上海博物馆" not in day2_places
+    assert day2_places == {"上海当代艺术博物馆", "K11购物艺术中心", "上海图书馆"}
+    assert itinerary["days"][0] == original_day1

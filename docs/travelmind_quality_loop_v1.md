@@ -748,7 +748,7 @@ destination name
 
 安全策略：动态画像无法解析，或可验证候选少于 3 个时，在 LLM Draft 前结束并请求用户补充；即使 LLM 草案产生未在已验证候选池中的地点，也不发布 `final_itinerary`。Backfill 同样复用同一画像校验，因此不能把其他城市的同名地点回填进去。
 
-验收资产：`evaluation/unseen_destination_cases.json` 固定覆盖 10 个未配置生产 bbox/alias 的城市（8 个 candidate-ready、2 个候选不足）；`scripts/unseen_destination_eval.py` 是确定性离线门禁；`scripts/live_destination_grounding_probe.py --allow-live` 是不调用 LLM、默认 6 个国内城市的预算受控 Provider 验证。当前真实探测结果为 6/6 画像解析成功、4/6 获得至少 3 个通过校验的候选。
+验收资产：`evaluation/unseen_destination_cases.json` 固定覆盖 10 个未配置生产 bbox/alias 的城市（8 个 candidate-ready、2 个候选不足）；`scripts/unseen_destination_eval.py` 是确定性离线门禁；`scripts/live_destination_grounding_probe.py --allow-live` 是不调用 LLM、默认 6 个国内城市的预算受控 Provider 验证。当前真实探测结果为 6/6 画像解析成功、5/6 获得至少 3 个通过校验的候选。
 
 ### Stage 2: Rule-based POI Ranking Policy
 
@@ -759,9 +759,15 @@ destination name
 
 ### Stage 3: Constraint-aware Itinerary Integration
 
-- 在 `travel_draft_graph.py` draft 前增加 day/slot 级候选组织。
-- 把 budget、distance、pace、duplicate、generic activity 检查前移成 planner 校验。
-- 保持 LLM 负责表达和补充，而不是独占 POI 选择决策。
+已完成 `ConstraintAwareItineraryPlanner`：在 `travel_draft_graph.py` 的 draft 前生成 `PlanSkeleton`，先决定 day/slot/POI，再把骨架交给 LLM 只补 theme 与 activity 文案。LLM 返回后由 `apply_plan_skeleton` 强制覆盖 place，因此模型不能新增、替换或调换已验证 POI；LLM 超时后的模板草案同样复用骨架。
+
+Planner 使用前 24 个已 grounding 的候选和 16 条 beam 做有界组合搜索，硬约束包括 destination 已验证、POI 不重复、室内要求、锁定日期、单日 POI 预算与日内最大距离跳跃；软目标融合现有 ranking score、日内多样性、距离与费用惩罚。候选密度不足以支撑 3 个 slot 时，create 流程自动降低每日 POI 密度；`Edit Day N` 则保持显式 3 slot 的严格要求，不能满足就保留原日行程。
+
+技术取舍：Planner 直接使用 `RankingScorer` 的完整已 grounding 候选，而不是复用旧 `ConstraintFilter` 的最终输出。旧 filter 的 pace 规则会在跨天组合前压缩候选数量，适合单候选过滤，却会让 4 天行程过早失去可组合空间；现在 budget、节奏、距离和重复在 Planner 的组合层统一判断。没有引入 ILP 或外部求解器，因为当前候选规模只有十几到几十个，有界 beam 更容易解释、回归和控制在毫秒级。
+
+`DayReplanService` 已接入同一个 Planner，并把其他日期的 POI 传作 `excluded_titles`，因此“把第二天改成室内”不会重新使用第一天已经锁定的 POI，也不会修改非目标日期。
+
+验收资产：`scripts/planner_eval.py` 固定覆盖 12 个 create/local-replan 组合场景，包括紧凑路线、不同节奏、室内约束、预算上限、锁定日期、锚点距离、候选不足和自动降低每日 POI 密度。当前 `12/12` 通过、离线 Planner P95 约 `1.6ms`，并已进入核心 `planner_eval` 门禁。
 
 ### Stage 4: Ranking Evaluation & Observability
 

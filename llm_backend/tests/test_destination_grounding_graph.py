@@ -151,7 +151,7 @@ def test_dynamic_grounding_stops_before_llm_when_verified_candidates_are_insuffi
     assert llm.calls == 0
 
 
-def test_dynamic_grounding_blocks_llm_hallucinated_place_outside_verified_candidates():
+def test_dynamic_grounding_planner_replaces_llm_hallucinated_place_with_verified_candidate():
     import app.lg_agent.travel_draft_graph as tdg
 
     local_places = ["莫高窟", "敦煌博物馆", "鸣沙山月牙泉"]
@@ -169,6 +169,11 @@ def test_dynamic_grounding_blocks_llm_hallucinated_place_outside_verified_candid
         result = _run(tdg.travel_draft_graph.ainvoke({"query": "帮我规划敦煌3天，预算5000"}))
 
     assert llm.calls == 1
-    assert result["final_itinerary"] is None
-    assert "东京塔" in result["final_text"]
-    assert "暂不发布" in result["final_text"]
+    assert result["final_itinerary"] is not None
+    places = [
+        slot["place"]
+        for day in result["final_itinerary"]["days"]
+        for slot in day["slots"]
+    ]
+    assert set(places) == set(local_places)
+    assert "东京塔" not in places

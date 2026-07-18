@@ -45,6 +45,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 | `qp_eval` | 96 条 QP 规则评测，防止 create / edit / qa / reset 路由退化 |
 | `golden_demo_eval` | 演示主链路 golden cases，覆盖深圳/香港/澳门/旧金山 create、QA 只读、局部重规划、跨城 bbox |
 | `ranking_eval` | 离线 POI 排序 badcase 评测，验证好候选 Top-K 命中、bbox/duplicate/generic 拒绝 |
+| `planner_eval` | 12 个约束规划案例，验证不重复、预算、日内距离、室内约束、锁定日期与候选不足降级 |
 | `unseen_destination_eval` | 10 个未配置 bbox/alias 的城市，验证动态目的地 Profile、本地候选接受、跨城候选拒绝与候选不足安全降级 |
 | `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、候选人工审核、目的地 grounding 契约、runner 自测 |
 | `frontend_chat_component_tests` | DiffCard 与 PhaseIndicator，防止编辑结果重复展示、QA 状态误导 |
@@ -56,7 +57,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=8/8 passed
+gates=9/9 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -74,6 +75,7 @@ llm_backend/reports/milestone-runs/<run_id>/failures.json
 - 修改 QP / intent routing 之后。
 - 修改演示主链路、QA/edit 边界、局部重规划之后。
 - 修改 `POIRankingPolicy`、bbox 或候选排序权重之后。
+- 修改跨天 POI 组合、预算/距离/节奏约束或局部重规划策略之后。
 - 修改动态目的地解析、Provider 地理编码或未见城市候选过滤之后。
 - 修改 patch engine / day replan 之后。
 - 修改 SSE event payload 或前端聊天展示之后。
@@ -117,6 +119,15 @@ reports/ranking-eval/latest/
 - 重复 POI：同一地点来自不同 provider 时只保留高质量候选。
 - 泛活动：拒绝“核心景点参观”“室内休闲活动”这类不可落地图的泛化候选。
 - 好候选 Top-K：检查高证据、高可解析、目的地一致的 POI 是否进入 policy top。
+
+## 单独运行约束规划评测
+
+```bash
+cd llm_backend
+./.venv/bin/python -m scripts.planner_eval --output-dir reports/planner-eval/latest
+```
+
+该评测固定覆盖 12 个 create/local-replan 决策案例：紧凑路线、不同节奏、室内硬约束、预算上限、锁定日期不重复、锚点距离、候选不足和自动降低每日 POI 密度。通过时，Planner P95 必须低于 `200ms`。
 
 ## 未见城市与真实 Provider 验证
 

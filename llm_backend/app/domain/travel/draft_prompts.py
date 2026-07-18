@@ -9,7 +9,8 @@ TRAVEL_DRAFT_SYSTEM_PROMPT = """\
 3. activity 只写一句短描述，不要写长解释
 4. 每天给一个简短 theme 概括当天主题
 5. 如果有偏好（如文化、美食），优先安排相关活动
-6. 如果提供了"推荐地点列表"，优先从中选择地点安排行程
+6. 如果提供了"已确定的计划骨架"，必须严格使用其中 day/slot/place，不能新增、删除、替换或调换地点
+7. 如果只提供"推荐地点列表"，优先从中选择地点安排行程
 7. 不要输出 transit、cost_breakdown、risk、alternatives、location、evidence 等字段；这些由后处理补充
 
 你必须用纯 JSON 格式回复，不要包含任何 markdown 标记或解释文字。
@@ -76,4 +77,16 @@ TRAVEL_DRAFT_CANDIDATES_SECTION = """\
 - place 字段请尽量使用上述推荐地点的原始名称
 - 如果推荐地点不足以覆盖所有时段，可以补充你知道的其他真实地点
 - 不要为推荐地点展开长解释
+"""
+
+TRAVEL_DRAFT_PLAN_SECTION = """\
+
+以下是约束规划器已经确定的可执行计划骨架。它只包含通过目的地校验、排序和约束检查的 POI：
+
+{plan_lines}
+
+强制要求：
+- 保持每个 day_index、slot 和 place 与计划骨架完全一致
+- 不要新增、删除、替换、重命名或移动 place
+- 你只负责补充简短 theme 和 activity 文案
 """

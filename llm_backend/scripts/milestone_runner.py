@@ -31,6 +31,8 @@ DEFAULT_PYTEST_TARGETS = (
     "tests/test_candidate_audit_dataset.py",
     "tests/test_destination_grounding.py",
     "tests/test_destination_grounding_graph.py",
+    "tests/test_itinerary_planner.py",
+    "tests/test_planner_eval.py",
     "tests/test_unseen_destination_eval.py",
     "tests/test_geo_bounds.py",
     "tests/test_patch_engine.py",
@@ -45,6 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {"type": "qp_eval", "name": "qp_eval", "cases": str(DEFAULT_CASES_PATH)},
         {"type": "golden_demo_eval", "name": "golden_demo_eval", "cases": "evaluation/golden_demo_cases.json"},
         {"type": "ranking_eval", "name": "ranking_eval", "cases": "evaluation/ranking_eval_cases.json"},
+        {"type": "planner_eval", "name": "planner_eval"},
         {
             "type": "unseen_destination_eval",
             "name": "unseen_destination_eval",
@@ -233,6 +236,35 @@ def run_unseen_destination_eval_gate(gate: dict[str, Any]) -> GateResult:
     )
 
 
+def run_planner_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from scripts.planner_eval import build_report
+
+    start = time.perf_counter()
+    report = build_report()
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    failures = [
+        {
+            "case_id": item.get("case_id"),
+            "errors": item.get("errors") or [],
+            "actual_feasible": item.get("actual_feasible"),
+        }
+        for item in report.get("failures") or []
+    ]
+    return GateResult(
+        name=str(gate.get("name") or "planner_eval"),
+        type="planner_eval",
+        status="passed" if report.get("status") == "passed" else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "case_count": report.get("case_count"),
+            "passed_cases": report.get("passed_cases"),
+            "failed_cases": report.get("failed_cases"),
+            "planner_p95_ms": report.get("planner_p95_ms"),
+        },
+        failures=failures,
+    )
+
+
 def run_pytest_gate(gate: dict[str, Any]) -> GateResult:
     start = time.perf_counter()
     targets = [str(item) for item in gate.get("targets") or []]
@@ -373,6 +405,8 @@ def run_gate(gate: dict[str, Any]) -> GateResult:
         return run_ranking_eval_gate(gate)
     if gate_type == "unseen_destination_eval":
         return run_unseen_destination_eval_gate(gate)
+    if gate_type == "planner_eval":
+        return run_planner_eval_gate(gate)
     if gate_type == "pytest":
         return run_pytest_gate(gate)
     if gate_type == "command":
@@ -434,6 +468,12 @@ def render_summary(status: dict[str, Any]) -> str:
                 f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
                 f"good_hit={summary.get('good_hit_rate')}, "
                 f"expected_reject={summary.get('rejected_expected_rate')})"
+            )
+        elif gate.get("type") == "planner_eval":
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
+                f"p95={summary.get('planner_p95_ms')}ms)"
             )
         else:
             lines.append(f"- {gate['name']}: {gate['status']} ({round(gate.get('elapsed_ms', 0))} ms)")
