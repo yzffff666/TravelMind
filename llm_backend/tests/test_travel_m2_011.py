@@ -20,8 +20,10 @@ class _FakeStructuredQPStrategy:
     def __init__(self, result: StructuredQPResult | Exception):
         self.result = result
         self.seen_context = None
+        self.call_count = 0
 
     async def classify(self, query: str, *, context=None):
+        self.call_count += 1
         self.seen_context = context
         if isinstance(self.result, Exception):
             raise self.result
@@ -71,6 +73,14 @@ def test_qp_day_question_is_qa_not_edit():
         assert out["intent"] == "qa"
         assert out["intent_detail"] == "qa_local"
         assert out["missing_required"] == []
+
+
+def test_qp_readonly_mutation_question_is_qa_not_edit():
+    processor = TravelQueryProcessor()
+    for query in ("第二天改成室内了吗？", "第3天晚上有没有被调整？"):
+        out = processor.process(query)
+        assert out["intent"] == "qa"
+        assert out["intent_detail"] == "qa_local"
 
 
 def test_qp_day_reference_without_mutation_is_read_only_qa():
@@ -156,6 +166,8 @@ def test_qp_structured_strategy_can_drive_contextual_edit():
             intent_detail="edit_day",
             confidence=0.92,
             target_day=2,
+            target_slot="afternoon",
+            edit_constraints=["室内", "轻松"],
             constraints=StructuredQPConstraints(
                 budget=5000,
                 pace="relaxed",
@@ -184,6 +196,12 @@ def test_qp_structured_strategy_can_drive_contextual_edit():
     assert out["rewrite_applied"] is True
     assert "节奏:relaxed" in out["recall_query"]
     assert strategy.seen_context.has_itinerary is True
+    assert out["structured_qp_mode"] == "selective"
+    assert out["route_reason"] == "selective:contextual_edit"
+    assert out["safety_level"] == "safe"
+    assert out["target_day"] == 2
+    assert out["target_slot"] == "下午"
+    assert out["edit_constraints"] == ["indoor", "relaxed"]
 
 
 def test_qp_structured_strategy_low_confidence_falls_back_to_rule():
@@ -202,9 +220,8 @@ def test_qp_structured_strategy_low_confidence_falls_back_to_rule():
     )
     out = asyncio.run(processor.process_async("调整一下行程"))
     assert out["intent"] == "edit"
-    assert out["qp_source"] == "fallback"
-    assert out["confidence"] == 0.2
-    assert out["fallback_reason"] == "low_confidence"
+    assert out["qp_source"] == "rule"
+    assert out["route_reason"] == "rule_fast_path"
 
 
 def test_qp_structured_strategy_exception_falls_back_to_rule():
@@ -215,8 +232,129 @@ def test_qp_structured_strategy_exception_falls_back_to_rule():
     out = asyncio.run(processor.process_async("第2天安排是什么？"))
     assert out["intent"] == "qa"
     assert out["intent_detail"] == "qa_local"
+    assert out["qp_source"] == "rule"
+    assert out["route_reason"] == "rule_fast_path"
+
+
+def test_qp_shadow_mode_keeps_rule_result_and_records_model_observation():
+    strategy = _FakeStructuredQPStrategy(
+        StructuredQPResult(
+            intent="edit",
+            intent_detail="edit_day",
+            confidence=0.91,
+            constraints=StructuredQPConstraints(budget=6000),
+        )
+    )
+    processor = TravelQueryProcessor(
+        structured_strategy=strategy,
+        structured_qp_mode="shadow",
+    )
+    out = asyncio.run(
+        processor.process_async(
+            "住宿预算降一点，景点不要变",
+            context={"has_itinerary": True},
+        )
+    )
+    assert out["intent"] == "edit"
+    assert out["qp_source"] == "rule"
+    assert out["structured_qp_mode"] == "shadow"
+    assert out["route_reason"] == "shadow:contextual_edit"
+    assert out["shadow_intent"] == "edit"
+    assert out["shadow_confidence"] == 0.91
+    assert strategy.call_count == 1
+
+
+def test_qp_selective_mode_blocks_model_create_over_existing_itinerary():
+    strategy = _FakeStructuredQPStrategy(
+        StructuredQPResult(
+            intent="create",
+            intent_detail="first_create",
+            confidence=0.95,
+            constraints=StructuredQPConstraints(destination_city="东京", days=3, budget=8000),
+        )
+    )
+    processor = TravelQueryProcessor(
+        structured_strategy=strategy,
+        structured_qp_mode="selective",
+    )
+    out = asyncio.run(
+        processor.process_async(
+            "住宿预算降一点，景点不要变",
+            context={"has_itinerary": True},
+        )
+    )
+    assert out["intent"] == "edit"
     assert out["qp_source"] == "fallback"
-    assert "RuntimeError" in out["fallback_reason"]
+    assert out["safety_level"] == "blocked"
+    assert out["fallback_reason"] == "create_over_existing_itinerary"
+
+
+def test_qp_selective_mode_blocks_model_edit_without_explicit_mutation():
+    strategy = _FakeStructuredQPStrategy(
+        StructuredQPResult(
+            intent="edit",
+            intent_detail="edit_day",
+            confidence=0.95,
+            constraints=StructuredQPConstraints(),
+        )
+    )
+    processor = TravelQueryProcessor(
+        structured_strategy=strategy,
+        structured_qp_mode="selective",
+    )
+    out = asyncio.run(
+        processor.process_async(
+            "酒店位置怎么样",
+            context={"has_itinerary": True},
+        )
+    )
+    assert out["intent"] == "chat"
+    assert out["qp_source"] == "fallback"
+    assert out["safety_level"] == "blocked"
+    assert out["fallback_reason"] == "edit_without_explicit_mutation"
+
+
+def test_qp_selective_mode_uses_model_for_missing_destination():
+    strategy = _FakeStructuredQPStrategy(
+        StructuredQPResult(
+            intent="create",
+            intent_detail="first_create",
+            confidence=0.93,
+            constraints=StructuredQPConstraints(destination_city="Paris", days=3, budget=5000),
+        )
+    )
+    processor = TravelQueryProcessor(
+        structured_strategy=strategy,
+        structured_qp_mode="selective",
+    )
+    out = asyncio.run(processor.process_async("Paris 3 days budget 5000 food"))
+    assert out["intent"] == "create"
+    assert out["qp_source"] == "llm"
+    assert out["constraints"]["destination_city"] == "Paris"
+    assert out["route_reason"] == "selective:missing_destination"
+
+
+def test_qp_rule_fast_path_does_not_call_model_for_clear_local_edit():
+    strategy = _FakeStructuredQPStrategy(
+        StructuredQPResult(
+            intent="chat",
+            confidence=0.99,
+        )
+    )
+    processor = TravelQueryProcessor(
+        structured_strategy=strategy,
+        structured_qp_mode="selective",
+    )
+    out = asyncio.run(
+        processor.process_async(
+            "把第2天下午改成室内博物馆",
+            context={"has_itinerary": True},
+        )
+    )
+    assert out["intent"] == "edit"
+    assert out["qp_source"] == "rule"
+    assert out["route_reason"] == "rule_fast_path"
+    assert strategy.call_count == 0
 
 
 def test_structured_qp_constraints_normalize_llm_surface_values():
@@ -226,6 +364,26 @@ def test_structured_qp_constraints_normalize_llm_surface_values():
     })
     assert constraints.budget == 6000.0
     assert constraints.pace == "relaxed"
+
+
+def test_structured_qp_constraints_drop_non_numeric_budget_direction():
+    constraints = StructuredQPConstraints.model_validate({"budget": "lower"})
+
+    assert constraints.budget is None
+
+
+def test_structured_qp_edit_fields_normalize_to_bounded_values():
+    result = StructuredQPResult.model_validate({
+        "intent": "edit",
+        "intent_detail": "edit_day",
+        "confidence": 0.91,
+        "target_day": 2,
+        "target_slot": "night",
+        "edit_constraints": ["室内", "museum", "慢节奏", "未知标签"],
+    })
+
+    assert result.target_slot == "晚上"
+    assert result.edit_constraints == ["indoor", "relaxed"]
 
 
 # ---------- 约束抽取与 recall_query ----------

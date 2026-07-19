@@ -163,6 +163,59 @@ async def test_day_replan_keeps_existing_day_when_candidates_are_insufficient():
 
 
 @pytest.mark.asyncio
+async def test_day_replan_replaces_only_requested_slot_with_verified_candidate():
+    itinerary = _make_itinerary()
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    recall = _FakeRecall([_candidate("上海图书馆", rating=4.8)])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{
+            "day_index": 2,
+            "target_slot": "下午",
+            "constraints": ["indoor"],
+            "raw_request": "把第二天下午改成室内",
+        }],
+    )
+
+    assert report.applied_days == [2]
+    assert report.candidate_counts[2] == 1
+    assert "下午时段" in report.diff_items[0]
+    day2 = itinerary["days"][1]
+    assert day2["theme"] == original_day2["theme"]
+    assert day2["slots"][0] == original_day2["slots"][0]
+    assert day2["slots"][2] == original_day2["slots"][2]
+    assert day2["slots"][1]["slot"] == "下午"
+    assert day2["slots"][1]["place"] == "上海图书馆"
+    assert day2["slots"][1]["activity"] != "把第二天下午改成室内"
+    assert day2["slots"][1]["evidence_refs"]
+    assert day2["slots"][1]["location"]
+
+
+@pytest.mark.asyncio
+async def test_target_slot_replan_keeps_original_day_when_no_candidate_is_verified():
+    itinerary = _make_itinerary()
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    service = DayReplanService(recall_service=_FakeRecall([]))
+
+    report = await service.replan_days(
+        itinerary,
+        [{
+            "day_index": 2,
+            "target_slot": "下午",
+            "constraints": ["indoor"],
+            "raw_request": "把第二天下午改成室内",
+        }],
+    )
+
+    assert report.applied_days == []
+    assert report.candidate_counts[2] == 0
+    assert itinerary["days"][1] == original_day2
+    assert any("候选不足" in assumption for assumption in report.assumptions)
+
+
+@pytest.mark.asyncio
 async def test_day_replan_prefers_compact_candidates_near_anchor():
     itinerary = _make_itinerary()
     recall = _FakeRecall([

@@ -1,0 +1,92 @@
+[
+  {
+    "case_id": "edit-slot-indoor-cn",
+    "utterance": "把第二天下午改成室内博物馆",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 2, "target_slot": "下午", "edit_constraints": ["indoor"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": true, "target_day": 2, "target_slot": "下午", "constraints": ["indoor"]}
+  },
+  {
+    "case_id": "edit-day-relaxed-cn",
+    "utterance": "把第二天调整得轻松一点",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 2, "target_slot": null, "edit_constraints": ["relaxed"], "constraints": {"preferences": [], "pace": "relaxed"}},
+    "expected": {"accepted": true, "target_day": 2, "target_slot": null, "constraints": ["relaxed"]}
+  },
+  {
+    "case_id": "edit-food-evening-cn",
+    "utterance": "把第三天晚上换成美食安排",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 3, "target_slot": "晚上", "edit_constraints": ["food"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": true, "target_day": 3, "target_slot": "晚上", "constraints": ["food"]}
+  },
+  {
+    "case_id": "edit-culture-profile-cn",
+    "utterance": "把第一天改得更有文化一点",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 1, "target_slot": null, "edit_constraints": [], "constraints": {"preferences": ["文化"], "pace": null}},
+    "expected": {"accepted": true, "target_day": 1, "target_slot": null, "constraints": ["culture"]}
+  },
+  {
+    "case_id": "edit-combined-profile-cn",
+    "utterance": "把第三天下午调整得轻松些，最好有美食",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 3, "target_slot": "下午", "edit_constraints": [], "constraints": {"preferences": ["美食"], "pace": "relaxed"}},
+    "expected": {"accepted": true, "target_day": 3, "target_slot": "下午", "constraints": ["relaxed", "food"]}
+  },
+  {
+    "case_id": "edit-indoor-english",
+    "utterance": "Please change day 1 morning to an indoor activity.",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 1, "target_slot": "上午", "edit_constraints": ["indoor"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": true, "target_day": 1, "target_slot": "上午", "constraints": ["indoor"]}
+  },
+  {
+    "case_id": "edit-relaxed-english",
+    "utterance": "Could you make day 2 afternoon more relaxed?",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 2, "target_slot": "下午", "edit_constraints": ["relaxed"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": true, "target_day": 2, "target_slot": "下午", "constraints": ["relaxed"]}
+  },
+  {
+    "case_id": "edit-multi-constraints",
+    "utterance": "把第二天改成轻松的室内文化行程",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 2, "target_slot": null, "edit_constraints": ["indoor", "relaxed", "culture"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": true, "target_day": 2, "target_slot": null, "constraints": ["indoor", "relaxed", "culture"]}
+  },
+  {
+    "case_id": "qa-day-question-must-not-edit",
+    "utterance": "第三天下午去哪里",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 3, "target_slot": "下午", "edit_constraints": ["indoor"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": false}
+  },
+  {
+    "case_id": "blocked-structured-result",
+    "utterance": "把第二天改成室内",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "blocked", "target_day": 2, "target_slot": null, "edit_constraints": ["indoor"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": false}
+  },
+  {
+    "case_id": "fallback-result-must-not-bridge",
+    "utterance": "把第二天改成室内",
+    "qp_output": {"qp_source": "fallback", "intent": "edit", "safety_level": "safe", "target_day": 2, "target_slot": null, "edit_constraints": ["indoor"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": false}
+  },
+  {
+    "case_id": "qa-intent-must-not-bridge",
+    "utterance": "第二天有什么室内安排",
+    "qp_output": {"qp_source": "llm", "intent": "qa", "safety_level": "safe", "target_day": 2, "target_slot": null, "edit_constraints": ["indoor"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": false}
+  },
+  {
+    "case_id": "invalid-day-must-not-bridge",
+    "utterance": "把第九天改成室内",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 9, "target_slot": null, "edit_constraints": ["indoor"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": false}
+  },
+  {
+    "case_id": "unbounded-edit-must-not-bridge",
+    "utterance": "把第二天改一下",
+    "qp_output": {"qp_source": "llm", "intent": "edit", "safety_level": "safe", "target_day": 2, "target_slot": null, "edit_constraints": [], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": false}
+  },
+  {
+    "case_id": "chat-must-not-bridge",
+    "utterance": "帮我看看第二天",
+    "qp_output": {"qp_source": "llm", "intent": "chat", "safety_level": "safe", "target_day": 2, "target_slot": null, "edit_constraints": ["culture"], "constraints": {"preferences": [], "pace": null}},
+    "expected": {"accepted": false}
+  }
+]

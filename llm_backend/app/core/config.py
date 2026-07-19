@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from enum import Enum
 from pathlib import Path
-from typing import List
+from typing import List, Literal
 
 # 获取项目根目录
 ROOT_DIR = Path(__file__).parent.parent.parent
@@ -103,7 +103,10 @@ class Settings(BaseSettings):
     ENABLE_GRAPHRAG_EXT: bool = False
     ENABLE_DEEPAGENTS: bool = False
     ENABLE_DEEPSEARCH: bool = False
+    # Legacy compatibility switch. New deployments should use
+    # STRUCTURED_QP_MODE so the rollout behavior is explicit.
     ENABLE_STRUCTURED_QP: bool = False
+    STRUCTURED_QP_MODE: Literal["off", "shadow", "selective"] = "off"
     STRUCTURED_QP_TIMEOUT_SECONDS: float = 4.0
     STRUCTURED_QP_CONFIDENCE_THRESHOLD: float = 0.65
     TRAVEL_DRAFT_LLM_TIMEOUT_SECONDS: float = 90.0

@@ -117,33 +117,6 @@ _READONLY_DAY_QUESTION_HINTS = (
     "？",
     "?",
 )
-_INDOOR_POI_SEEDS: dict[str, tuple[tuple[str, str, str], ...]] = {
-    "香港": (
-        ("上午", "香港故宫文化博物馆室内参观", "香港故宫文化博物馆"),
-        ("下午", "K11 MUSEA 室内展览与购物休息", "K11 MUSEA"),
-        ("晚上", "中环茶餐厅与室内美食体验", "中环"),
-    ),
-    "上海": (
-        ("上午", "上海博物馆室内参观", "上海博物馆"),
-        ("下午", "上海当代艺术博物馆展览体验", "上海当代艺术博物馆"),
-        ("晚上", "新天地室内餐厅与休闲", "新天地"),
-    ),
-    "成都": (
-        ("上午", "成都博物馆室内参观", "成都博物馆"),
-        ("下午", "四川科技馆轻松体验", "四川科技馆"),
-        ("晚上", "太古里室内餐厅与休闲", "成都太古里"),
-    ),
-    "北京": (
-        ("上午", "中国国家博物馆室内参观", "中国国家博物馆"),
-        ("下午", "首都博物馆展览体验", "首都博物馆"),
-        ("晚上", "三里屯室内餐厅与休闲", "三里屯"),
-    ),
-    "东京": (
-        ("上午", "东京国立博物馆室内参观", "东京国立博物馆"),
-        ("下午", "六本木之丘室内展览与购物", "六本木之丘"),
-        ("晚上", "银座室内餐厅与购物休息", "银座"),
-    ),
-}
 _PLACE_TRAILING_ACTIONS = (
     "游玩",
     "游览",
@@ -186,13 +159,24 @@ def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
     # Collect all matching ops (no early return — supports multi-op edits)
 
     day_replan_constraints = _extract_day_replan_constraints(text)
-    if target_day and not target_slot and day_replan_constraints and has_mutation_intent(text):
+    # Constraint edits are replan requests even when they name a specific
+    # slot. A generic text replacement would leak phrases such as "改成室内"
+    # into the itinerary instead of selecting a verified POI. Explicit add /
+    # delete commands retain their own semantics.
+    if (
+        target_day
+        and day_replan_constraints
+        and has_mutation_intent(text)
+        and not _match_any(text, _DELETE_HINTS)
+        and not _match_any(text, _ADD_HINTS)
+    ):
         ops.append(PatchOp(
             op=PatchOpType.REPLAN_DAY,
             day_index=target_day,
             payload={
                 "constraints": day_replan_constraints,
                 "raw_request": text,
+                "target_slot": target_slot,
             },
         ))
 
@@ -576,36 +560,36 @@ def _apply_replan_day(
         return False
 
     constraints = list(op.payload.get("constraints") or [])
-    old_slots = [slot.get("activity", "") for slot in day.get("slots", [])]
-    anchor_locations = _slot_anchor_locations(day.get("slots", []))
-    day["theme"] = _build_replan_theme(constraints)
-    day["slots"] = _build_replanned_slots(itinerary, constraints)
+    target_slot = _normalize_slot(op.payload.get("target_slot"))
+    target_slots = day.get("slots", [])
+    if target_slot:
+        slot = _find_slot(day, target_slot)
+        if slot is None:
+            diff_items.append(f"未找到第{op.day_index}天的{target_slot}时段")
+            return False
+        target_slots = [slot]
+    old_slots = [slot.get("activity", "") for slot in target_slots]
+    anchor_locations = _slot_anchor_locations(target_slots)
+
+    # Candidate-driven replan is transactional at the API boundary. Do not
+    # replace the existing day with a template here: if recall/planning cannot
+    # produce verified POIs, the caller can return a clarification with no new
+    # revision instead of persisting a placeholder itinerary.
     changed_days.add(op.day_index)
     replan_requests.append({
         "day_index": op.day_index,
         "constraints": constraints,
         "raw_request": op.payload.get("raw_request"),
         "anchor_locations": anchor_locations,
+        "target_slot": target_slot,
+        "execution_source": op.payload.get("execution_source") or "rule",
     })
 
     old_desc = "、".join([s for s in old_slots if s][:3]) or "原安排"
     constraint_desc = "、".join(_constraint_label(c) for c in constraints) or "新偏好"
-    diff_items.append(f"第{op.day_index}天按「{constraint_desc}」重新规划（原安排：{old_desc}）")
+    scope_desc = f"{target_slot}时段" if target_slot else ""
+    diff_items.append(f"第{op.day_index}天{scope_desc}按「{constraint_desc}」候选重新规划（原安排：{old_desc}）")
     return True
-
-
-def _build_replan_theme(constraints: list[str]) -> str:
-    if "indoor" in constraints and "relaxed" in constraints:
-        return "轻松室内体验"
-    if "indoor" in constraints:
-        return "室内文化与休闲体验"
-    if "food" in constraints:
-        return "在地美食体验"
-    if "culture" in constraints:
-        return "文化与人文探索"
-    if "relaxed" in constraints:
-        return "轻松慢节奏体验"
-    return "按新偏好调整的一日行程"
 
 
 def _slot_anchor_locations(slots: list[dict]) -> list[dict[str, float]]:
@@ -620,63 +604,6 @@ def _slot_anchor_locations(slots: list[dict]) -> list[dict[str, float]]:
         if -90 <= lat <= 90 and -180 <= lng <= 180:
             anchors.append({"lat": lat, "lng": lng})
     return anchors
-
-
-def _build_replanned_slots(itinerary: dict, constraints: list[str]) -> list[dict]:
-    destination = _destination_city(itinerary)
-    if "indoor" in constraints:
-        seeds = _indoor_seed_slots(destination)
-        return [_slot(slot, activity, place, transit="地铁/步行") for slot, activity, place in seeds]
-    if "food" in constraints:
-        return [
-            _slot("上午", f"{destination}特色街区轻松逛吃", f"{destination}特色街区"),
-            _slot("下午", f"{destination}本地小吃与咖啡休息", f"{destination}小吃街"),
-            _slot("晚上", f"{destination}代表性餐厅晚餐", f"{destination}餐厅"),
-        ]
-    if "culture" in constraints:
-        return [
-            _slot("上午", f"{destination}博物馆或历史展馆参观", f"{destination}博物馆"),
-            _slot("下午", f"{destination}老街区人文探索", f"{destination}老街区"),
-            _slot("晚上", f"{destination}文化街区夜间散步", f"{destination}文化街区"),
-        ]
-    if "relaxed" in constraints:
-        return [
-            _slot("上午", f"{destination}轻松早餐与慢节奏城市漫步", f"{destination}市中心"),
-            _slot("下午", f"{destination}咖啡馆或公园休息", f"{destination}公园"),
-            _slot("晚上", f"{destination}轻松晚餐后返回休息", f"{destination}餐厅"),
-        ]
-    return [
-        _slot("上午", f"{destination}按新偏好安排上午活动", f"{destination}市中心"),
-        _slot("下午", f"{destination}按新偏好安排下午活动", f"{destination}核心景区"),
-        _slot("晚上", f"{destination}按新偏好安排晚间活动", f"{destination}餐厅"),
-    ]
-
-
-def _destination_city(itinerary: dict) -> str:
-    profile = itinerary.get("trip_profile") or {}
-    return (profile.get("destination_city") or "当地").strip() or "当地"
-
-
-def _indoor_seed_slots(destination: str) -> tuple[tuple[str, str, str], ...]:
-    for key, seeds in sorted(_INDOOR_POI_SEEDS.items(), key=lambda item: len(item[0]), reverse=True):
-        if key in destination:
-            return seeds
-    return (
-        ("上午", f"{destination}博物馆室内参观", f"{destination}博物馆"),
-        ("下午", f"{destination}美术馆或展馆体验", f"{destination}美术馆"),
-        ("晚上", f"{destination}室内餐厅与休闲", f"{destination}餐厅"),
-    )
-
-
-def _slot(slot: str, activity: str, place: str, transit: str = "步行/公共交通") -> dict:
-    return {
-        "slot": slot,
-        "activity": activity,
-        "place": place,
-        "transit": transit,
-        "alternatives": [],
-        "evidence_refs": [],
-    }
 
 
 def _constraint_label(constraint: str) -> str:

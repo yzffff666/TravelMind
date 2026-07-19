@@ -497,13 +497,21 @@ def apply_plan_skeleton(itinerary: ItineraryV1, skeleton: PlanSkeleton) -> Itine
     return itinerary
 
 
-def plan_slots_as_payloads(skeleton: PlanSkeleton, day_index: int) -> list[dict[str, Any]]:
+def plan_slots_as_payloads(
+    skeleton: PlanSkeleton,
+    day_index: int,
+    *,
+    slot_labels: Iterable[str] | None = None,
+) -> list[dict[str, Any]]:
     """Render one planned day for the edit API without depending on an LLM."""
     day = next((item for item in skeleton.days if item.day_index == day_index), None)
     if day is None:
         return []
+    requested_slots = list(slot_labels or [])
+    if requested_slots and len(requested_slots) != len(day.selections):
+        return []
     payloads: list[dict[str, Any]] = []
-    for selection in day.selections:
+    for position, selection in enumerate(day.selections):
         candidate = selection.scored.candidate
         location = _candidate_location(candidate)
         photos = candidate.extra.get("photos") or []
@@ -511,7 +519,7 @@ def plan_slots_as_payloads(skeleton: PlanSkeleton, day_index: int) -> list[dict[
         if not image_url and photos:
             image_url = photos[0]
         payload: dict[str, Any] = {
-            "slot": selection.slot,
+            "slot": requested_slots[position] if requested_slots else selection.slot,
             "activity": _activity_hint(candidate, selection.slot),
             "place": candidate.title,
             "transit": "公共交通/步行",

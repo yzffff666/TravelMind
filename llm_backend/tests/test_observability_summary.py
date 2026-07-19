@@ -209,7 +209,14 @@ def test_summarize_events_groups_core_metrics():
         parse_log_line(
             _loguru_json(
                 "qp_parsed",
-                {"qp_source": "fallback", "confidence": 0.4, "fallback_reason": "low_confidence"},
+                {
+                    "qp_source": "fallback",
+                    "confidence": 0.4,
+                    "fallback_reason": "low_confidence",
+                    "structured_qp_mode": "selective",
+                    "route_reason": "selective:contextual_edit",
+                    "safety_level": "caution",
+                },
             )
         ),
         parse_log_line(
@@ -302,6 +309,9 @@ def test_summarize_events_groups_core_metrics():
         }
     ]
     assert summary["qp"]["source_counts"] == {"fallback": 1}
+    assert summary["qp"]["mode_counts"] == {"selective": 1}
+    assert summary["qp"]["route_reasons"] == {"selective:contextual_edit": 1}
+    assert summary["qp"]["safety_levels"] == {"caution": 1}
     assert summary["qa"]["events"] == 1
     assert summary["qa"]["source_counts"] == {"local_itinerary": 1}
     assert summary["qa"]["elapsed_ms"]["p50"] == 18.5

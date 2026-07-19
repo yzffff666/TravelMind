@@ -489,6 +489,10 @@ def _summarize_qp(events: list[ObservabilityEvent]) -> dict[str, Any]:
         "events": len(relevant),
         "source_counts": _compact_counter(Counter(event.payload.get("qp_source") for event in relevant)),
         "fallback_reasons": _compact_counter(Counter(event.payload.get("fallback_reason") for event in relevant)),
+        "mode_counts": _compact_counter(Counter(event.payload.get("structured_qp_mode") for event in relevant)),
+        "route_reasons": _compact_counter(Counter(event.payload.get("route_reason") for event in relevant)),
+        "safety_levels": _compact_counter(Counter(event.payload.get("safety_level") for event in relevant)),
+        "shadow_intents": _compact_counter(Counter(event.payload.get("shadow_intent") for event in relevant)),
         "confidence": {
             "p50": _percentile([v for v in confidences if v is not None], 50),
             "p95": _percentile([v for v in confidences if v is not None], 95),

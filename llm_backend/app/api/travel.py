@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.logger import get_logger
 from app.domain.travel.patch_engine import apply_patch, has_mutation_intent, parse_edit_ops
+from app.domain.travel.structured_edit_command import build_structured_edit_command
 from app.domain.travel.sse_envelope import (
     build_data_line,
     build_event_envelope,
@@ -105,7 +106,7 @@ def _build_duplicate_request_response(*, request_id: str, conversation_id: str) 
 
 
 async def _build_qp_context(conversation_id: str) -> dict | None:
-    if not settings.ENABLE_STRUCTURED_QP:
+    if not settings.ENABLE_STRUCTURED_QP and settings.STRUCTURED_QP_MODE == "off":
         return None
     state = await ConversationService.get_travel_conversation_state(conversation_id)
     if not state:
@@ -685,6 +686,7 @@ async def _stream_edit_result(
     intent: str,
     intent_detail: str,
     user_id: int | None = None,
+    qp_output: dict | None = None,
 ):
     """解析编辑 → apply patch → 流式输出编辑后行程 + diff 事件。"""
     async for line in _stream_intent_routed_event(
@@ -696,7 +698,15 @@ async def _stream_edit_result(
         yield line
 
     try:
-        if not has_mutation_intent(utterance):
+        structured_command = build_structured_edit_command(
+            qp_output,
+            utterance=utterance,
+            current_itinerary=current_itinerary,
+        )
+        if structured_command is not None:
+            ops = [structured_command.to_patch_op()]
+            execution_source = "structured_qp"
+        elif not has_mutation_intent(utterance):
             yield build_event_line(
                 "final_text",
                 build_event_envelope(
@@ -712,8 +722,9 @@ async def _stream_edit_result(
                 ),
             )
             return
-
-        ops = parse_edit_ops(utterance, current_itinerary)
+        else:
+            ops = parse_edit_ops(utterance, current_itinerary)
+            execution_source = "rule"
         result = apply_patch(current_itinerary, ops)
 
         if not result.success:
@@ -728,9 +739,9 @@ async def _stream_edit_result(
             )
             return
 
-        try:
-            replan_requests = result.change_summary.get("replan_requests") or []
-            if replan_requests and result.new_itinerary:
+        replan_requests = result.change_summary.get("replan_requests") or []
+        if replan_requests and result.new_itinerary:
+            try:
                 replan_report = await day_replan_service.replan_days(
                     result.new_itinerary,
                     replan_requests,
@@ -740,6 +751,28 @@ async def _stream_edit_result(
                         user_id=user_id,
                     ),
                 )
+                requested_days = {
+                    int(request["day_index"])
+                    for request in replan_requests
+                    if isinstance(request.get("day_index"), int)
+                }
+                applied_days = set(replan_report.applied_days)
+                if requested_days - applied_days:
+                    details = "；".join(replan_report.assumptions[:2]) or "候选不足，未生成可验证的局部行程。"
+                    yield build_event_line(
+                        "final_text",
+                        build_event_envelope(
+                            request_id=request_id,
+                            conversation_id=conversation_id,
+                            revision_id=None,
+                            payload={
+                                "text": f"这次修改未生成可验证的候选行程，已保留原行程。{details}",
+                                "execution_source": execution_source,
+                            },
+                        ),
+                    )
+                    return
+                result.change_summary["changed_days"] = sorted(applied_days)
                 if replan_report.assumptions:
                     validation = result.new_itinerary.setdefault("validation", {})
                     assumptions = validation.setdefault("assumptions", [])
@@ -762,6 +795,26 @@ async def _stream_edit_result(
                         + replan_explanation
                         + "。"
                     )
+            except Exception as replan_err:  # noqa: BLE001
+                logger.warning("Candidate-driven edit replan failed: %s", replan_err, exc_info=True)
+                yield build_event_line(
+                    "final_text",
+                    build_event_envelope(
+                        request_id=request_id,
+                        conversation_id=conversation_id,
+                        revision_id=None,
+                        payload={
+                            "text": "这次修改未能完成候选验证，已保留原行程，请稍后重试。",
+                            "execution_source": execution_source,
+                        },
+                    ),
+                )
+                return
+
+        try:
+            result.change_summary["execution_source"] = execution_source
+            if result.new_itinerary is not None:
+                result.new_itinerary["change_summary"] = result.change_summary
 
             edited_model = ItineraryV1.model_validate(result.new_itinerary)
             changed_days = result.change_summary.get("changed_days") or []
@@ -872,6 +925,7 @@ async def _build_edit_qa_response(
     intent_detail: str,
     query_text: str,
     user_id: int,
+    qp_output: dict | None = None,
 ) -> StreamingResponse:
     """统一构造 edit/qa 意图的 SSE 响应，供 query 与 resume 复用。"""
     state = await ConversationService.get_travel_conversation_state(conversation_id)
@@ -897,6 +951,7 @@ async def _build_edit_qa_response(
                 intent=intent,
                 intent_detail=intent_detail,
                 user_id=user_id,
+                qp_output=qp_output,
             ),
             media_type="text/event-stream",
         )
@@ -1008,6 +1063,10 @@ async def langgraph_query(
                 "qp_source": qp_output.get("qp_source"),
                 "confidence": qp_output.get("confidence"),
                 "fallback_reason": qp_output.get("fallback_reason"),
+                "structured_qp_mode": qp_output.get("structured_qp_mode"),
+                "route_reason": qp_output.get("route_reason"),
+                "safety_level": qp_output.get("safety_level"),
+                "shadow_intent": qp_output.get("shadow_intent"),
             },
         )
         intent = qp_output["intent"]
@@ -1108,6 +1167,7 @@ async def langgraph_query(
                 intent_detail=intent_detail,
                 query_text=query,
                 user_id=user_id,
+                qp_output=qp_output,
             )
             response.headers["X-Conversation-ID"] = thread_id
             return _guard_response(response, request_fingerprint)
@@ -1243,6 +1303,10 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 "qp_source": qp_output.get("qp_source"),
                 "confidence": qp_output.get("confidence"),
                 "fallback_reason": qp_output.get("fallback_reason"),
+                "structured_qp_mode": qp_output.get("structured_qp_mode"),
+                "route_reason": qp_output.get("route_reason"),
+                "safety_level": qp_output.get("safety_level"),
+                "shadow_intent": qp_output.get("shadow_intent"),
             },
         )
         intent = qp_output["intent"]
@@ -1336,6 +1400,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 intent_detail=intent_detail,
                 query_text=request.query,
                 user_id=request.user_id,
+                qp_output=qp_output,
             )
             response.headers["X-Conversation-ID"] = thread_id
             return _guard_response(response, request_fingerprint)

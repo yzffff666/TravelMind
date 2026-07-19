@@ -13,6 +13,7 @@ from app.domain.travel.draft_builder import (
     extract_traveler_type,
 )
 from app.domain.travel.qp_rules import QP_RULES
+from app.domain.travel.patch_engine import has_mutation_intent
 from app.domain.travel.structured_qp import (
     LLMStructuredQPStrategy,
     StructuredQPContext,
@@ -22,6 +23,8 @@ from app.domain.travel.structured_qp import (
 # 意图类型
 IntentType = Literal["create", "edit", "qa", "reset", "chat"]
 IntentDetailType = Literal["first_create", "edit_day", "qa_evidence", "qa_local", "reset_all", "general_chat"]
+StructuredQPMode = Literal["off", "shadow", "selective"]
+QPSafetyLevel = Literal["safe", "caution", "blocked"]
 
 _ENGLISH_RESET_HINT_PATTERN = re.compile(
     r"\b(start over|begin again|clear (?:trip|itinerary)|new trip)\b",
@@ -40,6 +43,35 @@ _TRAVEL_QA_TOPIC_PATTERN = re.compile(
     r"行程|安排|景点|活动|门票|交通|地址|预算|花费|费用|推荐|证据|来源|链接|"
     r"itinerary|plan|activity|ticket|transit|transport|address|budget|cost|"
     r"recommendation|recommend|ref|reference|source|where|when|how\s+long)",
+    re.IGNORECASE,
+)
+_DAY_REFERENCE_PATTERN = re.compile(
+    r"(?:第\s*(?:\d+|[一二两三四五六七八九十]+)\s*天|day\s*\d+)",
+    re.IGNORECASE,
+)
+_SLOT_REFERENCE_PATTERN = re.compile(
+    r"(?:上午|下午|晚上|早上|中午|夜晚|morning|afternoon|evening|night)",
+    re.IGNORECASE,
+)
+_CONTEXTUAL_STATE_HINT_PATTERN = re.compile(
+    r"(?:还是|保持|不要变|别变|酒店|住宿|节奏|轻松|赶|累|预算|偏好|"
+    r"same|keep|hotel|stay|pace|relaxed|cheaper|budget|preference)",
+    re.IGNORECASE,
+)
+_COMPLEX_CONTEXTUAL_EDIT_PATTERN = re.compile(
+    r"(?:还是|保持|不要变|别变|住宿|酒店|same|keep|hotel|stay)",
+    re.IGNORECASE,
+)
+_TRAVEL_CREATE_HINT_PATTERN = re.compile(
+    r"(?:旅行|旅游|行程|出游|玩|去|攻略|trip|travel|visit|itinerary)",
+    re.IGNORECASE,
+)
+_READONLY_MUTATION_QUESTION_PATTERN = re.compile(
+    r"(?:了吗|有没有|有无|是否|是不是|是否已经|did\s+.*\?|is\s+.*\?)",
+    re.IGNORECASE,
+)
+_MUTATION_REQUEST_PREFIX_PATTERN = re.compile(
+    r"^(?:请|帮我|麻烦|能不能|可以|请问|please|can\s+you|could\s+you)",
     re.IGNORECASE,
 )
 
@@ -66,6 +98,14 @@ class QPOutput:
     qp_source: Literal["rule", "llm", "fallback"] = "rule"
     confidence: float | None = None
     fallback_reason: str | None = None
+    structured_qp_mode: StructuredQPMode = "off"
+    route_reason: str = "rule_baseline"
+    safety_level: QPSafetyLevel = "safe"
+    shadow_intent: IntentType | None = None
+    shadow_confidence: float | None = None
+    target_day: int | None = None
+    target_slot: str | None = None
+    edit_constraints: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -90,13 +130,13 @@ class TravelQueryProcessor:
         *,
         structured_strategy: StructuredQPStrategy | None = None,
         enable_structured_qp: bool | None = None,
+        structured_qp_mode: StructuredQPMode | None = None,
         confidence_threshold: float | None = None,
     ) -> None:
         self._structured_strategy = structured_strategy
-        self._enable_structured_qp = (
-            settings.ENABLE_STRUCTURED_QP
-            if enable_structured_qp is None
-            else enable_structured_qp
+        self._structured_qp_mode = self._resolve_structured_qp_mode(
+            enable_structured_qp=enable_structured_qp,
+            structured_qp_mode=structured_qp_mode,
         )
         self._confidence_threshold = (
             settings.STRUCTURED_QP_CONFIDENCE_THRESHOLD
@@ -116,10 +156,28 @@ class TravelQueryProcessor:
         context: StructuredQPContext | dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         baseline = self._process_rule(query)
-        if not self._should_use_structured_qp(baseline):
-            return baseline
-
         structured_context = self._coerce_context(context)
+        route_reason = self._route_reason(
+            query=query,
+            baseline=baseline,
+            context=structured_context,
+        )
+        if route_reason is None:
+            return self._with_metadata(
+                baseline,
+                qp_source="rule",
+                structured_qp_mode=self._structured_qp_mode,
+                route_reason="rule_fast_path",
+            )
+
+        if self._structured_qp_mode == "off":
+            return self._with_metadata(
+                baseline,
+                qp_source="rule",
+                structured_qp_mode="off",
+                route_reason=f"off:{route_reason}",
+            )
+
         try:
             result = await self._get_structured_strategy().classify(
                 query,
@@ -128,8 +186,30 @@ class TravelQueryProcessor:
         except Exception as exc:
             return self._with_metadata(
                 baseline,
-                qp_source="fallback",
-                fallback_reason=f"{type(exc).__name__}: {exc}",
+                qp_source="rule" if self._structured_qp_mode == "shadow" else "fallback",
+                structured_qp_mode=self._structured_qp_mode,
+                route_reason=f"{self._structured_qp_mode}:{route_reason}",
+                safety_level="caution",
+                fallback_reason=f"{self._structured_qp_mode}_exception:{type(exc).__name__}: {exc}",
+            )
+
+        safety_failure = self._validate_structured_result(
+            query=query,
+            baseline=baseline,
+            result=result,
+            context=structured_context,
+        )
+        if self._structured_qp_mode == "shadow":
+            return self._with_metadata(
+                baseline,
+                qp_source="rule",
+                confidence=result.confidence,
+                structured_qp_mode="shadow",
+                route_reason=f"shadow:{route_reason}",
+                safety_level="caution" if safety_failure else "safe",
+                fallback_reason=safety_failure,
+                shadow_intent=result.intent,
+                shadow_confidence=result.confidence,
             )
 
         if result.confidence < self._confidence_threshold:
@@ -137,10 +217,30 @@ class TravelQueryProcessor:
                 baseline,
                 qp_source="fallback",
                 confidence=result.confidence,
+                structured_qp_mode="selective",
+                route_reason=f"selective:{route_reason}",
+                safety_level="caution",
                 fallback_reason="low_confidence",
             )
 
-        return self._merge_structured_result(query, baseline, result)
+        if safety_failure:
+            return self._with_metadata(
+                baseline,
+                qp_source="fallback",
+                confidence=result.confidence,
+                structured_qp_mode="selective",
+                route_reason=f"selective:{route_reason}",
+                safety_level="blocked",
+                fallback_reason=safety_failure,
+            )
+
+        return self._merge_structured_result(
+            query,
+            baseline,
+            result,
+            structured_qp_mode="selective",
+            route_reason=f"selective:{route_reason}",
+        )
 
     def _process_rule(self, query: str) -> dict[str, Any]:
         # 标准化查询
@@ -177,15 +277,63 @@ class TravelQueryProcessor:
             missing_required=missing_required,
         ).to_dict()
 
-    def _should_use_structured_qp(self, baseline: dict[str, Any]) -> bool:
-        if not self._enable_structured_qp:
-            return False
-        # Keep deterministic controls cheap and stable.
-        if baseline["intent"] == "reset":
-            return False
-        if not baseline["normalized_query"]:
-            return False
-        return True
+    @staticmethod
+    def _resolve_structured_qp_mode(
+        *,
+        enable_structured_qp: bool | None,
+        structured_qp_mode: StructuredQPMode | None,
+    ) -> StructuredQPMode:
+        if structured_qp_mode is not None:
+            return structured_qp_mode
+        if enable_structured_qp is not None:
+            return "selective" if enable_structured_qp else "off"
+        if settings.STRUCTURED_QP_MODE != "off":
+            return settings.STRUCTURED_QP_MODE
+        return "selective" if settings.ENABLE_STRUCTURED_QP else "off"
+
+    def _route_reason(
+        self,
+        *,
+        query: str,
+        baseline: dict[str, Any],
+        context: StructuredQPContext | None,
+    ) -> str | None:
+        normalized = baseline["normalized_query"]
+        intent = baseline["intent"]
+        has_itinerary = bool(context and context.has_itinerary)
+        if not normalized or intent == "reset":
+            return None
+        if intent == "qa" and not has_mutation_intent(query):
+            return None
+        if intent == "chat" and not (has_itinerary and _CONTEXTUAL_STATE_HINT_PATTERN.search(query)):
+            return None
+        if intent == "edit":
+            if not has_itinerary:
+                return None
+            if _DAY_REFERENCE_PATTERN.search(query) and has_mutation_intent(query) and not (
+                _COMPLEX_CONTEXTUAL_EDIT_PATTERN.search(query)
+            ):
+                return None
+            return "contextual_edit"
+        if intent == "create":
+            constraints = baseline["constraints"]
+            complete = bool(
+                constraints.get("destination_city")
+                and constraints.get("days") is not None
+                and constraints.get("budget") is not None
+            )
+            if complete:
+                return None
+            if constraints.get("days") is not None and constraints.get("budget") is not None:
+                return "missing_destination"
+            if has_itinerary and _CONTEXTUAL_STATE_HINT_PATTERN.search(query):
+                return "contextual_state"
+            return None
+        if has_itinerary and _CONTEXTUAL_STATE_HINT_PATTERN.search(query):
+            return "contextual_state"
+        if _TRAVEL_CREATE_HINT_PATTERN.search(query):
+            return "weak_travel_signal"
+        return None
 
     def _get_structured_strategy(self) -> StructuredQPStrategy:
         if self._structured_strategy is None:
@@ -205,11 +353,21 @@ class TravelQueryProcessor:
         qp_source: Literal["rule", "llm", "fallback"],
         confidence: float | None = None,
         fallback_reason: str | None = None,
+        structured_qp_mode: StructuredQPMode = "off",
+        route_reason: str = "rule_baseline",
+        safety_level: QPSafetyLevel = "safe",
+        shadow_intent: IntentType | None = None,
+        shadow_confidence: float | None = None,
     ) -> dict[str, Any]:
         enriched = dict(payload)
         enriched["qp_source"] = qp_source
         enriched["confidence"] = confidence
         enriched["fallback_reason"] = fallback_reason
+        enriched["structured_qp_mode"] = structured_qp_mode
+        enriched["route_reason"] = route_reason
+        enriched["safety_level"] = safety_level
+        enriched["shadow_intent"] = shadow_intent
+        enriched["shadow_confidence"] = shadow_confidence
         return enriched
 
     def _merge_structured_result(
@@ -217,6 +375,9 @@ class TravelQueryProcessor:
         query: str,
         baseline: dict[str, Any],
         result: StructuredQPResult,
+        *,
+        structured_qp_mode: StructuredQPMode,
+        route_reason: str,
     ) -> dict[str, Any]:
         normalized = baseline["normalized_query"]
         constraints = self._merge_constraints(
@@ -227,6 +388,8 @@ class TravelQueryProcessor:
         missing_required = [key for key in HARD_REQUIRED_FIELDS if not presence.get(key, False)]
         intent = result.intent
         intent_detail = result.intent_detail or self._default_intent_detail(intent)
+        if intent != "create":
+            missing_required = []
         recall_base = result.rewrite_query or result.recall_query or normalized
         recall_query = self._build_recall_query(self._normalize_query(recall_base), constraints)
 
@@ -244,7 +407,36 @@ class TravelQueryProcessor:
             qp_source="llm",
             confidence=result.confidence,
             fallback_reason=None,
+            structured_qp_mode=structured_qp_mode,
+            route_reason=route_reason,
+            safety_level="safe",
+            target_day=result.target_day,
+            target_slot=result.target_slot,
+            edit_constraints=list(result.edit_constraints),
         ).to_dict()
+
+    @staticmethod
+    def _validate_structured_result(
+        *,
+        query: str,
+        baseline: dict[str, Any],
+        result: StructuredQPResult,
+        context: StructuredQPContext | None,
+    ) -> str | None:
+        has_itinerary = bool(context and context.has_itinerary)
+        if result.intent == "reset":
+            return "structured_reset_disallowed"
+        if baseline["intent"] == "qa" and not has_mutation_intent(query) and result.intent != "qa":
+            return "readonly_query_reclassified"
+        if result.intent == "edit" and not has_mutation_intent(query):
+            return "edit_without_explicit_mutation"
+        if result.intent == "edit" and not has_itinerary:
+            return "edit_without_itinerary"
+        if result.intent == "create" and has_itinerary and has_mutation_intent(query):
+            return "create_over_existing_itinerary"
+        if result.target_day is not None and result.intent != "edit":
+            return "target_day_without_edit"
+        return None
 
     @staticmethod
     def _constraints_from_dict(payload: dict[str, Any]) -> QPConstraints:
@@ -321,7 +513,9 @@ class TravelQueryProcessor:
             _ENGLISH_EVIDENCE_HINT_PATTERN.search(lower_q)
         ):
             return "qa", "qa_evidence"
-        if is_question and has_travel_qa_topic and not has_edit_hint:
+        if is_question and has_travel_qa_topic and (
+            not has_edit_hint or self._is_readonly_mutation_question(query)
+        ):
             return "qa", "qa_local"
         if has_edit_hint and not is_full_create:
             return "edit", "edit_day"
@@ -344,6 +538,14 @@ class TravelQueryProcessor:
         if hint.isascii():
             return bool(re.search(rf"\b{re.escape(hint.lower())}\b", lower_query))
         return hint in raw_query
+
+    @staticmethod
+    def _is_readonly_mutation_question(query: str) -> bool:
+        """Distinguish "has day 2 been changed?" from a change request."""
+        return bool(
+            _READONLY_MUTATION_QUESTION_PATTERN.search(query)
+            and not _MUTATION_REQUEST_PREFIX_PATTERN.search(query.strip())
+        )
 
     # 提取约束
     @staticmethod

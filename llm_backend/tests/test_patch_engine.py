@@ -67,13 +67,13 @@ class TestParseEditOps:
 
     def test_replace_slot_with_day_and_slot(self):
         it = _make_itinerary()
-        ops = parse_edit_ops("把第2天下午换成去博物馆", it)
+        ops = parse_edit_ops("把第2天下午换成逛南京路", it)
         assert len(ops) >= 1
         op = ops[0]
         assert op.op == PatchOpType.REPLACE_SLOT
         assert op.day_index == 2
         assert op.slot_label == "下午"
-        assert "博物馆" in op.payload.get("activity", "")
+        assert "南京路" in op.payload.get("activity", "")
 
     def test_delete_slot(self):
         it = _make_itinerary()
@@ -118,6 +118,15 @@ class TestParseEditOps:
         assert ops[0].op == PatchOpType.REPLAN_DAY
         assert ops[0].day_index == 2
         assert "indoor" in ops[0].payload["constraints"]
+
+    def test_slot_level_constraint_edit_becomes_targeted_replan_day(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("把第二天下午改成室内", it)
+
+        assert len(ops) == 1
+        assert ops[0].op == PatchOpType.REPLAN_DAY
+        assert ops[0].day_index == 2
+        assert ops[0].payload["target_slot"] == "下午"
 
     def test_day_level_relaxed_edit_becomes_replan_day_without_replace_hint(self):
         it = _make_itinerary()
@@ -244,6 +253,33 @@ class TestApplyPatch:
         assert result.new_itinerary is None
         assert "未找到第1天的凌晨时段" in result.error
 
+    def test_targeted_replan_records_request_without_template_mutation(self):
+        it = _make_itinerary()
+        original_day2 = copy.deepcopy(it["days"][1])
+        result = apply_patch(
+            it,
+            [
+                PatchOp(
+                    op=PatchOpType.REPLAN_DAY,
+                    day_index=2,
+                    payload={"constraints": ["indoor"], "target_slot": "下午"},
+                )
+            ],
+        )
+
+        assert result.success
+        assert result.new_itinerary["days"][1] == original_day2
+        assert result.change_summary["replan_requests"] == [
+            {
+                "day_index": 2,
+                "constraints": ["indoor"],
+                "raw_request": None,
+                "anchor_locations": [],
+                "target_slot": "下午",
+                "execution_source": "rule",
+            }
+        ]
+
     def test_delete_slot_matches_normalized_label(self):
         it = _make_itinerary()
         ops = [PatchOp(op=PatchOpType.DELETE_SLOT, day_index=2, slot_label="morning")]
@@ -286,6 +322,7 @@ class TestApplyPatch:
         target_day = next(d for d in it["days"] if d["day_index"] == 2)
         target_day["slots"][0]["location"] = {"lat": 22.3027, "lng": 114.1772}
         original_day1 = copy.deepcopy(next(d for d in it["days"] if d["day_index"] == 1))
+        original_day2 = copy.deepcopy(target_day)
         original_day3 = copy.deepcopy(next(d for d in it["days"] if d["day_index"] == 3))
 
         ops = parse_edit_ops("把第二天改成室内", it)
@@ -304,12 +341,7 @@ class TestApplyPatch:
         assert next(d for d in result.new_itinerary["days"] if d["day_index"] == 3) == original_day3
 
         day2 = next(d for d in result.new_itinerary["days"] if d["day_index"] == 2)
-        assert day2["theme"] == "室内文化与休闲体验"
-        assert len(day2["slots"]) == 3
-        assert [slot["slot"] for slot in day2["slots"]] == ["上午", "下午", "晚上"]
-        assert all(slot["activity"] != "室内" for slot in day2["slots"])
-        assert all(slot["place"] != "室内" for slot in day2["slots"])
-        assert any(slot["place"] == "香港故宫文化博物馆" for slot in day2["slots"])
+        assert day2 == original_day2
 
 
 # ---------- end-to-end: parse → apply ----------
@@ -325,15 +357,19 @@ class TestParseAndApply:
         pm = next(s for s in day2["slots"] if s["slot"] == "下午")
         assert "南京路" in pm["activity"]
 
-    def test_e2e_replace_with_chinese_day_number(self):
+    def test_e2e_constraint_replan_with_chinese_day_number_defers_mutation(self):
         it = _make_itinerary()
+        original_day2 = copy.deepcopy(it["days"][1])
         ops = parse_edit_ops("把第二天下午改成更轻松的室内活动", it)
         result = apply_patch(it, ops)
+
         assert result.success
         assert 2 in result.change_summary["changed_days"]
-        day2 = next(d for d in result.new_itinerary["days"] if d["day_index"] == 2)
-        pm = next(s for s in day2["slots"] if s["slot"] == "下午")
-        assert "更轻松的室内活动" in pm["activity"]
+        assert result.new_itinerary["days"][1] == original_day2
+        request = result.change_summary["replan_requests"][0]
+        assert request["day_index"] == 2
+        assert request["target_slot"] == "下午"
+        assert request["constraints"] == ["indoor", "relaxed"]
 
     def test_e2e_budget_change(self):
         it = _make_itinerary()

@@ -21,6 +21,8 @@ IntentDetailName = Literal[
     "reset_all",
     "general_chat",
 ]
+EditConstraintName = Literal["indoor", "relaxed", "food", "culture"]
+SlotName = Literal["上午", "下午", "晚上"]
 
 
 class StructuredQPConstraints(BaseModel):
@@ -47,8 +49,11 @@ class StructuredQPConstraints(BaseModel):
             parsed = extract_budget(f"预算{value}") or extract_budget(value)
             if parsed is not None:
                 return parsed
-            if not value.strip():
-                return None
+            # Models often express a relative edit such as "lower" or
+            # "cheaper". It is meaningful for intent routing but not a safe
+            # numeric budget update, so preserve the edit and leave this slot
+            # unresolved instead of rejecting the entire structured response.
+            return None
         return value
 
     @field_validator("pace", mode="before")
@@ -73,11 +78,55 @@ class StructuredQPResult(BaseModel):
     intent_detail: IntentDetailName | None = None
     confidence: float = Field(ge=0, le=1)
     target_day: int | None = Field(default=None, ge=1, le=30)
+    target_slot: SlotName | None = None
+    edit_constraints: list[EditConstraintName] = Field(default_factory=list)
     constraints: StructuredQPConstraints = Field(default_factory=StructuredQPConstraints)
     missing_required: list[str] = Field(default_factory=list)
     recall_query: str | None = None
     rewrite_query: str | None = None
     reason: str | None = None
+
+    @field_validator("target_slot", mode="before")
+    @classmethod
+    def _normalize_target_slot(cls, value: Any) -> Any:
+        if value is None or not isinstance(value, str):
+            return value
+        normalized = value.strip().lower()
+        mapping = {
+            "morning": "上午",
+            "afternoon": "下午",
+            "evening": "晚上",
+            "night": "晚上",
+            "早上": "上午",
+            "中午": "下午",
+            "夜晚": "晚上",
+        }
+        return mapping.get(normalized, value.strip() or None)
+
+    @field_validator("edit_constraints", mode="before")
+    @classmethod
+    def _normalize_edit_constraints(cls, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        aliases = {
+            "室内": "indoor",
+            "避雨": "indoor",
+            "museum": "indoor",
+            "轻松": "relaxed",
+            "慢节奏": "relaxed",
+            "美食": "food",
+            "吃喝": "food",
+            "文化": "culture",
+            "人文": "culture",
+        }
+        allowed = {"indoor", "relaxed", "food", "culture"}
+        normalized: list[str] = []
+        for item in value:
+            text = str(item or "").strip().lower()
+            mapped = aliases.get(text, text)
+            if mapped in allowed and mapped not in normalized:
+                normalized.append(mapped)
+        return normalized
 
 
 class StructuredQPContext(BaseModel):
@@ -112,6 +161,8 @@ intent_detail 只能是：
   "intent_detail": "first_create|edit_day|qa_evidence|qa_local|reset_all|general_chat",
   "confidence": 0.0,
   "target_day": null,
+  "target_slot": "上午|下午|晚上|null",
+  "edit_constraints": ["indoor|relaxed|food|culture"],
   "constraints": {
     "destination_city": null,
     "days": null,
@@ -125,6 +176,11 @@ intent_detail 只能是：
   "rewrite_query": null,
   "reason": "不超过 40 字的判断依据"
 }
+
+当 intent=edit 时：
+- 若修改某一天或某个时段，尽量给出 target_day；只在用户明确上午/下午/晚上时给出 target_slot。
+- edit_constraints 只列会影响候选重规划的约束：indoor、relaxed、food、culture。
+- 不要把具体 POI 名称当作 edit_constraints，也不要虚构 target_day/target_slot。
 """
 
 

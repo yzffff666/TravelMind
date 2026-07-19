@@ -215,6 +215,7 @@ class TestEditDiffEvent:
                 ]
 
                 class Report:
+                    applied_days = [2]
                     assumptions = []
                     diff_items = ["第2天已基于候选POI重新规划（候选3个，来源召回排序）。"]
 
@@ -263,6 +264,208 @@ class TestEditDiffEvent:
         ]
         assert itinerary["change_summary"]["replan_requests"][0]["day_index"] == 2
         assert any("候选POI重新规划" in item for item in itinerary["change_summary"]["diff_items"])
+
+    def test_stream_edit_structured_qp_replans_only_requested_slot(self, monkeypatch):
+        """Safe Structured QP fields must reach the existing candidate replan path."""
+        import app.api.travel as travel_api
+
+        original = _make_itinerary()
+        original_day2 = original["days"][1]
+
+        class FakeDayReplanService:
+            async def replan_days(self, itinerary, replan_requests, *, context=None):
+                request = replan_requests[0]
+                assert request["day_index"] == 2
+                assert request["target_slot"] == "下午"
+                assert request["constraints"] == ["indoor"]
+                assert request["execution_source"] == "structured_qp"
+                day2 = next(day for day in itinerary["days"] if day["day_index"] == 2)
+                afternoon = next(slot for slot in day2["slots"] if slot["slot"] == "下午")
+                afternoon.update({
+                    "activity": "在上海图书馆室内游览",
+                    "place": "上海图书馆",
+                    "transit": "地铁/步行",
+                    "alternatives": [],
+                    "evidence_refs": ["fake:上海图书馆"],
+                })
+
+                class Report:
+                    applied_days = [2]
+                    assumptions = []
+                    diff_items = ["第2天下午时段已基于共享约束规划器重新规划（候选1个，来源召回排序）。"]
+
+                return Report()
+
+        class FakeBackfillService:
+            async def backfill_changed_days(self, edited_model, changed_days):
+                assert changed_days == [2]
+
+                class Report:
+                    assumptions = []
+
+                return Report()
+
+        async def fake_persist(**kwargs):
+            return None
+
+        monkeypatch.setattr(travel_api, "day_replan_service", FakeDayReplanService())
+        monkeypatch.setattr(travel_api, "edit_backfill_service", FakeBackfillService())
+        monkeypatch.setattr(travel_api.ConversationService, "upsert_travel_conversation_state", fake_persist)
+
+        async def collect_lines() -> list[str]:
+            return [
+                line
+                async for line in travel_api._stream_edit_result(
+                    utterance="把第二天下午改成室内博物馆",
+                    current_itinerary=original,
+                    request_id="req-structured-edit",
+                    conversation_id="conv-structured-edit",
+                    intent="edit",
+                    intent_detail="edit_day",
+                    user_id=1,
+                    qp_output={
+                        "qp_source": "llm",
+                        "intent": "edit",
+                        "safety_level": "safe",
+                        "target_day": 2,
+                        "target_slot": "下午",
+                        "edit_constraints": ["indoor"],
+                        "constraints": {"preferences": [], "pace": None},
+                    },
+                )
+            ]
+
+        lines = asyncio.run(collect_lines())
+        final_itinerary_line = next(line for line in lines if line.startswith("event: final_itinerary"))
+        data_line = next(line for line in final_itinerary_line.split("\n") if line.startswith("data: "))
+        itinerary = json.loads(data_line[6:])["payload"]["itinerary"]
+        day2 = next(day for day in itinerary["days"] if day["day_index"] == 2)
+
+        for index in (0, 2):
+            for field in ("slot", "activity", "place", "transit"):
+                assert day2["slots"][index][field] == original_day2["slots"][index][field]
+        assert day2["slots"][1]["place"] == "上海图书馆"
+        assert "把第二天下午改成室内博物馆" not in day2["slots"][1]["activity"]
+        edit_diff_line = next(line for line in lines if line.startswith("event: edit_diff"))
+        edit_diff_payload = json.loads(
+            next(line for line in edit_diff_line.split("\n") if line.startswith("data: "))[6:]
+        )["payload"]
+        assert edit_diff_payload["change_summary"]["execution_source"] == "structured_qp"
+
+    def test_stream_edit_does_not_persist_when_candidate_replan_is_not_applied(self, monkeypatch):
+        """Candidate insufficiency must leave the persisted revision untouched."""
+        import app.api.travel as travel_api
+
+        persisted = False
+
+        class FakeDayReplanService:
+            async def replan_days(self, itinerary, replan_requests, *, context=None):
+                class Report:
+                    applied_days = []
+                    assumptions = ["第2天候选不足或无法组成满足约束的计划（0 个），已保留原行程。"]
+                    diff_items = []
+
+                return Report()
+
+        async def fake_persist(**kwargs):
+            nonlocal persisted
+            persisted = True
+
+        monkeypatch.setattr(travel_api, "day_replan_service", FakeDayReplanService())
+        monkeypatch.setattr(travel_api.ConversationService, "upsert_travel_conversation_state", fake_persist)
+
+        async def collect_lines() -> list[str]:
+            return [
+                line
+                async for line in travel_api._stream_edit_result(
+                    utterance="把第二天下午改成室内",
+                    current_itinerary=_make_itinerary(),
+                    request_id="req-replan-insufficient",
+                    conversation_id="conv-replan-insufficient",
+                    intent="edit",
+                    intent_detail="edit_day",
+                    user_id=1,
+                    qp_output={
+                        "qp_source": "llm",
+                        "intent": "edit",
+                        "safety_level": "safe",
+                        "target_day": 2,
+                        "target_slot": "下午",
+                        "edit_constraints": ["indoor"],
+                        "constraints": {"preferences": [], "pace": None},
+                    },
+                )
+            ]
+
+        lines = asyncio.run(collect_lines())
+        event_names = [
+            line.split("\n", 1)[0].replace("event: ", "")
+            for line in lines
+            if line.startswith("event: ")
+        ]
+        final_text_line = next(line for line in lines if line.startswith("event: final_text"))
+        payload = json.loads(next(line for line in final_text_line.split("\n") if line.startswith("data: "))[6:])["payload"]
+
+        assert "edit_diff" not in event_names
+        assert "final_itinerary" not in event_names
+        assert persisted is False
+        assert "已保留原行程" in payload["text"]
+        assert payload["execution_source"] == "structured_qp"
+
+    def test_stream_edit_does_not_persist_when_candidate_replan_raises(self, monkeypatch):
+        """A replan service failure is also a no-commit outcome, not a partial edit."""
+        import app.api.travel as travel_api
+
+        persisted = False
+
+        class FailingDayReplanService:
+            async def replan_days(self, itinerary, replan_requests, *, context=None):
+                raise RuntimeError("provider timeout")
+
+        async def fake_persist(**kwargs):
+            nonlocal persisted
+            persisted = True
+
+        monkeypatch.setattr(travel_api, "day_replan_service", FailingDayReplanService())
+        monkeypatch.setattr(travel_api.ConversationService, "upsert_travel_conversation_state", fake_persist)
+
+        async def collect_lines() -> list[str]:
+            return [
+                line
+                async for line in travel_api._stream_edit_result(
+                    utterance="把第二天下午改成室内",
+                    current_itinerary=_make_itinerary(),
+                    request_id="req-replan-error",
+                    conversation_id="conv-replan-error",
+                    intent="edit",
+                    intent_detail="edit_day",
+                    user_id=1,
+                    qp_output={
+                        "qp_source": "llm",
+                        "intent": "edit",
+                        "safety_level": "safe",
+                        "target_day": 2,
+                        "target_slot": "下午",
+                        "edit_constraints": ["indoor"],
+                        "constraints": {"preferences": [], "pace": None},
+                    },
+                )
+            ]
+
+        lines = asyncio.run(collect_lines())
+        event_names = [
+            line.split("\n", 1)[0].replace("event: ", "")
+            for line in lines
+            if line.startswith("event: ")
+        ]
+        final_text_line = next(line for line in lines if line.startswith("event: final_text"))
+        payload = json.loads(next(line for line in final_text_line.split("\n") if line.startswith("data: "))[6:])["payload"]
+
+        assert "edit_diff" not in event_names
+        assert "final_itinerary" not in event_names
+        assert persisted is False
+        assert "未能完成候选验证" in payload["text"]
+        assert payload["execution_source"] == "structured_qp"
 
     def test_stream_edit_constraint_question_does_not_mutate_itinerary(self):
         """Constraint-looking questions should not be treated as day replan edits."""

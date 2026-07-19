@@ -6,6 +6,8 @@ from scripts.milestone_runner import (
     render_summary,
     run_command_gate,
     run_golden_demo_eval_gate,
+    run_hybrid_qp_eval_gate,
+    run_structured_edit_replan_eval_gate,
     run_qp_eval_gate,
     run_ranking_eval_gate,
     run_planner_eval_gate,
@@ -20,6 +22,28 @@ def test_qp_eval_gate_passes_default_cases():
     assert result.status == "passed"
     assert result.summary["strict_failed"] == 0
     assert result.summary["strict_passed"] == result.summary["strict_cases"]
+    assert result.failures == []
+
+
+def test_hybrid_qp_eval_gate_passes_default_cases():
+    result = run_hybrid_qp_eval_gate({"type": "hybrid_qp_eval", "name": "hybrid_qp_eval"})
+
+    assert result.status == "passed"
+    assert result.summary["case_count"] >= 30
+    assert result.summary["failed_cases"] == 0
+    assert result.summary["critical_safety_failed"] == 0
+    assert result.failures == []
+
+
+def test_structured_edit_replan_eval_gate_passes_default_cases():
+    result = run_structured_edit_replan_eval_gate(
+        {"type": "structured_edit_replan_eval", "name": "structured_edit_replan_eval"}
+    )
+
+    assert result.status == "passed"
+    assert result.summary["case_count"] >= 15
+    assert result.summary["failed_cases"] == 0
+    assert result.summary["unsafe_revision_failures"] == 0
     assert result.failures == []
 
 
@@ -92,6 +116,8 @@ def test_default_config_covers_core_integration_gates():
     assert DEFAULT_CONFIG["name"] == "travelmind-core-integration-gate"
     assert {
         "qp_eval",
+        "hybrid_qp_eval",
+        "structured_edit_replan_eval",
         "golden_demo_eval",
         "ranking_eval",
         "planner_eval",
@@ -104,6 +130,9 @@ def test_default_config_covers_core_integration_gates():
 
     backend_gate = next(gate for gate in DEFAULT_CONFIG["gates"] if gate["name"] == "backend_core_integration_tests")
     assert "tests/test_golden_demo_eval.py" in backend_gate["targets"]
+    assert "tests/test_hybrid_qp_eval.py" in backend_gate["targets"]
+    assert "tests/test_structured_edit_replan_eval.py" in backend_gate["targets"]
+    assert "tests/test_structured_qp_shadow_eval.py" in backend_gate["targets"]
     assert "tests/test_ranking_eval_report.py" in backend_gate["targets"]
     assert "tests/test_destination_grounding.py" in backend_gate["targets"]
     assert "tests/test_destination_grounding_graph.py" in backend_gate["targets"]
@@ -114,6 +143,7 @@ def test_default_config_covers_core_integration_gates():
     assert "tests/test_patch_engine.py" in backend_gate["targets"]
     assert "tests/test_day_replan_service.py" in backend_gate["targets"]
     assert "tests/test_travel_m2_012_013.py" in backend_gate["targets"]
+    assert "tests/test_observability_summary.py" in backend_gate["targets"]
 
 
 def test_command_gate_passes_and_captures_output():

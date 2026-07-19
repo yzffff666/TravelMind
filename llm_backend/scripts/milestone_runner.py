@@ -25,6 +25,9 @@ from scripts.evaluate_qp_rules import DEFAULT_CASES_PATH, _load_jsonl, evaluate_
 DEFAULT_OUTPUT_ROOT = Path("reports/milestone-runs")
 DEFAULT_PYTEST_TARGETS = (
     "tests/test_qp_rule_evaluation.py",
+    "tests/test_hybrid_qp_eval.py",
+    "tests/test_structured_edit_replan_eval.py",
+    "tests/test_structured_qp_shadow_eval.py",
     "tests/test_travel_m2_011.py",
     "tests/test_golden_demo_eval.py",
     "tests/test_ranking_eval_report.py",
@@ -39,12 +42,23 @@ DEFAULT_PYTEST_TARGETS = (
     "tests/test_day_replan_service.py",
     "tests/test_travel_m2_012_013.py",
     "tests/test_travel_sse_envelope.py",
+    "tests/test_observability_summary.py",
     "tests/test_milestone_runner.py",
 )
 DEFAULT_CONFIG: dict[str, Any] = {
     "name": "travelmind-core-integration-gate",
     "gates": [
         {"type": "qp_eval", "name": "qp_eval", "cases": str(DEFAULT_CASES_PATH)},
+        {
+            "type": "hybrid_qp_eval",
+            "name": "hybrid_qp_eval",
+            "cases": "evaluation/hybrid_qp_holdout_cases.jsonl",
+        },
+        {
+            "type": "structured_edit_replan_eval",
+            "name": "structured_edit_replan_eval",
+            "cases": "evaluation/structured_edit_replan_cases.json",
+        },
         {"type": "golden_demo_eval", "name": "golden_demo_eval", "cases": "evaluation/golden_demo_cases.json"},
         {"type": "ranking_eval", "name": "ranking_eval", "cases": "evaluation/ranking_eval_cases.json"},
         {"type": "planner_eval", "name": "planner_eval"},
@@ -136,6 +150,64 @@ def run_qp_eval_gate(gate: dict[str, Any]) -> GateResult:
             "strict_accuracy": summary.get("strict_accuracy"),
         },
         failures=failures,
+    )
+
+
+def run_hybrid_qp_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from scripts.hybrid_qp_eval import DEFAULT_CASES_PATH as DEFAULT_HYBRID_QP_CASES_PATH
+    from scripts.hybrid_qp_eval import _load_jsonl as load_hybrid_qp_cases
+    from scripts.hybrid_qp_eval import evaluate_cases as evaluate_hybrid_qp_cases
+    from scripts.hybrid_qp_eval import is_passing
+
+    start = time.perf_counter()
+    cases_path = Path(gate.get("cases") or DEFAULT_HYBRID_QP_CASES_PATH)
+    summary = evaluate_hybrid_qp_cases(load_hybrid_qp_cases(cases_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    return GateResult(
+        name=str(gate.get("name") or "hybrid_qp_eval"),
+        type="hybrid_qp_eval",
+        status="passed" if is_passing(summary) else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "case_count": summary.get("case_count"),
+            "passed_cases": summary.get("passed_cases"),
+            "failed_cases": summary.get("failed_cases"),
+            "critical_safety_cases": summary.get("critical_safety_cases"),
+            "critical_safety_passed": summary.get("critical_safety_passed"),
+            "critical_safety_failed": summary.get("critical_safety_failed"),
+            "routing_p95_ms": summary.get("routing_p95_ms"),
+            "routing_p95_target_ms": summary.get("routing_p95_target_ms"),
+        },
+        failures=list(summary.get("failures") or []),
+    )
+
+
+def run_structured_edit_replan_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from scripts.structured_edit_replan_eval import (
+        DEFAULT_CASES_PATH as DEFAULT_STRUCTURED_EDIT_REPLAN_CASES_PATH,
+        evaluate_cases as evaluate_structured_edit_replan_cases,
+        is_passing,
+        load_cases,
+    )
+
+    start = time.perf_counter()
+    cases_path = Path(gate.get("cases") or DEFAULT_STRUCTURED_EDIT_REPLAN_CASES_PATH)
+    summary = evaluate_structured_edit_replan_cases(load_cases(cases_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    return GateResult(
+        name=str(gate.get("name") or "structured_edit_replan_eval"),
+        type="structured_edit_replan_eval",
+        status="passed" if is_passing(summary) else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "case_count": summary.get("case_count"),
+            "passed_cases": summary.get("passed_cases"),
+            "failed_cases": summary.get("failed_cases"),
+            "accepted_cases": summary.get("accepted_cases"),
+            "rejected_cases": summary.get("rejected_cases"),
+            "unsafe_revision_failures": summary.get("unsafe_revision_failures"),
+        },
+        failures=list(summary.get("failures") or []),
     )
 
 
@@ -399,6 +471,10 @@ def run_gate(gate: dict[str, Any]) -> GateResult:
     gate_type = str(gate.get("type") or "")
     if gate_type == "qp_eval":
         return run_qp_eval_gate(gate)
+    if gate_type == "hybrid_qp_eval":
+        return run_hybrid_qp_eval_gate(gate)
+    if gate_type == "structured_edit_replan_eval":
+        return run_structured_edit_replan_eval_gate(gate)
     if gate_type == "golden_demo_eval":
         return run_golden_demo_eval_gate(gate)
     if gate_type == "ranking_eval":
@@ -456,6 +532,20 @@ def render_summary(status: dict[str, Any]) -> str:
             lines.append(
                 f"- {gate['name']}: {gate['status']} "
                 f"({summary.get('strict_passed')}/{summary.get('strict_cases')} strict)"
+            )
+        elif gate.get("type") == "hybrid_qp_eval":
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
+                f"critical={summary.get('critical_safety_passed')}/"
+                f"{summary.get('critical_safety_cases')}, "
+                f"p95={summary.get('routing_p95_ms')}ms)"
+            )
+        elif gate.get("type") == "structured_edit_replan_eval":
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
+                f"unsafe_revision_failures={summary.get('unsafe_revision_failures')})"
             )
         elif gate.get("type") == "golden_demo_eval":
             lines.append(

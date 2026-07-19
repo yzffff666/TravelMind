@@ -7,6 +7,16 @@
       "cases": "evaluation/qp_rule_eval_cases.jsonl"
     },
     {
+      "type": "hybrid_qp_eval",
+      "name": "hybrid_qp_eval",
+      "cases": "evaluation/hybrid_qp_holdout_cases.jsonl"
+    },
+    {
+      "type": "structured_edit_replan_eval",
+      "name": "structured_edit_replan_eval",
+      "cases": "evaluation/structured_edit_replan_cases.json"
+    },
+    {
       "type": "golden_demo_eval",
       "name": "golden_demo_eval",
       "cases": "evaluation/golden_demo_cases.json"
@@ -30,6 +40,9 @@
       "name": "backend_core_integration_tests",
       "targets": [
         "tests/test_qp_rule_evaluation.py",
+        "tests/test_hybrid_qp_eval.py",
+        "tests/test_structured_edit_replan_eval.py",
+        "tests/test_structured_qp_shadow_eval.py",
         "tests/test_travel_m2_011.py",
         "tests/test_golden_demo_eval.py",
         "tests/test_ranking_eval_report.py",
@@ -43,7 +56,8 @@
         "tests/test_patch_engine.py",
         "tests/test_day_replan_service.py",
         "tests/test_travel_m2_012_013.py",
-        "tests/test_travel_sse_envelope.py"
+        "tests/test_travel_sse_envelope.py",
+        "tests/test_observability_summary.py"
       ]
     },
     {

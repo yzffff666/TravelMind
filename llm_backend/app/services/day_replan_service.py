@@ -78,6 +78,12 @@ class DayReplanService:
                 continue
 
             constraints = [str(c) for c in (request.get("constraints") or []) if c]
+            target_slot = _normalize_slot(request.get("target_slot"))
+            if target_slot and not any(_normalize_slot(slot.get("slot")) == target_slot for slot in day.get("slots") or []):
+                report.assumptions.append(f"第{day_index}天未找到{target_slot}时段，已保留原行程。")
+                continue
+            target_slots = [target_slot] if target_slot else list(SLOT_LABELS)
+            required_count = len(target_slots)
             destination = _destination_city(itinerary)
             profile = await self._destination_resolver.resolve(destination)
             if not profile.resolved:
@@ -103,7 +109,7 @@ class DayReplanService:
                 profile,
             )
             recall_result.candidates = validated_candidates
-            if profile.is_dynamic and len(validated_candidates) < self._min_candidates:
+            if profile.is_dynamic and len(validated_candidates) < required_count:
                 report.grounding_statuses[day_index] = "insufficient_candidates"
                 report.candidate_counts[day_index] = len(validated_candidates)
                 report.assumptions.append(
@@ -126,26 +132,42 @@ class DayReplanService:
                 preferences=terms,
                 pace="relaxed" if "relaxed" in constraints else "moderate",
                 constraints=constraints,
-                excluded_titles=_locked_places(itinerary, day_index),
+                excluded_titles=_locked_places(itinerary, day_index, target_slot=target_slot),
                 anchor_location=_anchor_location(request),
                 day_indexes=[day_index],
-                slots_per_day=len(SLOT_LABELS),
+                slots_per_day=required_count,
             )
             report.planner_statuses[day_index] = "planned" if plan_result.feasible else "infeasible"
             selected_count = len(plan_result.skeleton.selections) if plan_result.skeleton else 0
             report.candidate_counts[day_index] = selected_count
 
-            if not plan_result.feasible or selected_count < self._min_candidates:
+            if not plan_result.feasible or selected_count < required_count:
                 report.assumptions.append(
                     f"第{day_index}天候选不足或无法组成满足约束的计划（{selected_count} 个），已保留原行程。"
                 )
                 continue
 
-            day["theme"] = plan_result.skeleton.days[0].theme
-            day["slots"] = plan_slots_as_payloads(plan_result.skeleton, day_index)
+            planned_slots = plan_slots_as_payloads(
+                plan_result.skeleton,
+                day_index,
+                slot_labels=target_slots,
+            )
+            if len(planned_slots) != required_count:
+                report.assumptions.append(f"第{day_index}天候选计划缺少目标时段，已保留原行程。")
+                continue
+            if target_slot:
+                planned = planned_slots[0]
+                day["slots"] = [
+                    planned if _normalize_slot(slot.get("slot")) == target_slot else slot
+                    for slot in day.get("slots") or []
+                ]
+            else:
+                day["theme"] = plan_result.skeleton.days[0].theme
+                day["slots"] = planned_slots
             report.applied_days.append(day_index)
+            scope = f"{target_slot}时段" if target_slot else ""
             report.diff_items.append(
-                f"第{day_index}天已基于共享约束规划器重新规划（候选{selected_count}个，来源召回排序）。"
+                f"第{day_index}天{scope}已基于共享约束规划器重新规划（候选{selected_count}个，来源召回排序）。"
             )
 
         _dedupe_preserve_order(report.assumptions)
@@ -185,14 +207,34 @@ def _daily_budget(itinerary: dict[str, Any]) -> float | None:
     return total / days if total is not None and days > 0 else total
 
 
-def _locked_places(itinerary: dict[str, Any], target_day: int) -> list[str]:
+def _locked_places(itinerary: dict[str, Any], target_day: int, *, target_slot: str | None = None) -> list[str]:
     return [
         str(slot.get("place") or "").strip()
         for day in itinerary.get("days") or []
-        if day.get("day_index") != target_day
         for slot in day.get("slots") or []
+        if (
+            day.get("day_index") != target_day
+            or (target_slot is not None and _normalize_slot(slot.get("slot")) != target_slot)
+        )
         if str(slot.get("place") or "").strip()
     ]
+
+
+def _normalize_slot(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    mapping = {
+        "上午": "上午",
+        "早上": "上午",
+        "morning": "上午",
+        "下午": "下午",
+        "中午": "下午",
+        "afternoon": "下午",
+        "晚上": "晚上",
+        "夜晚": "晚上",
+        "evening": "晚上",
+        "night": "晚上",
+    }
+    return mapping.get(normalized)
 
 
 def _query_terms(constraints: list[str], preferences: list[str]) -> list[str]:

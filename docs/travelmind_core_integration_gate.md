@@ -43,6 +43,8 @@ llm_backend/reports/milestone-runs/<run_id>/
 | Gate | 覆盖内容 |
 | --- | --- |
 | `qp_eval` | 96 条 QP 规则评测，防止 create / edit / qa / reset 路由退化 |
+| `hybrid_qp_eval` | 30 条 Hybrid Structured QP holdout，验证 Rule/LLM 路由、shadow、异常回退及 QA/Edit 状态安全门禁 |
+| `structured_edit_replan_eval` | 15 条结构化编辑命令验收，验证 target day/slot/constraint 映射，以及 QA、越界、无约束输入零修改 |
 | `golden_demo_eval` | 演示主链路 golden cases，覆盖深圳/香港/澳门/旧金山 create、QA 只读、局部重规划、跨城 bbox |
 | `ranking_eval` | 离线 POI 排序 badcase 评测，验证好候选 Top-K 命中、bbox/duplicate/generic 拒绝 |
 | `planner_eval` | 12 个约束规划案例，验证不重复、预算、日内距离、室内约束、锁定日期与候选不足降级 |
@@ -57,7 +59,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=9/9 passed
+gates=11/11 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -73,6 +75,8 @@ llm_backend/reports/milestone-runs/<run_id>/failures.json
 建议在这些场景运行：
 
 - 修改 QP / intent routing 之后。
+- 修改 Structured QP 路由、模型 schema、置信度阈值或安全回退之后。
+- 修改 Structured QP 到 PatchOp、候选重规划或局部 slot 替换之后。
 - 修改演示主链路、QA/edit 边界、局部重规划之后。
 - 修改 `POIRankingPolicy`、bbox 或候选排序权重之后。
 - 修改跨天 POI 组合、预算/距离/节奏约束或局部重规划策略之后。
@@ -128,6 +132,18 @@ cd llm_backend
 ```
 
 该评测固定覆盖 12 个 create/local-replan 决策案例：紧凑路线、不同节奏、室内硬约束、预算上限、锁定日期不重复、锚点距离、候选不足和自动降低每日 POI 密度。通过时，Planner P95 必须低于 `200ms`。
+
+## 真实 Structured QP Shadow 回放
+
+真实模型回放不属于默认 milestone，避免消耗 API 额度。它只保留 Rule 路由结果、记录 Structured QP 观察值，不会修改 itinerary 或数据库：
+
+```bash
+cd llm_backend
+./.venv/bin/python -m scripts.structured_qp_shadow_eval \
+  --output reports/structured-qp-shadow/manual-run.json
+```
+
+v1 已完成两轮 12 条回放：两轮均 `12/12` 通过，7 次模型调用的 P95 分别为 `2427ms` 和 `2622ms`，低于 `4s` timeout。默认配置仍为 `off`；可在本地或灰度用 `STRUCTURED_QP_MODE=selective` 启用。
 
 ## 未见城市与真实 Provider 验证
 
