@@ -66,3 +66,14 @@ CONSTRAINT_PATTERNS: Dict[str, List[str]] = {
         r"\d+\s*人",
     ],
 }
+
+# A flexible answer may accept product defaults for duration and budget, but it
+# can never supply a missing destination.
+FLEXIBLE_ANSWER_PATTERNS: Tuple[str, ...] = (
+    r"^(都可以|都行|随便|均可|你安排(?:就好)?|你决定(?:就好)?|都听你的)[。！!.\s]*$",
+    r"^(anything is fine|either is fine|you decide|up to you)[.!?\s]*$",
+)
+
+DEFAULT_DURATION_DAYS = 3
+DEFAULT_DAILY_BUDGET = 2000
+MIN_DEFAULT_BUDGET = 3000

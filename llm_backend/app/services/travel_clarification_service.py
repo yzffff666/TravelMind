@@ -1,14 +1,19 @@
 import json
 import re
+from copy import deepcopy
 from typing import Any, Dict, List, Tuple
 
 from app.domain.travel.clarification_rules import (
     CLARIFICATION_STAGE_NAME,
     CLARIFICATION_MSG_HARD_AND_SOFT,
     CLARIFICATION_MSG_HARD_ONLY,
+    DEFAULT_DAILY_BUDGET,
+    DEFAULT_DURATION_DAYS,
     FIELD_LABELS,
+    FLEXIBLE_ANSWER_PATTERNS,
     GUIDED_FIELD_HINTS,
     HARD_REQUIRED_FIELDS,
+    MIN_DEFAULT_BUDGET,
     SOFT_RECOMMENDED_FIELDS,
     SSE_EVENT_STAGE_PROGRESS,
     SSE_EVENT_STAGE_START,
@@ -40,6 +45,29 @@ class TravelClarificationService:
     def clear_pending(self, thread_id: str) -> None:
         self._pending.pop(thread_id, None)
 
+    def snapshot_pending(self, thread_id: str) -> Dict[str, Any] | None:
+        pending = self._pending.get(thread_id)
+        return deepcopy(pending) if pending is not None else None
+
+    def restore_pending(self, thread_id: str, snapshot: Dict[str, Any] | None) -> None:
+        if not snapshot:
+            self.clear_pending(thread_id)
+            return
+        values = snapshot.get("values")
+        if not isinstance(values, dict):
+            raise ValueError("clarification snapshot values must be a dict")
+        self._pending[thread_id] = {
+            "initial_query": str(snapshot.get("initial_query") or ""),
+            "values": {key: values.get(key) for key in _VALUE_KEYS},
+            "followups": [str(item) for item in snapshot.get("followups") or []],
+            "asked_fields": [
+                str(item)
+                for item in snapshot.get("asked_fields") or []
+                if str(item) in HARD_REQUIRED_FIELDS
+            ],
+            "assumptions": [str(item) for item in snapshot.get("assumptions") or []],
+        }
+
     def start_new(self, thread_id: str, query: str) -> Dict[str, Any]:
         values = self._extract_values(query)
         missing_hard = self._missing_hard_fields(values)
@@ -50,6 +78,8 @@ class TravelClarificationService:
                 "initial_query": query,
                 "values": values,
                 "followups": [],
+                "asked_fields": list(missing_hard),
+                "assumptions": [],
             }
 
         return {
@@ -65,11 +95,25 @@ class TravelClarificationService:
 
         delta = self._extract_values(query)
         merged = self._merge_values(pending["values"], delta)
+        assumptions = list(pending.get("assumptions") or [])
+        if self._is_flexible_answer(query):
+            if merged.get("duration") is None:
+                merged["duration"] = DEFAULT_DURATION_DAYS
+                assumptions.append("duration_defaulted_from_flexible_answer")
+            if merged.get("budget") is None:
+                duration = int(merged.get("duration") or DEFAULT_DURATION_DAYS)
+                merged["budget"] = max(MIN_DEFAULT_BUDGET, duration * DEFAULT_DAILY_BUDGET)
+                assumptions.append("budget_defaulted_from_flexible_answer")
+
         missing_hard = self._missing_hard_fields(merged)
         missing_soft = self._missing_soft_fields(merged)
 
         pending["values"] = merged
         pending["followups"].append(query)
+        pending["assumptions"] = list(dict.fromkeys(assumptions))
+        pending["asked_fields"] = list(
+            dict.fromkeys([*(pending.get("asked_fields") or []), *missing_hard])
+        )
 
         if missing_hard:
             return {
@@ -77,14 +121,17 @@ class TravelClarificationService:
                 "need_clarification": True,
                 "missing_hard": missing_hard,
                 "missing_soft": missing_soft,
+                "assumptions": list(pending["assumptions"]),
             }
 
         combined_query = self._build_combined_query(merged)
+        final_assumptions = list(pending["assumptions"])
         self._pending.pop(thread_id, None)
         return {
             "has_pending": True,
             "need_clarification": False,
             "combined_query": combined_query,
+            "assumptions": final_assumptions,
         }
 
     def get_constraint_context(self, thread_id: str) -> tuple[str, str]:
@@ -159,6 +206,11 @@ class TravelClarificationService:
         if values.get("travelers"):
             parts.append(f"{values['travelers']}\u51fa\u884c")
         return "\uff0c".join(parts) if parts else ""
+
+    @staticmethod
+    def _is_flexible_answer(query: str) -> bool:
+        normalized = (query or "").strip()
+        return any(re.fullmatch(pattern, normalized, re.IGNORECASE) for pattern in FLEXIBLE_ANSWER_PATTERNS)
 
     # ------------------------------------------------------------------
     # Legacy helpers (still used by /travel/resume template path)

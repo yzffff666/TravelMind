@@ -142,6 +142,69 @@ def test_clarification_completes_when_pending_budget_gets_per_person_value():
     assert not service.has_pending("conv_budget")
 
 
+def test_clarification_snapshot_restores_in_fresh_service():
+    first = TravelClarificationService()
+    first.start_new(thread_id="conv_restore", query="我想去香港")
+
+    snapshot = first.snapshot_pending("conv_restore")
+    restored = TravelClarificationService()
+    restored.restore_pending("conv_restore", snapshot)
+
+    assert restored.has_pending("conv_restore")
+    assert restored.snapshot_pending("conv_restore") == snapshot
+
+
+def test_clarification_snapshot_is_a_defensive_copy():
+    service = TravelClarificationService()
+    service.start_new(thread_id="conv_copy", query="我想去香港")
+
+    snapshot = service.snapshot_pending("conv_copy")
+    assert snapshot is not None
+    snapshot["values"]["destination"] = "澳门"
+
+    fresh = service.snapshot_pending("conv_copy")
+    assert fresh is not None
+    assert fresh["values"]["destination"] == "香港"
+
+
+def test_flexible_answer_applies_duration_and_budget_defaults_when_destination_known():
+    service = TravelClarificationService()
+    first = service.start_new(thread_id="conv_flexible", query="我想去香港")
+
+    assert first["need_clarification"] is True
+    assert service.has_pending("conv_flexible")
+
+    decision = service.continue_pending(thread_id="conv_flexible", query="都可以")
+
+    assert decision["need_clarification"] is False
+    assert "玩3天" in decision["combined_query"]
+    assert "预算6000元" in decision["combined_query"]
+    assert decision["assumptions"] == [
+        "duration_defaulted_from_flexible_answer",
+        "budget_defaulted_from_flexible_answer",
+    ]
+    assert not service.has_pending("conv_flexible")
+
+
+def test_flexible_answer_never_invents_missing_destination():
+    service = TravelClarificationService()
+    service.start_new(thread_id="conv_missing_destination", query="预算5000")
+
+    decision = service.continue_pending(
+        thread_id="conv_missing_destination",
+        query="你安排就好",
+    )
+
+    assert decision["need_clarification"] is True
+    assert decision["missing_hard"] == ["destination"]
+    snapshot = service.snapshot_pending("conv_missing_destination")
+    assert snapshot is not None
+    assert snapshot["values"]["destination"] is None
+    assert snapshot["values"]["duration"] == 3
+    assert snapshot["values"]["budget"] == 5000
+    assert snapshot["asked_fields"] == ["destination", "duration"]
+
+
 def test_budget_only_clarification_treats_vague_confirmations_as_ambiguous():
     from app.api.travel import _needs_budget_clarification_hint
 
