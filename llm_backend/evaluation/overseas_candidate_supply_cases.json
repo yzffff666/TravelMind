@@ -1,0 +1,271 @@
+[
+  {
+    "case_id": "overseas_tromso_ready",
+    "destination": "Tromso",
+    "canonical_name": "Tromsø",
+    "country": "Norway",
+    "admin_area": "Troms",
+    "center": [69.6516, 18.9559],
+    "expected_outcome": "ready",
+    "geocode_text_items": [
+      {
+        "name": "Tromsø",
+        "city": "Tromsø",
+        "state": "Troms",
+        "country": "Norway",
+        "result_type": "city",
+        "lat": 69.6516,
+        "lon": 18.9559,
+        "rank": {"popularity": 4.0, "importance": 0.62}
+      }
+    ],
+    "geocode_city_items": [],
+    "provider_items": [
+      {
+        "properties": {
+          "name": "Arctic Cathedral",
+          "formatted": "Hans Nilsens veg 41, Tromsø, Norway",
+          "city": "Tromsø",
+          "county": "Tromsø Municipality",
+          "state": "Troms",
+          "country": "Norway",
+          "country_code": "no",
+          "categories": ["tourism.sights", "religion.place_of_worship"],
+          "place_id": "snapshot-tromso-arctic-cathedral"
+        },
+        "geometry": {"coordinates": [18.9875, 69.6487]}
+      },
+      {
+        "properties": {
+          "name": "Polaria",
+          "formatted": "Hjalmar Johansens gate 12, Tromsø, Norway",
+          "city": "Tromsø",
+          "county": "Tromsø Municipality",
+          "state": "Troms",
+          "country": "Norway",
+          "country_code": "no",
+          "categories": ["entertainment.museum", "tourism.attraction"],
+          "place_id": "snapshot-tromso-polaria"
+        },
+        "geometry": {"coordinates": [18.9484, 69.6408]}
+      },
+      {
+        "properties": {
+          "name": "Fjellheisen",
+          "formatted": "Sollivegen 12, Tromsø, Norway",
+          "city": "Tromsø",
+          "county": "Tromsø Municipality",
+          "state": "Troms",
+          "country": "Norway",
+          "country_code": "no",
+          "categories": ["tourism.attraction", "public_transport"],
+          "place_id": "snapshot-tromso-fjellheisen"
+        },
+        "geometry": {"coordinates": [18.993, 69.656]}
+      }
+    ]
+  },
+  {
+    "case_id": "overseas_hobart_ready",
+    "destination": "Hobart",
+    "canonical_name": "Hobart",
+    "country": "Australia",
+    "admin_area": "Tasmania",
+    "center": [-42.8825, 147.3281],
+    "expected_outcome": "ready",
+    "geocode_text_items": [
+      {
+        "name": "Hobart",
+        "city": "Hobart",
+        "state": "Tasmania",
+        "country": "Australia",
+        "result_type": "city",
+        "lat": -42.8825,
+        "lon": 147.3281,
+        "rank": {"popularity": 4.0192, "importance": 0.6233}
+      }
+    ],
+    "geocode_city_items": [
+      {
+        "name": "Hobart",
+        "city": "Hobart",
+        "state": "Indiana",
+        "country": "United States",
+        "result_type": "city",
+        "lat": 41.5323,
+        "lon": -87.255,
+        "rank": {"popularity": 3.3736, "importance": 0.4348}
+      }
+    ],
+    "provider_items": [
+      {
+        "properties": {
+          "name": "Salamanca Place",
+          "formatted": "Salamanca Place, Battery Point, Hobart, Australia",
+          "city": "Hobart",
+          "suburb": "Battery Point",
+          "state": "Tasmania",
+          "country": "Australia",
+          "country_code": "au",
+          "categories": ["tourism.sights", "commercial.marketplace"],
+          "place_id": "snapshot-hobart-salamanca"
+        },
+        "geometry": {"coordinates": [147.3316, -42.8866]}
+      },
+      {
+        "properties": {
+          "name": "Tasmanian Museum and Art Gallery",
+          "formatted": "Dunn Place, Hobart, Tasmania, Australia",
+          "city": "Hobart",
+          "state": "Tasmania",
+          "country": "Australia",
+          "country_code": "au",
+          "categories": ["entertainment.museum", "entertainment.culture"],
+          "place_id": "snapshot-hobart-tmag"
+        },
+        "geometry": {"coordinates": [147.333, -42.8808]}
+      },
+      {
+        "properties": {
+          "name": "Cascades Female Factory",
+          "formatted": "16 Degraves Street, South Hobart, Tasmania, Australia",
+          "city": "Hobart",
+          "suburb": "South Hobart",
+          "municipality": "City of Hobart",
+          "state": "Tasmania",
+          "country": "Australia",
+          "country_code": "au",
+          "categories": ["tourism.sights", "heritage"],
+          "place_id": "snapshot-hobart-cascades"
+        },
+        "geometry": {"coordinates": [147.2998, -42.8955]}
+      }
+    ]
+  },
+  {
+    "case_id": "overseas_valletta_ready",
+    "destination": "Valletta",
+    "canonical_name": "Valletta",
+    "country": "Malta",
+    "admin_area": "South Eastern Region",
+    "center": [35.8989, 14.5146],
+    "expected_outcome": "ready",
+    "geocode_text_items": [
+      {
+        "name": "Valletta",
+        "city": "Valletta",
+        "state": "South Eastern Region",
+        "country": "Malta",
+        "result_type": "city",
+        "lat": 35.8989,
+        "lon": 14.5146,
+        "rank": {"popularity": 3.9, "importance": 0.67}
+      }
+    ],
+    "geocode_city_items": [],
+    "provider_items": [
+      {
+        "properties": {
+          "name": "Upper Barrakka Gardens",
+          "formatted": "292 Triq Sant'Orsla, Valletta, Malta",
+          "city": "Valletta",
+          "state": "South Eastern Region",
+          "country": "Malta",
+          "country_code": "mt",
+          "categories": ["leisure.park", "tourism.sights"],
+          "place_id": "snapshot-valletta-barrakka"
+        },
+        "geometry": {"coordinates": [14.5125, 35.8948]}
+      },
+      {
+        "properties": {
+          "name": "St John's Co-Cathedral",
+          "formatted": "Triq San Gwann, Valletta, Malta",
+          "city": "Valletta",
+          "state": "South Eastern Region",
+          "country": "Malta",
+          "country_code": "mt",
+          "categories": ["tourism.sights", "religion.place_of_worship"],
+          "place_id": "snapshot-valletta-cathedral"
+        },
+        "geometry": {"coordinates": [14.5137, 35.8976]}
+      },
+      {
+        "properties": {
+          "name": "Fort St Elmo",
+          "formatted": "Fort St Elmo, Valletta, Malta",
+          "city": "Valletta",
+          "state": "South Eastern Region",
+          "country": "Malta",
+          "country_code": "mt",
+          "categories": ["tourism.sights", "entertainment.museum"],
+          "place_id": "snapshot-valletta-fort-st-elmo"
+        },
+        "geometry": {"coordinates": [14.5182, 35.9012]}
+      }
+    ]
+  },
+  {
+    "case_id": "overseas_oaxaca_insufficient",
+    "destination": "Oaxaca",
+    "canonical_name": "Oaxaca de Juárez",
+    "country": "Mexico",
+    "admin_area": "Oaxaca",
+    "center": [17.0732, -96.7266],
+    "expected_outcome": "insufficient_candidates",
+    "geocode_text_items": [
+      {
+        "name": "Oaxaca",
+        "state": "Oaxaca",
+        "country": "Mexico",
+        "result_type": "state",
+        "lat": 17.0,
+        "lon": -96.5,
+        "rank": {"popularity": 3.5, "importance": 0.55}
+      }
+    ],
+    "geocode_city_items": [
+      {
+        "name": "Oaxaca de Juárez",
+        "city": "Oaxaca de Juárez",
+        "municipality": "Oaxaca de Juárez",
+        "state": "Oaxaca",
+        "country": "Mexico",
+        "result_type": "city",
+        "lat": 17.0732,
+        "lon": -96.7266,
+        "rank": {"popularity": 4.1, "importance": 0.7}
+      }
+    ],
+    "provider_items": [
+      {
+        "properties": {
+          "name": "Templo de Santo Domingo",
+          "formatted": "Centro, Oaxaca de Juárez, Oaxaca, Mexico",
+          "city": "Oaxaca de Juárez",
+          "municipality": "Oaxaca de Juárez",
+          "state": "Oaxaca",
+          "country": "Mexico",
+          "country_code": "mx",
+          "categories": ["tourism.sights", "religion.place_of_worship"],
+          "place_id": "snapshot-oaxaca-santo-domingo"
+        },
+        "geometry": {"coordinates": [-96.7237, 17.0659]}
+      },
+      {
+        "properties": {
+          "name": "Zócalo de Oaxaca",
+          "formatted": "Centro, Oaxaca de Juárez, Oaxaca, Mexico",
+          "city": "Oaxaca de Juárez",
+          "municipality": "Oaxaca de Juárez",
+          "state": "Oaxaca",
+          "country": "Mexico",
+          "country_code": "mx",
+          "categories": ["tourism.sights", "leisure.park"],
+          "place_id": "snapshot-oaxaca-zocalo"
+        },
+        "geometry": {"coordinates": [-96.7253, 17.0606]}
+      }
+    ]
+  }
+]

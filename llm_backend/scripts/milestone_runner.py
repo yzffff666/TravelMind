@@ -39,6 +39,7 @@ DEFAULT_PYTEST_TARGETS = (
     "tests/test_planner_eval.py",
     "tests/test_unseen_destination_eval.py",
     "tests/test_destination_readiness_eval.py",
+    "tests/test_overseas_candidate_supply_eval.py",
     "tests/test_geo_bounds.py",
     "tests/test_patch_engine.py",
     "tests/test_day_replan_service.py",
@@ -81,6 +82,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "type": "destination_readiness_eval",
             "name": "destination_readiness_eval",
             "cases": "evaluation/destination_readiness_cases.json",
+        },
+        {
+            "type": "overseas_candidate_supply_eval",
+            "name": "overseas_candidate_supply_eval",
+            "cases": "evaluation/overseas_candidate_supply_cases.json",
         },
         {
             "type": "multi_turn_conversation_eval",
@@ -407,6 +413,45 @@ def run_destination_readiness_eval_gate(gate: dict[str, Any]) -> GateResult:
     )
 
 
+def run_overseas_candidate_supply_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from scripts.overseas_candidate_supply_eval import build_report, load_cases
+
+    start = time.perf_counter()
+    cases_path = Path(
+        gate.get("cases") or "evaluation/overseas_candidate_supply_cases.json"
+    )
+    report = build_report(load_cases(cases_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    failures = [
+        {
+            "case_id": item.get("case_id"),
+            "destination": item.get("destination"),
+            "errors": item.get("errors") or [],
+            "actual_outcome": item.get("actual_outcome"),
+        }
+        for item in report.get("failures") or []
+    ]
+    return GateResult(
+        name=str(gate.get("name") or "overseas_candidate_supply_eval"),
+        type="overseas_candidate_supply_eval",
+        status="passed" if report.get("status") == "passed" else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "case_count": report.get("case_count"),
+            "passed_cases": report.get("passed_cases"),
+            "failed_cases": report.get("failed_cases"),
+            "resolved_profiles": report.get("resolved_profiles"),
+            "ready_destinations": report.get("ready_destinations"),
+            "safe_degradation_destinations": report.get(
+                "safe_degradation_destinations"
+            ),
+            "cross_city_published": report.get("cross_city_published"),
+            "mock_published": report.get("mock_published"),
+        },
+        failures=failures,
+    )
+
+
 def run_planner_eval_gate(gate: dict[str, Any]) -> GateResult:
     from scripts.planner_eval import build_report
 
@@ -615,6 +660,8 @@ def run_gate(gate: dict[str, Any]) -> GateResult:
         return run_unseen_destination_eval_gate(gate)
     if gate_type == "destination_readiness_eval":
         return run_destination_readiness_eval_gate(gate)
+    if gate_type == "overseas_candidate_supply_eval":
+        return run_overseas_candidate_supply_eval_gate(gate)
     if gate_type == "planner_eval":
         return run_planner_eval_gate(gate)
     if gate_type == "multi_turn_conversation_eval":
@@ -708,6 +755,15 @@ def render_summary(status: dict[str, Any]) -> str:
                 f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
                 f"ready={summary.get('ready_cases')}, "
                 f"safe_degrade={summary.get('safe_degradation_cases')})"
+            )
+        elif gate.get("type") == "overseas_candidate_supply_eval":
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
+                f"ready={summary.get('ready_destinations')}, "
+                f"safe_degrade={summary.get('safe_degradation_destinations')}, "
+                f"cross_city={summary.get('cross_city_published')}, "
+                f"mock={summary.get('mock_published')})"
             )
         elif gate.get("type") == "planner_eval":
             lines.append(

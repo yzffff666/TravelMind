@@ -56,3 +56,23 @@ def test_targeted_probe_reports_outcome_mismatch():
     assert result["mismatches"] == [
         {"case_id": "unseen_dunhuang", "expected": "ready", "actual": "insufficient_candidates"}
     ]
+
+
+def test_targeted_probe_accepts_ready_as_upgrade_over_expected_safe_degradation():
+    report = {
+        "status": "failed",
+        "results": [{"case_id": "unseen_oaxaca_insufficient", "status": "ready"}],
+    }
+
+    result = apply_targeted_criteria(
+        report,
+        [
+            {
+                "case_id": "unseen_oaxaca_insufficient",
+                "expected_outcome": "insufficient_candidates",
+            }
+        ],
+    )
+
+    assert result["status"] == "passed"
+    assert result["mismatches"] == []

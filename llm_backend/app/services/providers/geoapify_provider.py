@@ -43,15 +43,48 @@ _MAX_ERROR_SNIPPET_CHARS = 300
 _BUDGET_EXHAUSTED = "budget_exhausted"
 _BUDGET_COOLDOWN = "budget_cooldown"
 _BUDGET_SKIP_SOURCES = {_BUDGET_EXHAUSTED, _BUDGET_COOLDOWN}
-_DEFAULT_PLACE_CATEGORIES = ",".join(
-    [
-        "tourism",
-        "catering",
-        "accommodation",
-        "entertainment",
-        "leisure",
-        "commercial",
-    ]
+_DEFAULT_PLACE_CATEGORIES = (
+    "tourism",
+    "entertainment.culture",
+    "entertainment.museum",
+    "leisure.park",
+)
+_GENERIC_PLACE_CATEGORY_RULES = (
+    (("博物馆", "museum"), ("entertainment.museum",)),
+    (
+        ("文化", "人文", "历史", "艺术", "culture", "history", "art"),
+        ("entertainment.culture", "tourism"),
+    ),
+    (("公园", "花园", "park", "garden"), ("leisure.park",)),
+    (("美食", "餐厅", "小吃", "咖啡", "food", "restaurant", "cafe"), ("catering",)),
+    (("海滩", "海边", "beach"), ("beach",)),
+    (("景点", "地标", "attraction", "sight", "landmark"), ("tourism",)),
+)
+_GENERIC_PLACE_TERMS = {
+    term
+    for terms, _categories_for_rule in _GENERIC_PLACE_CATEGORY_RULES
+    for term in terms
+}
+_GENERIC_PLACE_PHRASES = {
+    "文化景点",
+    "历史街区",
+    "亲子景点",
+    "海滨景点",
+    "特色餐厅",
+    "本地美食",
+    "tourist attraction",
+    "tourist attractions",
+}
+_LOCALITY_FIELDS = (
+    "city",
+    "suburb",
+    "district",
+    "county",
+    "municipality",
+    "state",
+    "state_code",
+    "country",
+    "country_code",
 )
 
 
@@ -343,6 +376,14 @@ def _score(item: dict[str, Any]) -> float:
     return 0.6
 
 
+def _rank_number(rank: dict[str, Any], key: str) -> float:
+    try:
+        value = float(rank.get(key) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return value if value == value else 0.0
+
+
 def _categories(item: dict[str, Any]) -> list[str]:
     categories = item.get("categories")
     if isinstance(categories, list):
@@ -355,6 +396,11 @@ def _candidate_from_item(item: dict[str, Any], *, source: str, location_hint: st
     title = _title(item)
     if not title:
         return None
+    locality = {
+        field: str(item.get(field) or "").strip()
+        for field in _LOCALITY_FIELDS
+    }
+    locality_terms = list(dict.fromkeys(value for value in locality.values() if value))
     return ProviderCandidate(
         candidate_id=_candidate_id(title, location_hint),
         source=source,
@@ -364,14 +410,15 @@ def _candidate_from_item(item: dict[str, Any], *, source: str, location_hint: st
         tags=_categories(item),
         extra={
             "address": item.get("formatted") or item.get("address_line2") or "",
-            "city": item.get("city") or "",
-            "country": item.get("country") or "",
+            **locality,
+            "locality_terms": locality_terms,
             "lat": item.get("lat"),
             "lng": item.get("lon"),
             "place_id": item.get("place_id") or "",
             "result_type": item.get("result_type") or "",
             "categories": item.get("categories") or [],
             "datasource": item.get("datasource") or {},
+            "rank": item.get("rank") or {},
         },
     )
 
@@ -408,6 +455,29 @@ def _category_mismatch_penalty(candidate: ProviderCandidate, query_norm: str) ->
     if lodging_candidate and not lodging_query:
         return 0.25
     return 0.0
+
+
+def _geoapify_place_categories(keywords: list[str]) -> tuple[str, ...]:
+    normalized = [_normalize_match_text(keyword) for keyword in keywords if keyword.strip()]
+    categories: list[str] = []
+    for text in normalized:
+        for terms, mapped_categories in _GENERIC_PLACE_CATEGORY_RULES:
+            if any(term in text for term in terms):
+                categories.extend(mapped_categories)
+    if not categories:
+        categories.extend(_DEFAULT_PLACE_CATEGORIES)
+    return tuple(dict.fromkeys(categories))
+
+
+def _is_explicit_place_query(keywords: list[str]) -> bool:
+    cleaned = [keyword.strip() for keyword in keywords if keyword.strip()]
+    if len(cleaned) != 1:
+        return False
+    normalized = _normalize_match_text(cleaned[0])
+    generic_values = {
+        _normalize_match_text(term) for term in _GENERIC_PLACE_TERMS | _GENERIC_PLACE_PHRASES
+    }
+    return bool(normalized and normalized not in generic_values)
 
 
 def _dedupe(candidates: list[ProviderCandidate]) -> list[ProviderCandidate]:
@@ -482,6 +552,40 @@ class GeoapifySearchProvider(SearchProvider):
             meta={"cache_source": cache_source, "provider_cost_tier": "low_cost"},
         )
 
+    async def search_city(self, *, city: str, top_k: int = 5) -> ProviderResponse:
+        """Resolve a city with structured geocoding to avoid state-name collisions."""
+        params: dict[str, Any] = {
+            "city": city,
+            "format": "json",
+            "limit": min(top_k, 20),
+            "lang": _detect_lang(city),
+            "apiKey": self._api_key,
+        }
+        data, cache_source = await _fetch_geoapify_json(
+            _GEOCODE_URL,
+            params,
+            self._timeout,
+        )
+        candidates = [
+            candidate
+            for item in _iter_geocode_results(data)
+            if (
+                candidate := _candidate_from_item(
+                    item,
+                    source=self.name,
+                    location_hint=city,
+                )
+            )
+            is not None
+        ]
+        errors = _budget_errors(cache_source)
+        return ProviderResponse(
+            candidates=_dedupe(candidates)[:top_k],
+            errors=errors,
+            degraded=bool(errors),
+            meta={"cache_source": cache_source, "provider_cost_tier": "low_cost"},
+        )
+
 
 class GeoapifyMapProvider(MapProvider):
     """Global POI lookup via Geoapify geocoding plus Places fallback."""
@@ -503,53 +607,53 @@ class GeoapifyMapProvider(MapProvider):
         top_k: int = 20,
         context: ProviderCallContext | None = None,
     ) -> ProviderResponse:
-        keyword_text = " ".join(keyword.strip() for keyword in keywords if keyword.strip())
+        cleaned_keywords = [keyword.strip() for keyword in keywords if keyword.strip()]
+        keyword_text = " ".join(cleaned_keywords)
+        explicit_place_query = _is_explicit_place_query(cleaned_keywords)
         query = f"{keyword_text}, {city}".strip(" ,") if keyword_text else f"tourist attractions, {city}".strip(" ,")
-        city_candidate = await self._city_center(city) if city else None
-
-        geocode_params: dict[str, Any] = {
-            "text": query,
-            "format": "json",
-            "limit": min(top_k, 20),
-            "lang": _detect_lang(query),
-            "apiKey": self._api_key,
-        }
-        if city_candidate:
-            self._add_city_bias(geocode_params, city_candidate)
-        geocode_data, geocode_cache_source = await _fetch_geoapify_json(
-            _GEOCODE_URL,
-            geocode_params,
-            self._timeout,
+        city_candidate, city_center_cache_source = (
+            await self._city_center(city) if city else (None, "")
         )
-        candidates = [
-            candidate
-            for item in _iter_geocode_results(geocode_data)
-            if (candidate := _candidate_from_item(item, source=self.name, location_hint=query)) is not None
-        ]
+
+        candidates: list[ProviderCandidate] = []
+        geocode_cache_source = ""
+        if explicit_place_query:
+            geocode_params: dict[str, Any] = {
+                "text": query,
+                "format": "json",
+                "limit": min(top_k, 20),
+                "lang": _detect_lang(query),
+                "apiKey": self._api_key,
+            }
+            if city_candidate:
+                self._add_city_bias(geocode_params, city_candidate)
+            geocode_data, geocode_cache_source = await _fetch_geoapify_json(
+                _GEOCODE_URL,
+                geocode_params,
+                self._timeout,
+            )
+            candidates.extend(
+                candidate
+                for item in _iter_geocode_results(geocode_data)
+                if (candidate := _candidate_from_item(item, source=self.name, location_hint=query)) is not None
+            )
 
         places_cache_source = ""
-        # Named POI queries benefit from Places even when geocoding returns
-        # generic nearby entities; merge both sources and rank by name match.
-        if keyword_text and city_candidate:
+        if city_candidate:
             places_candidates, places_cache_source = await self._places_near_city(
                 city=city,
-                keyword_text=keyword_text,
+                keywords=cleaned_keywords,
                 center=city_candidate,
                 top_k=top_k,
             )
             candidates.extend(places_candidates)
-        elif len(candidates) < top_k and city:
-            if city_candidate:
-                places_candidates, places_cache_source = await self._places_near_city(
-                    city=city,
-                    keyword_text=keyword_text,
-                    center=city_candidate,
-                    top_k=top_k - len(candidates),
-                )
-                candidates.extend(places_candidates)
 
         cache_sources = [source for source in (geocode_cache_source, places_cache_source) if source]
-        cache_source = "+".join(cache_sources) if cache_sources else geocode_cache_source
+        cache_source = (
+            "+".join(cache_sources)
+            if cache_sources
+            else city_center_cache_source
+        )
         candidates = self._rank_candidates(candidates, keyword_text or city)
         errors = _budget_errors(cache_source)
         return ProviderResponse(
@@ -585,23 +689,50 @@ class GeoapifyMapProvider(MapProvider):
             reverse=True,
         )
 
-    async def _city_center(self, city: str) -> dict[str, Any] | None:
+    async def _city_center(self, city: str) -> tuple[dict[str, Any] | None, str]:
         params: dict[str, Any] = {
             "text": city,
             "format": "json",
-            "limit": 1,
+            "limit": 5,
             "lang": _detect_lang(city),
             "apiKey": self._api_key,
         }
-        data, _ = await _fetch_geoapify_json(_GEOCODE_URL, params, self._timeout)
+        data, cache_source = await _fetch_geoapify_json(
+            _GEOCODE_URL,
+            params,
+            self._timeout,
+        )
         results = _iter_geocode_results(data)
-        return results[0] if results else None
+        if not results:
+            return None, cache_source
+
+        city_norm = _normalize_match_text(city)
+
+        def center_score(item: dict[str, Any]) -> tuple[float, float, float]:
+            labels = (
+                str(item.get("city") or ""),
+                str(item.get("name") or ""),
+                str(item.get("address_line1") or ""),
+            )
+            name_score = max(
+                (
+                    _name_match_score(_normalize_match_text(label), city_norm)
+                    for label in labels
+                ),
+                default=0.0,
+            )
+            rank = item.get("rank") if isinstance(item.get("rank"), dict) else {}
+            popularity = _rank_number(rank, "popularity")
+            importance = _rank_number(rank, "importance")
+            return name_score, popularity, importance
+
+        return max(results, key=center_score), cache_source
 
     async def _places_near_city(
         self,
         *,
         city: str,
-        keyword_text: str,
+        keywords: list[str],
         center: dict[str, Any],
         top_k: int,
     ) -> tuple[list[ProviderCandidate], str]:
@@ -610,15 +741,16 @@ class GeoapifyMapProvider(MapProvider):
         if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
             return [], ""
 
+        keyword_text = " ".join(keywords)
         params: dict[str, Any] = {
-            "categories": _DEFAULT_PLACE_CATEGORIES,
+            "categories": ",".join(_geoapify_place_categories(keywords)),
             "filter": f"circle:{lon},{lat},{self._radius_meters}",
             "bias": f"proximity:{lon},{lat}",
             "limit": min(max(top_k, 1), 20),
-            "lang": _detect_lang(f"{keyword_text} {city}"),
+            "lang": _detect_lang(city),
             "apiKey": self._api_key,
         }
-        if keyword_text:
+        if keyword_text and _is_explicit_place_query(keywords):
             params["name"] = keyword_text[:80]
 
         data, cache_source = await _fetch_geoapify_json(_PLACES_URL, params, self._timeout)

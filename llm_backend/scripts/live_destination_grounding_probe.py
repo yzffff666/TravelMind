@@ -195,6 +195,12 @@ def apply_targeted_criteria(report: dict[str, Any], cases: list[dict[str, Any]])
         str(case["case_id"]): str(case.get("expected_outcome") or "ready")
         for case in cases
     }
+
+    def meets_expectation(*, expected: str, actual: str) -> bool:
+        if actual == expected:
+            return True
+        return expected == "insufficient_candidates" and actual == "ready"
+
     mismatches = [
         {
             "case_id": result["case_id"],
@@ -202,12 +208,16 @@ def apply_targeted_criteria(report: dict[str, Any], cases: list[dict[str, Any]])
             "actual": result["status"],
         }
         for result in report["results"]
-        if result["status"] != expected_by_id[result["case_id"]]
+        if not meets_expectation(
+            expected=expected_by_id[result["case_id"]],
+            actual=result["status"],
+        )
     ]
     report["criteria"] = {
         "mode": "targeted",
         "expected_outcomes": expected_by_id,
         "require_resolved_profile": True,
+        "ready_satisfies_safe_degradation": True,
     }
     report["mismatches"] = mismatches
     report["status"] = "passed" if not mismatches else "failed"

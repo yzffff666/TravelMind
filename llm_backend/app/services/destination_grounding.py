@@ -25,6 +25,38 @@ from app.services.providers.geoapify_provider import GeoapifySearchProvider
 
 
 _AMAP_GEOCODE_URL = "https://restapi.amap.com/v3/geocode/geo"
+_GEOAPIFY_LOCALITY_FIELDS = (
+    "suburb",
+    "district",
+    "city",
+    "municipality",
+    "county",
+    "state",
+)
+_LOCALITY_SPECIFICITY = {
+    "suburb": 6,
+    "district": 5,
+    "city": 4,
+    "municipality": 4,
+    "county": 3,
+    "state": 1,
+}
+_LATIN_TRANSLITERATION = str.maketrans(
+    {
+        "ø": "o",
+        "Ø": "O",
+        "æ": "ae",
+        "Æ": "AE",
+        "ł": "l",
+        "Ł": "L",
+        "đ": "d",
+        "Đ": "D",
+        "ð": "d",
+        "Ð": "D",
+        "þ": "th",
+        "Þ": "Th",
+    }
+)
 
 
 def _as_float(value: Any) -> float | None:
@@ -53,7 +85,8 @@ def has_valid_coordinates(candidate: ProviderCandidate) -> bool:
 
 
 def _normalize_text(value: object) -> str:
-    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = str(value or "").translate(_LATIN_TRANSLITERATION)
+    text = unicodedata.normalize("NFKD", text)
     text = "".join(char for char in text if not unicodedata.combining(char))
     return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", text.lower())
 
@@ -209,31 +242,58 @@ class GeoapifyDestinationLookup:
         self._radius_km = radius_km
 
     async def lookup(self, destination: str) -> DestinationProfile | None:
-        response = await self._provider.search(query=destination, top_k=5)
+        responses = await asyncio.gather(
+            self._provider.search(query=destination, top_k=5),
+            self._provider.search_city(city=destination, top_k=5),
+            return_exceptions=True,
+        )
         best: ProviderCandidate | None = None
         best_score = -1.0
-        for candidate in response.candidates:
+        candidates = [
+            candidate
+            for response in responses
+            if not isinstance(response, BaseException)
+            for candidate in response.candidates
+        ]
+        for candidate in candidates:
             lat = _as_float(candidate.extra.get("lat"))
             lng = _as_float(candidate.extra.get("lng"))
             if lat is None or lng is None:
                 continue
-            canonical = str(candidate.extra.get("city") or candidate.title or "").strip()
+            canonical, _canonical_field = _matching_geoapify_locality(
+                destination,
+                candidate,
+            )
+            canonical = canonical or str(
+                candidate.extra.get("city") or candidate.title or ""
+            ).strip()
             score = candidate.score + (0.25 if _destination_name_matches(destination, canonical) else 0.0)
             result_type = str(candidate.extra.get("result_type") or "").lower()
-            if result_type in {"city", "municipality", "county", "district"}:
-                score += 0.1
+            if result_type in {"city", "municipality"}:
+                score += 0.15
+            elif result_type in {"county", "district"}:
+                score += 0.05
+            rank = candidate.extra.get("rank")
+            if isinstance(rank, dict):
+                popularity = _as_float(rank.get("popularity")) or 0.0
+                importance = _as_float(rank.get("importance")) or 0.0
+                score += min(max(popularity, 0.0), 5.0) * 0.03
+                score += min(max(importance, 0.0), 1.0) * 0.1
             if score > best_score:
                 best = candidate
                 best_score = score
         if best is None:
             return None
 
-        canonical = str(best.extra.get("city") or best.title or destination).strip()
+        canonical, _canonical_field = _matching_geoapify_locality(destination, best)
+        canonical = canonical or str(
+            best.extra.get("city") or best.title or destination
+        ).strip()
         return DestinationProfile(
             requested_name=destination,
             canonical_name=canonical,
             country=str(best.extra.get("country") or "").strip(),
-            admin_area=str(best.extra.get("state") or best.extra.get("county") or "").strip(),
+            admin_area=_geoapify_parent_admin(best, canonical),
             center_lat=_as_float(best.extra.get("lat")),
             center_lng=_as_float(best.extra.get("lng")),
             radius_km=self._radius_km,
@@ -244,9 +304,53 @@ class GeoapifyDestinationLookup:
 
 
 def _destination_name_matches(requested: str, canonical: str) -> bool:
+    return _destination_name_match_quality(requested, canonical) > 0
+
+
+def _destination_name_match_quality(requested: str, canonical: str) -> int:
     left = _normalize_text(requested)
     right = _normalize_text(canonical)
-    return bool(left and right and (left in right or right in left))
+    if not left or not right:
+        return 0
+    if left == right:
+        return 2
+    return 1 if left in right or right in left else 0
+
+
+def _matching_geoapify_locality(
+    destination: str,
+    candidate: ProviderCandidate,
+) -> tuple[str, str]:
+    matches: list[tuple[int, int, str, str]] = []
+    for field in _GEOAPIFY_LOCALITY_FIELDS:
+        value = str(candidate.extra.get(field) or "").strip()
+        quality = _destination_name_match_quality(destination, value)
+        if quality:
+            matches.append(
+                (quality, _LOCALITY_SPECIFICITY[field], value, field)
+            )
+    non_state_matches = [match for match in matches if match[3] != "state"]
+    if non_state_matches:
+        _quality, _specificity, value, field = max(non_state_matches)
+        return value, field
+    if matches:
+        _quality, _specificity, value, field = max(matches)
+        return value, field
+    if _destination_name_matches(destination, candidate.title):
+        return candidate.title.strip(), "title"
+    return "", ""
+
+
+def _geoapify_parent_admin(
+    candidate: ProviderCandidate,
+    canonical: str,
+) -> str:
+    canonical_normalized = _normalize_text(canonical)
+    for field in ("city", "municipality", "county", "state"):
+        value = str(candidate.extra.get(field) or "").strip()
+        if value and _normalize_text(value) != canonical_normalized:
+            return value
+    return ""
 
 
 def _amap_text(value: Any) -> str:
@@ -432,11 +536,64 @@ def validate_candidate_destination(
 
     candidate_city = str(candidate.extra.get("city") or "").strip()
     city_match: bool | None = None
+    destination_terms = {
+        term
+        for term in {
+            _normalize_text(profile.requested_name),
+            _normalize_text(profile.canonical_name),
+        }
+        if len(term) >= 2
+    }
+    parent_term = _normalize_text(profile.admin_area)
     if candidate_city:
         candidate_city_normalized = _normalize_text(candidate_city)
-        city_match = any(term in candidate_city_normalized for term in profile.match_terms())
+        city_match = any(
+            term in candidate_city_normalized or candidate_city_normalized in term
+            for term in destination_terms
+        )
+        if not city_match and len(parent_term) >= 2:
+            parent_match = (
+                parent_term in candidate_city_normalized
+                or candidate_city_normalized in parent_term
+            )
+            city_match = parent_match
+            if parent_match and profile.source.startswith("geoapify"):
+                narrow_localities = {
+                    normalized
+                    for field in ("suburb", "district", "municipality", "county")
+                    if (normalized := _normalize_text(candidate.extra.get(field)))
+                }
+                city_match = any(
+                    term in locality or locality in term
+                    for term in destination_terms
+                    for locality in narrow_localities
+                )
         if not city_match:
-            return CandidateGroundingDecision(False, "candidate_city_mismatch", distance_km, city_match)
+            return CandidateGroundingDecision(
+                False,
+                "candidate_city_mismatch",
+                distance_km,
+                city_match,
+            )
+    else:
+        narrow_localities = {
+            normalized
+            for field in ("suburb", "district", "municipality", "county")
+            if (normalized := _normalize_text(candidate.extra.get(field)))
+        }
+        if narrow_localities:
+            city_match = any(
+                term in locality or locality in term
+                for term in destination_terms
+                for locality in narrow_localities
+            )
+            if not city_match:
+                return CandidateGroundingDecision(
+                    False,
+                    "candidate_city_mismatch",
+                    distance_km,
+                    city_match,
+                )
     return CandidateGroundingDecision(True, "grounded", distance_km, city_match)
 
 

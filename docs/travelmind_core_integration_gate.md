@@ -54,6 +54,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 | `planner_eval` | 12 个约束规划案例，验证不重复、预算、日内距离、室内约束、锁定日期与候选不足降级 |
 | `unseen_destination_eval` | 10 个未配置 bbox/alias 的城市，验证动态目的地 Profile、本地候选接受、跨城候选拒绝与候选不足安全降级 |
 | `destination_readiness_eval` | 12 个中外混合城市矩阵，验证静态/动态 Profile、坐标必填发布门槛、东京/京都等跨城干扰拒绝，以及证据/图片覆盖质量信号 |
+| `overseas_candidate_supply_eval` | 4 个 Geoapify 脱敏快照回放，真实执行目的地消歧与 Places 候选发布，验证 Tromso/Hobart/Valletta 可发布、Oaxaca 候选不足安全降级，以及远距离/近距离邻城与 Mock 零发布 |
 | `multi_turn_conversation_eval` | 24 组、49 turn 的确定性回放，覆盖目的地切换/提及只读、QA 不误改、模糊澄清、闲聊目标保持、连续编辑与 reset 恢复 |
 | `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、候选人工审核、目的地 grounding 契约、runner 自测 |
 | `frontend_chat_component_tests` | DiffCard 与 PhaseIndicator，防止编辑结果重复展示、QA 状态误导 |
@@ -65,7 +66,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=14/14 passed
+gates=15/15 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -225,7 +226,24 @@ cd llm_backend
 
 真实 Provider probe 的结果会额外输出 `provider_capabilities`、`source_counts`、`evidence_candidate_count`、`image_candidate_count`、`quality_flags` 与 `health_status`。其中每个 Provider 分别报告 `key_configured`、`live_enabled` 与 `cache_enabled`，避免把“SerpAPI 已配但受成本护栏限制为 cache-only”误判为未配置。`ready` 只表示可以安全规划；`degraded` 表示候选足够但 Provider 或媒体质量有告警；只有 `healthy` 才表示该次探测没有这些告警。这能区分“代码泛化逻辑通过”与“当前环境是否真的具备某个海外城市的数据源”，避免 Mock 或离线 fixture 掩盖能力缺口。
 
-2026-07-23 的 Candidate Runtime 验收中，离线 13 Gate 全部通过；真实探针则显示国内 6 城中 4 城 ready，海外 Tromso/Hobart/Valletta 尚未 ready。该结果按 `profile_unresolved` / `insufficient_candidates` 安全降级，不影响离线安全门禁结论，但会作为下一阶段 Provider 泛化目标。
+2026-07-27 起，`overseas_candidate_supply_eval` 使用脱敏后的 Geoapify
+Geocoding 与 Places `properties + geometry` 结构回放海外候选供给。它会真实
+执行目的地解析，覆盖 Hobart 同名城市与 Oaxaca 州/城市歧义；同时要求 Tromso、
+Hobart、Valletta 各有至少 3 个真实结构候选可发布，Oaxaca fixture 明确走候选
+不足降级，并固定验证远距离跨城、同州近距离邻城与 Mock 候选零发布。真实
+Provider 的当前可用性仍由 live probe 单独验证，外部服务失败不会被离线
+fixture 隐藏。
+
+2026-07-27 最终 live probe 在禁用 Amap、SerpAPI 和 LLM 的条件下实现
+`4/4 profiles resolved`、`4/4 destinations ready`。其中 Oaxaca 的真实
+Provider 候选已经达到 ready；这被视为相对 fixture 安全降级预期的能力升级。
+
+单独运行该门禁：
+
+```bash
+./.venv/bin/python -m scripts.overseas_candidate_supply_eval \
+  --output-dir reports/overseas-candidate-supply-eval/latest
+```
 
 ## 边界
 

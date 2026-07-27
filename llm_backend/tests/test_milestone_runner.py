@@ -15,6 +15,7 @@ from scripts.milestone_runner import (
     run_ranking_eval_gate,
     run_planner_eval_gate,
     run_destination_readiness_eval_gate,
+    run_overseas_candidate_supply_eval_gate,
     run_unseen_destination_eval_gate,
     write_artifacts,
 )
@@ -136,6 +137,23 @@ def test_destination_readiness_eval_gate_passes_mixed_city_matrix():
     assert result.failures == []
 
 
+def test_overseas_candidate_supply_eval_gate_passes_provider_snapshot_matrix():
+    result = run_overseas_candidate_supply_eval_gate(
+        {
+            "type": "overseas_candidate_supply_eval",
+            "name": "overseas_candidate_supply_eval",
+        }
+    )
+
+    assert result.status == "passed"
+    assert result.summary["case_count"] == 4
+    assert result.summary["ready_destinations"] == 3
+    assert result.summary["safe_degradation_destinations"] == 1
+    assert result.summary["cross_city_published"] == 0
+    assert result.summary["mock_published"] == 0
+    assert result.failures == []
+
+
 def test_planner_eval_gate_passes_default_cases():
     result = run_planner_eval_gate({"type": "planner_eval", "name": "planner_eval"})
 
@@ -196,6 +214,7 @@ def test_default_config_covers_core_integration_gates():
         "planner_eval",
         "unseen_destination_eval",
         "destination_readiness_eval",
+        "overseas_candidate_supply_eval",
         "multi_turn_conversation_eval",
         "backend_core_integration_tests",
         "frontend_chat_component_tests",
@@ -216,6 +235,7 @@ def test_default_config_covers_core_integration_gates():
     assert "tests/test_planner_eval.py" in backend_gate["targets"]
     assert "tests/test_unseen_destination_eval.py" in backend_gate["targets"]
     assert "tests/test_destination_readiness_eval.py" in backend_gate["targets"]
+    assert "tests/test_overseas_candidate_supply_eval.py" in backend_gate["targets"]
     assert "tests/test_geo_bounds.py" in backend_gate["targets"]
     assert "tests/test_patch_engine.py" in backend_gate["targets"]
     assert "tests/test_day_replan_service.py" in backend_gate["targets"]

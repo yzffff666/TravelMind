@@ -71,6 +71,15 @@ FAKE_PLACES_RESPONSE = {
             "properties": {
                 "name": "Phuket Old Town",
                 "formatted": "Mueang Phuket, Phuket, Thailand",
+                "city": "Phuket",
+                "suburb": "Talat Yai",
+                "district": "Mueang Phuket",
+                "county": "Mueang Phuket District",
+                "municipality": "Phuket City Municipality",
+                "state": "Phuket",
+                "state_code": "83",
+                "country": "Thailand",
+                "country_code": "th",
                 "categories": ["tourism.sights"],
                 "rank": {"popularity": 0.82},
                 "place_id": "geoapify-old-town",
@@ -162,6 +171,17 @@ class TestGeoapifySearchProvider:
         assert resp.candidates[0].extra["lat"] == 7.8966
         assert resp.candidates[0].extra["lng"] == 98.2954
         assert "tourism.attraction" in resp.candidates[0].tags
+
+    def test_search_city_uses_structured_city_parameter_for_disambiguation(self):
+        sp = GeoapifySearchProvider("fake-key")
+        with patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _mock_httpx(FAKE_GEOCODE_RESPONSE)
+            response = _run(sp.search_city(city="Oaxaca", top_k=5))
+
+        params = mock_cls.return_value.get.await_args.kwargs["params"]
+        assert params["city"] == "Oaxaca"
+        assert "text" not in params
+        assert len(response.candidates) == 2
 
     def test_search_cache_only_skips_live_on_cache_miss(self, tmp_path):
         sp = GeoapifySearchProvider("fake-key")
@@ -257,6 +277,139 @@ class TestGeoapifyMapProvider:
         assert exact_params["filter"].startswith("circle:98.3923,7.8804,")
         assert exact_params["bias"] == "proximity:98.3923,7.8804"
 
+    def test_generic_travel_keywords_use_categories_without_name_filter(self):
+        mp = GeoapifyMapProvider("fake-key", radius_meters=40000)
+        city_center = {
+            "results": [{"name": "Hobart", "formatted": "Hobart, Australia", "lat": -42.8825, "lon": 147.3281}]
+        }
+        with patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _mock_httpx_sequence(
+                [city_center, FAKE_PLACES_RESPONSE]
+            )
+            _run(
+                mp.nearby_poi(
+                    city="Hobart",
+                    keywords=["文化景点", "博物馆", "历史街区", "景点", "公园"],
+                    top_k=10,
+                )
+            )
+
+        assert mock_cls.return_value.get.await_count == 2
+        places_call = mock_cls.return_value.get.await_args_list[1]
+        assert places_call.args[0].endswith("/v2/places")
+        places_params = places_call.kwargs["params"]
+        categories = set(places_params["categories"].split(","))
+        assert "name" not in places_params
+        assert {"tourism", "entertainment.museum", "entertainment.culture", "leisure.park"} <= categories
+        assert places_params["filter"] == "circle:147.3281,-42.8825,40000"
+        assert places_params["lang"] == "en"
+
+    def test_explicit_named_poi_keeps_places_name_filter(self):
+        mp = GeoapifyMapProvider("fake-key")
+        city_center = {
+            "results": [{"name": "Valletta", "formatted": "Valletta, Malta", "lat": 35.8989, "lon": 14.5146}]
+        }
+        with patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _mock_httpx_sequence(
+                [city_center, FAKE_EMPTY_RESPONSE, FAKE_PLACES_RESPONSE]
+            )
+            _run(
+                mp.nearby_poi(
+                    city="Valletta",
+                    keywords=["Upper Barrakka Gardens"],
+                    top_k=10,
+                )
+            )
+
+        places_params = mock_cls.return_value.get.await_args_list[2].kwargs["params"]
+        assert places_params["name"] == "Upper Barrakka Gardens"
+
+    def test_places_candidate_preserves_locality_hierarchy(self):
+        mp = GeoapifyMapProvider("fake-key")
+        city_center = {
+            "results": [{"name": "Phuket", "formatted": "Phuket, Thailand", "lat": 7.8804, "lon": 98.3923}]
+        }
+        with patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _mock_httpx_sequence(
+                [city_center, FAKE_EMPTY_RESPONSE, FAKE_PLACES_RESPONSE]
+            )
+            response = _run(mp.nearby_poi(city="Phuket", keywords=["Old Town"], top_k=3))
+
+        extra = response.candidates[0].extra
+        assert extra["suburb"] == "Talat Yai"
+        assert extra["district"] == "Mueang Phuket"
+        assert extra["county"] == "Mueang Phuket District"
+        assert extra["municipality"] == "Phuket City Municipality"
+        assert extra["state"] == "Phuket"
+        assert extra["state_code"] == "83"
+        assert extra["country_code"] == "th"
+        assert "Phuket" in extra["locality_terms"]
+
+    def test_city_center_filters_city_results_and_prefers_popular_global_match(self):
+        mp = GeoapifyMapProvider("fake-key", radius_meters=40000)
+        ambiguous_hobart = {
+            "results": [
+                {
+                    "name": "Hobart",
+                    "city": "Hobart",
+                    "state": "Indiana",
+                    "country": "United States",
+                    "result_type": "city",
+                    "lat": 41.5323,
+                    "lon": -87.255,
+                    "rank": {"popularity": 3.3736, "importance": 0.4348},
+                },
+                {
+                    "name": "Hobart",
+                    "city": "Hobart",
+                    "state": "Tasmania",
+                    "country": "Australia",
+                    "result_type": "city",
+                    "lat": -42.8825,
+                    "lon": 147.3281,
+                    "rank": {"popularity": 4.0192, "importance": 0.6233},
+                },
+            ]
+        }
+        with patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
+            mock_cls.return_value = _mock_httpx_sequence(
+                [ambiguous_hobart, FAKE_PLACES_RESPONSE]
+            )
+            _run(
+                mp.nearby_poi(
+                    city="Hobart",
+                    keywords=["文化景点", "博物馆", "公园"],
+                    top_k=10,
+                )
+            )
+
+        center_params = mock_cls.return_value.get.await_args_list[0].kwargs["params"]
+        places_params = mock_cls.return_value.get.await_args_list[1].kwargs["params"]
+        assert "type" not in center_params
+        assert center_params["limit"] == 5
+        assert places_params["filter"] == "circle:147.3281,-42.8825,40000"
+
+    def test_city_center_budget_exhaustion_is_reported_as_provider_error(self):
+        mp = GeoapifyMapProvider("fake-key")
+        with patch(
+            "app.services.providers.geoapify_provider._budget_skip_source",
+            return_value="budget_exhausted",
+        ), patch("app.services.providers.geoapify_provider.httpx.AsyncClient") as mock_cls:
+            response = _run(
+                mp.nearby_poi(
+                    city="Hobart",
+                    keywords=["景点", "博物馆", "公园"],
+                    top_k=10,
+                )
+            )
+
+        assert response.candidates == []
+        assert response.degraded is True
+        assert response.meta["cache_source"] == "budget_exhausted"
+        assert response.errors
+        assert response.errors[0].code == ProviderErrorCode.RATE_LIMIT
+        mock_cls.assert_not_called()
+
     def test_nearby_poi_penalizes_lodging_when_query_is_attraction(self):
         mp = GeoapifyMapProvider("fake-key")
         city_center = {
@@ -272,7 +425,7 @@ class TestGeoapifyMapProvider:
 
 
 class TestGeoapifyFactory:
-    def test_factory_registers_geoapify_between_amap_and_serpapi(self):
+    def test_factory_uses_geoapify_geocoding_only_for_resolution_not_general_search(self):
         with patch("app.services.providers.factory._get_key") as mock_get:
             mock_get.side_effect = lambda s, e: {
                 "AMAP_API_KEY": "amap-key",
@@ -283,7 +436,6 @@ class TestGeoapifyFactory:
 
         assert [p.name for p in reg.search_providers] == [
             "amap_search",
-            "geoapify_search",
             "serp_search",
         ]
         assert [p.name for p in reg.map_providers] == [
@@ -292,7 +444,7 @@ class TestGeoapifyFactory:
             "serp_map",
         ]
 
-    def test_cost_mode_cheap_keeps_geoapify_but_skips_serpapi(self):
+    def test_cost_mode_cheap_keeps_geoapify_map_but_skips_general_search_and_serpapi(self):
         with patch("app.services.providers.factory._get_key") as mock_get, \
                 patch("app.services.providers.factory._provider_cost_mode", return_value="cheap"):
             mock_get.side_effect = lambda s, e: {
@@ -301,8 +453,9 @@ class TestGeoapifyFactory:
             }.get(s)
             reg = build_registry(include_mock_fallback=False)
 
-        assert [p.name for p in reg.search_providers] == ["geoapify_search"]
+        assert [p.name for p in reg.search_providers] == []
         assert [p.name for p in reg.map_providers] == ["geoapify_map"]
+        assert reg.map_providers[0]._radius_meters == 40000
 
 
 class TestGeoapifyOrchestrator:
@@ -320,4 +473,4 @@ class TestGeoapifyOrchestrator:
         assert result.errors
         assert {error.code for error in result.errors} == {ProviderErrorCode.RATE_LIMIT}
         assert any("Geoapify HTTP 429" in error.message for error in result.errors)
-        assert any("temporarily disabled" in error.message for error in result.errors)
+        assert geoapify_provider._read_budget_state()["cooldown_until_epoch"] > 0

@@ -1,15 +1,17 @@
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.services.destination_grounding import (
     DestinationProfile,
     DestinationResolver,
+    GeoapifyDestinationLookup,
     _amap_destination_profile,
     filter_candidates_for_destination,
     validate_candidate_destination,
 )
-from app.services.providers.base import ProviderCandidate
+from app.services.providers.base import ProviderCandidate, ProviderResponse
 
 
 UNSEEN_DESTINATIONS = {
@@ -150,3 +152,263 @@ def test_amap_profile_keeps_specific_destination_and_accepts_parent_city_context
     decision = validate_candidate_destination(local, profile)
     assert decision.accepted is True
     assert decision.reason == "grounded"
+
+
+def test_diacritic_equivalent_locality_is_grounded_without_alias_configuration():
+    profile = DestinationProfile(
+        requested_name="Tromso",
+        canonical_name="Tromsø",
+        country="Norway",
+        admin_area="Troms",
+        center_lat=69.6516,
+        center_lng=18.9559,
+        radius_km=40,
+        confidence=0.95,
+        source="geoapify_geocode",
+        is_dynamic=True,
+    )
+    candidate = ProviderCandidate(
+        candidate_id="arctic-cathedral",
+        source="geoapify_map",
+        title="Arctic Cathedral",
+        extra={
+            "lat": 69.648,
+            "lng": 18.987,
+            "city": "Tromsø",
+            "county": "Troms",
+            "locality_terms": ["Tromsø", "Troms"],
+        },
+    )
+
+    decision = validate_candidate_destination(candidate, profile)
+
+    assert decision.accepted is True
+    assert decision.reason == "grounded"
+
+
+def test_parent_locality_match_accepts_suburb_but_contradictory_locality_is_rejected():
+    profile = DestinationProfile(
+        requested_name="Hobart",
+        canonical_name="Hobart",
+        country="Australia",
+        admin_area="Tasmania",
+        center_lat=-42.8825,
+        center_lng=147.3281,
+        radius_km=40,
+        confidence=0.95,
+        source="geoapify_geocode",
+        is_dynamic=True,
+    )
+    local_suburb = ProviderCandidate(
+        candidate_id="cascade-female-factory",
+        source="geoapify_map",
+        title="Cascades Female Factory",
+        extra={
+            "lat": -42.8956,
+            "lng": 147.3002,
+            "city": "Hobart",
+            "suburb": "Battery Point",
+            "state": "Tasmania",
+            "locality_terms": ["Battery Point", "Hobart", "Tasmania"],
+        },
+    )
+    contradictory = ProviderCandidate(
+        candidate_id="launceston-decoy",
+        source="geoapify_map",
+        title="Wrong City Museum",
+        extra={
+            "lat": -42.89,
+            "lng": 147.31,
+            "city": "Launceston",
+            "state": "Tasmania",
+            "locality_terms": ["Launceston", "Tasmania"],
+        },
+    )
+
+    assert validate_candidate_destination(local_suburb, profile).accepted is True
+    rejected = validate_candidate_destination(contradictory, profile)
+    assert rejected.accepted is False
+    assert rejected.reason == "candidate_city_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_geoapify_destination_lookup_combines_text_and_structured_results_for_global_names():
+    lookup = GeoapifyDestinationLookup("fake-key")
+    australian_hobart = ProviderCandidate(
+        candidate_id="hobart-au",
+        source="geoapify_search",
+        title="Hobart",
+        score=1.0,
+        extra={
+            "city": "Hobart",
+            "state": "Tasmania",
+            "country": "Australia",
+            "lat": -42.8825,
+            "lng": 147.3281,
+            "result_type": "city",
+            "rank": {"popularity": 4.0192, "importance": 0.6233},
+        },
+    )
+    american_hobart = ProviderCandidate(
+        candidate_id="hobart-us",
+        source="geoapify_search",
+        title="Hobart",
+        score=1.0,
+        extra={
+            "city": "Hobart",
+            "state": "Indiana",
+            "country": "United States",
+            "lat": 41.5323,
+            "lng": -87.255,
+            "result_type": "city",
+            "rank": {"popularity": 3.3736, "importance": 0.4348},
+        },
+    )
+    lookup._provider.search = AsyncMock(
+        return_value=ProviderResponse(candidates=[australian_hobart])
+    )
+    lookup._provider.search_city = AsyncMock(
+        return_value=ProviderResponse(candidates=[american_hobart])
+    )
+
+    profile = await lookup.lookup("Hobart")
+
+    assert profile is not None
+    assert profile.country == "Australia"
+    assert profile.admin_area == "Tasmania"
+    assert profile.center_lat == -42.8825
+    assert profile.center_lng == 147.3281
+
+
+def test_same_state_different_city_cannot_override_explicit_city_contradiction():
+    profile = DestinationProfile(
+        requested_name="Oaxaca",
+        canonical_name="Oaxaca City",
+        country="Mexico",
+        admin_area="Oaxaca",
+        center_lat=17.0605,
+        center_lng=-96.7254,
+        radius_km=40,
+        confidence=0.95,
+        source="geoapify_geocode",
+        is_dynamic=True,
+    )
+    candidate = ProviderCandidate(
+        candidate_id="nearby-wrong-city",
+        source="geoapify_map",
+        title="Wrong City Attraction",
+        extra={
+            "lat": 17.028,
+            "lng": -96.72,
+            "city": "Santa Cruz Xoxocotlán",
+            "state": "Oaxaca",
+            "country": "Mexico",
+            "locality_terms": ["Santa Cruz Xoxocotlán", "Oaxaca", "Mexico"],
+        },
+    )
+
+    decision = validate_candidate_destination(candidate, profile)
+
+    assert decision.accepted is False
+    assert decision.reason == "candidate_city_mismatch"
+
+
+def test_geoapify_parent_city_requires_matching_narrow_locality():
+    profile = DestinationProfile(
+        requested_name="Brooklyn",
+        canonical_name="Brooklyn",
+        country="United States",
+        admin_area="New York",
+        center_lat=40.6526,
+        center_lng=-73.9497,
+        radius_km=40,
+        confidence=0.95,
+        source="geoapify_geocode",
+        is_dynamic=True,
+    )
+    brooklyn = ProviderCandidate(
+        candidate_id="brooklyn-museum",
+        source="geoapify_map",
+        title="Brooklyn Museum",
+        extra={
+            "lat": 40.6712,
+            "lng": -73.9636,
+            "city": "New York",
+            "suburb": "Brooklyn",
+        },
+    )
+    manhattan = ProviderCandidate(
+        candidate_id="manhattan-decoy",
+        source="geoapify_map",
+        title="Manhattan Attraction",
+        extra={
+            "lat": 40.7061,
+            "lng": -74.0087,
+            "city": "New York",
+            "suburb": "Manhattan",
+        },
+    )
+
+    assert validate_candidate_destination(brooklyn, profile).accepted is True
+    rejected = validate_candidate_destination(manhattan, profile)
+    assert rejected.accepted is False
+    assert rejected.reason == "candidate_city_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_geoapify_destination_lookup_preserves_matching_suburb_instead_of_parent_city():
+    lookup = GeoapifyDestinationLookup("fake-key")
+    brooklyn = ProviderCandidate(
+        candidate_id="brooklyn",
+        source="geoapify_search",
+        title="Brooklyn",
+        score=1.0,
+        extra={
+            "city": "New York",
+            "suburb": "Brooklyn",
+            "state": "New York",
+            "country": "United States",
+            "lat": 40.6526,
+            "lng": -73.9497,
+            "result_type": "suburb",
+            "rank": {"popularity": 5.0, "importance": 0.7},
+        },
+    )
+    response = ProviderResponse(candidates=[brooklyn])
+    lookup._provider.search = AsyncMock(return_value=response)
+    lookup._provider.search_city = AsyncMock(return_value=ProviderResponse())
+
+    profile = await lookup.lookup("Brooklyn")
+
+    assert profile is not None
+    assert profile.canonical_name == "Brooklyn"
+    assert profile.admin_area == "New York"
+
+
+@pytest.mark.asyncio
+async def test_geoapify_destination_lookup_prefers_diacritic_city_over_similar_county():
+    lookup = GeoapifyDestinationLookup("fake-key")
+    tromso = ProviderCandidate(
+        candidate_id="tromso",
+        source="geoapify_search",
+        title="Tromsø",
+        score=1.0,
+        extra={
+            "city": "Tromsø",
+            "county": "Troms",
+            "country": "Norway",
+            "lat": 69.6516,
+            "lng": 18.9559,
+            "result_type": "city",
+            "rank": {"popularity": 2.9, "importance": 0.5},
+        },
+    )
+    response = ProviderResponse(candidates=[tromso])
+    lookup._provider.search = AsyncMock(return_value=response)
+    lookup._provider.search_city = AsyncMock(return_value=ProviderResponse())
+
+    profile = await lookup.lookup("Tromso")
+
+    assert profile is not None
+    assert profile.canonical_name == "Tromsø"
+    assert profile.admin_area == "Troms"

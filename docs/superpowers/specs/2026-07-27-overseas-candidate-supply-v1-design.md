@@ -12,7 +12,7 @@ The target holdout matrix is:
 | Tromso | ready |
 | Hobart | ready |
 | Valletta | ready |
-| Oaxaca | explicit insufficient-candidates degradation |
+| Oaxaca | ready when real supply exists; otherwise explicit safe degradation |
 
 `ready` means at least three real, publishable POIs with valid coordinates and
 no cross-city or Mock candidates.
@@ -132,8 +132,15 @@ retain the nearest parent administrative area. Grounding compares the
 normalized candidate locality set with profile match terms only after the
 distance check.
 
-Diacritics are normalized through the existing Unicode normalization, so
-`Tromso` and `Tromsø` match without a city alias.
+Diacritics and common non-decomposing Latin letters are normalized before
+locality comparison, so `Tromso` and `Tromsø` match without a city alias.
+Canonical-locality selection prefers a matching city or sublocality over a
+similarly named parent county/state.
+
+City-center lookup evaluates multiple free-text geocoding results by name,
+popularity, and importance. This is intentional: live evidence showed that
+Geoapify's structured city filter returned only US matches for `Hobart`, while
+the free-text result set correctly included and ranked Hobart, Australia.
 
 ### 4.5 Safe degradation
 
@@ -162,12 +169,13 @@ No LLM-generated POI is substituted when provider supply is insufficient.
 
 ### Replay gate
 
-Sanitized provider fixtures cover:
+Sanitized Geocoding and Places provider fixtures cover:
 
+- same-name city and state/city destination disambiguation;
 - three ready overseas destinations with at least three publishable POIs each;
-- Oaxaca safe degradation;
+- Oaxaca safe degradation in deterministic replay;
 - no Mock publication;
-- no cross-city publication.
+- no far-away or same-state nearby cross-city publication.
 
 ### Live acceptance
 
@@ -177,8 +185,16 @@ Run the targeted probe with bounded Geoapify live calls:
 Tromso   -> ready, at least 3 real POIs
 Hobart   -> ready, at least 3 real POIs
 Valletta -> ready, at least 3 real POIs
-Oaxaca   -> insufficient_candidates
+Oaxaca   -> ready or explicit insufficient_candidates
 ```
+
+`ready` is a valid upgrade over an expected safe-degradation case. The reverse
+is not valid: a destination expected to be ready must not silently degrade.
+
+The final 2026-07-27 live probe, with Amap, SerpAPI, and the LLM disabled,
+resolved all four profiles and returned at least three grounded Geoapify
+candidates for all four destinations. The deterministic replay deliberately
+keeps Oaxaca at two candidates so the safe-degradation branch remains covered.
 
 If the external provider is unavailable, the cached replay gate remains the
 deterministic regression source and the live report records the environmental
@@ -188,7 +204,7 @@ failure separately.
 
 - Geoapify/provider and destination-grounding tests pass.
 - Full backend suite passes.
-- Existing 14-gate milestone remains green.
+- Existing gates and the new overseas replay gate remain green.
 
 ## 6. Out Of Scope
 

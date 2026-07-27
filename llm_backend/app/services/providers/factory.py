@@ -20,10 +20,7 @@ import logging
 import os
 
 from app.services.providers.amap_provider import AmapMapProvider, AmapSearchProvider
-from app.services.providers.geoapify_provider import (
-    GeoapifyMapProvider,
-    GeoapifySearchProvider,
-)
+from app.services.providers.geoapify_provider import GeoapifyMapProvider
 from app.services.providers.mock_providers import MockMapProvider, MockSearchProvider
 from app.services.providers.registry import ProviderRegistry
 from app.services.providers.serp_providers import (
@@ -77,6 +74,15 @@ def _provider_cost_mode() -> str:
     return mode if mode in _COST_MODES else "standard"
 
 
+def _destination_radius_meters() -> int:
+    try:
+        from app.core.config import settings
+        radius_km = float(settings.DESTINATION_GROUNDING_RADIUS_KM)
+    except Exception:
+        radius_km = float(os.getenv("DESTINATION_GROUNDING_RADIUS_KM", "40"))
+    return max(1000, int(radius_km * 1000))
+
+
 def build_registry(*, include_mock_fallback: bool = True) -> ProviderRegistry:
     """Build a ``ProviderRegistry`` with the best available providers.
 
@@ -98,12 +104,16 @@ def build_registry(*, include_mock_fallback: bool = True) -> ProviderRegistry:
     geoapify_key = _get_key("GEOAPIFY_KEY", "GEOAPIFY_KEY") if geoapify_enabled else None
     if geoapify_key:
         logger.info(
-            "Geoapify key detected — registering low-cost global search & map providers "
+            "Geoapify key detected — registering low-cost global map provider "
             "(priority 2, cost_mode=%s)",
             cost_mode,
         )
-        registry.register_search(GeoapifySearchProvider(geoapify_key))
-        registry.register_map(GeoapifyMapProvider(geoapify_key))
+        registry.register_map(
+            GeoapifyMapProvider(
+                geoapify_key,
+                radius_meters=_destination_radius_meters(),
+            )
+        )
     elif not geoapify_enabled:
         logger.info("Geoapify providers disabled by GEOAPIFY_ENABLED=false")
 
