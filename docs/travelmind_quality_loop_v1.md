@@ -2,7 +2,7 @@
 
 > 面向旅行规划 Agent 的 POI 候选排序、工具结果选择与决策质量优化
 >
-> 版本：v1 | 日期：2026-05-04 | 状态：定位收束 / 下一阶段实施依据
+> 版本：v1.1 | 日期：2026-07-22 | 状态：Agentic Candidate Decision Runtime v1 已落地
 
 ---
 
@@ -45,6 +45,34 @@ TravelMind = Agentic POI Ranking for Travel Planning
 | Candidate Ranking | `RankingScorer` |
 | Constraint-aware Filtering | `ConstraintFilter` + generic activity skip + quality gate |
 | Decision Feedback Loop | `observability_summary.py` + extended smoke + unresolved samples |
+
+### 1.1 2026-07 运行时落地状态
+
+本轮已把“候选质量思路”从文档和 shadow 日志推进到可灰度运行的主链路：
+
+```text
+Provider Recall
+-> Shared Publishability Gate
+   - destination resolved
+   - valid coordinates
+   - destination consistency
+   - Mock forbidden by default
+   - enough candidates for requested slots
+-> legacy / shadow / candidate ranking mode
+-> Constraint-aware Planner
+-> verified plan skeleton
+-> LLM expression
+```
+
+关键工程约束：
+
+- 创建和局部重规划复用 `candidate_publishability.py`，不再各自维护不同安全规则。
+- 候选服务异常、目的地未解析或候选不足时 fail-closed，禁止 LLM 从空候选自由编写行程。
+- `POI_RANKING_MODE=shadow` 是默认值；`candidate` 让新排序生效，`legacy` 是回滚路径。
+- `ALLOW_MOCK_PUBLISH=false` 是生产默认值，只允许离线测试显式放行 Mock。
+- 排序离线门禁包含 20 个目的地、63 个候选决策；要求零危险放行、候选策略不劣于旧排序且 P95 小于 50ms。
+
+这一步仍然是可解释规则基线，不宣称已经训练推荐模型。它提供了后续 semantic rerank 或 learned ranker 所必需的稳定输入契约、对照组、badcase 和验收指标。
 
 这里主打推荐/搜索里的 candidate generation、scoring、rerank 思想，但必须放在 Agent 语境下理解：它解决的是 Tool/Provider Result Ranking，而不是 CTR/CVR 个性化推荐。
 

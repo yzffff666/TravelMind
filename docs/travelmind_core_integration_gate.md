@@ -6,7 +6,9 @@
 
 ```text
 创建/追问意图识别
-→ 局部编辑与候选驱动重规划
+→ Provider 候选发布门禁（坐标/目的地/Mock/数量）
+→ 可灰度 POI 排序与约束规划
+→ 局部编辑与候选驱动重规划（复用同一门禁）
 → QA 不误触发行程修改
 → SSE edit_diff / final_itinerary 契约
 → 前端 diff 展示、QA 状态、类型检查与生产构建
@@ -45,10 +47,12 @@ llm_backend/reports/milestone-runs/<run_id>/
 | `qp_eval` | 96 条 QP 规则评测，防止 create / edit / qa / reset 路由退化 |
 | `hybrid_qp_eval` | 30 条 Hybrid Structured QP holdout，验证 Rule/LLM 路由、shadow、异常回退及 QA/Edit 状态安全门禁 |
 | `structured_edit_replan_eval` | 15 条结构化编辑命令验收，验证 target day/slot/constraint 映射，以及 QA、越界、无约束输入零修改 |
+| `explicit_poi_edit_eval` | 16 条指定 POI 编辑验收，验证中英文地点名不会退化为原文替换或泛化约束，越界/QA 不产生修改请求 |
 | `golden_demo_eval` | 演示主链路 golden cases，覆盖深圳/香港/澳门/旧金山 create、QA 只读、局部重规划、跨城 bbox |
-| `ranking_eval` | 离线 POI 排序 badcase 评测，验证好候选 Top-K 命中、bbox/duplicate/generic 拒绝 |
+| `ranking_eval` | 20 个目的地、63 个候选的离线排序门禁，比较 legacy/candidate 命中率，并验证跨城、缺坐标、Mock、duplicate、generic 拒绝、证据覆盖与 P95 |
 | `planner_eval` | 12 个约束规划案例，验证不重复、预算、日内距离、室内约束、锁定日期与候选不足降级 |
 | `unseen_destination_eval` | 10 个未配置 bbox/alias 的城市，验证动态目的地 Profile、本地候选接受、跨城候选拒绝与候选不足安全降级 |
+| `destination_readiness_eval` | 12 个中外混合城市矩阵，验证静态/动态 Profile、坐标必填发布门槛、东京/京都等跨城干扰拒绝，以及证据/图片覆盖质量信号 |
 | `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、候选人工审核、目的地 grounding 契约、runner 自测 |
 | `frontend_chat_component_tests` | DiffCard 与 PhaseIndicator，防止编辑结果重复展示、QA 状态误导 |
 | `frontend_type_check` | Vue/TypeScript 类型契约 |
@@ -59,7 +63,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=11/11 passed
+gates=13/13 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -77,6 +81,7 @@ llm_backend/reports/milestone-runs/<run_id>/failures.json
 - 修改 QP / intent routing 之后。
 - 修改 Structured QP 路由、模型 schema、置信度阈值或安全回退之后。
 - 修改 Structured QP 到 PatchOp、候选重规划或局部 slot 替换之后。
+- 修改指定 POI 替换、名称匹配或目的地过滤之后。
 - 修改演示主链路、QA/edit 边界、局部重规划之后。
 - 修改 `POIRankingPolicy`、bbox 或候选排序权重之后。
 - 修改跨天 POI 组合、预算/距离/节奏约束或局部重规划策略之后。
@@ -119,10 +124,22 @@ reports/ranking-eval/latest/
 
 当前评估集覆盖：
 
+- 20 个中外目的地，覆盖国内、东亚、东南亚、欧洲和北美。
 - 目的地 bbox 错误：例如普吉岛候选混入巴黎 POI、上海候选混入东京 POI。
 - 重复 POI：同一地点来自不同 provider 时只保留高质量候选。
 - 泛活动：拒绝“核心景点参观”“室内休闲活动”这类不可落地图的泛化候选。
 - 好候选 Top-K：检查高证据、高可解析、目的地一致的 POI 是否进入 policy top。
+- 排序 Guardrail：`unsafe_accepted_count == 0`、candidate 命中率不低于 legacy、证据覆盖不低于 80%、P95 低于 50ms。
+
+运行时通过 `POI_RANKING_MODE` 灰度和回滚：
+
+```text
+legacy    只使用旧 RankingScorer
+shadow    新旧排序同时计算，规划器仍使用旧排序（默认）
+candidate 新 POIRankingPolicy 真正进入创建和局部重规划
+```
+
+无论使用哪种排序，创建和局部重规划都会先经过共享发布门禁。目的地无法定位、有效候选不足、候选服务异常时系统 fail-closed，不会把 Mock 或未经验证的地点交给 LLM 自由生成。
 
 ## 单独运行约束规划评测
 
@@ -167,9 +184,25 @@ cd llm_backend
 
 通过条件是至少 6 个目的地解析成功、至少 4 个目的地获得 3 个以上通过地理校验的候选；任何未通过的城市必须输出 `profile_unresolved` 或 `insufficient_candidates`，而不是交给 LLM 生成串城行程。
 
+## 目的地就绪度矩阵
+
+`destination_readiness_eval` 是离线、可重复的产品安全门禁。它不调用 Provider 或 LLM，而是固定验证“什么候选允许进入最终行程”：
+
+```bash
+cd llm_backend
+./.venv/bin/python -m scripts.destination_readiness_eval \
+  --output-dir reports/destination-readiness-eval/latest
+```
+
+当前 12 个案例覆盖深圳、香港、澳门、东京、京都、旧金山，以及景德镇、敦煌、喀什、Tromso、Hobart、Oaxaca。`ready` 案例必须至少有 3 个经过目的地校验且带合法经纬度的本地候选；候选不足案例必须安全降级。图片和证据覆盖会作为质量信号输出，但不会替代地理安全门禁。
+
+真实 Provider probe 的结果会额外输出 `provider_capabilities`、`source_counts`、`evidence_candidate_count`、`image_candidate_count`、`quality_flags` 与 `health_status`。其中每个 Provider 分别报告 `key_configured`、`live_enabled` 与 `cache_enabled`，避免把“SerpAPI 已配但受成本护栏限制为 cache-only”误判为未配置。`ready` 只表示可以安全规划；`degraded` 表示候选足够但 Provider 或媒体质量有告警；只有 `healthy` 才表示该次探测没有这些告警。这能区分“代码泛化逻辑通过”与“当前环境是否真的具备某个海外城市的数据源”，避免 Mock 或离线 fixture 掩盖能力缺口。
+
+2026-07-23 的 Candidate Runtime 验收中，离线 13 Gate 全部通过；真实探针则显示国内 6 城中 4 城 ready，海外 Tromso/Hobart/Valletta 尚未 ready。该结果按 `profile_unresolved` / `insufficient_candidates` 安全降级，不影响离线安全门禁结论，但会作为下一阶段 Provider 泛化目标。
+
 ## 边界
 
-这个 Gate 不能替代真实浏览器联调。它只保证核心逻辑和前端构建不退化。
+这个 Gate 不能替代真实浏览器联调或真实 Provider 就绪度探测。它保证离线决策安全、核心逻辑和前端构建不退化；某个城市是否有足够真实候选，仍需 live probe 验证。
 
 如果要验证完整用户体验，还需要启动：
 

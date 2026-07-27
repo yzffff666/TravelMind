@@ -35,6 +35,23 @@ def _as_float(value: Any) -> float | None:
     return number if number == number else None
 
 
+def has_valid_coordinates(candidate: ProviderCandidate) -> bool:
+    """Whether a provider candidate has a usable geographic point.
+
+    ``static_legacy_no_geo`` remains supported by the low-level destination
+    validator for backwards compatibility, but callers that publish an
+    itinerary must require this stricter check.
+    """
+    lat = _as_float(candidate.extra.get("lat"))
+    lng = _as_float(candidate.extra.get("lng"))
+    return bool(
+        lat is not None
+        and lng is not None
+        and -90 <= lat <= 90
+        and -180 <= lng <= 180
+    )
+
+
 def _normalize_text(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(char for char in text if not unicodedata.combining(char))

@@ -1,0 +1,18 @@
+[
+  {"case_id": "cn-museum-explicit", "utterance": "把第二天下午换成上海博物馆", "expected": {"accepted": true, "target_day": 2, "target_slot": "下午", "constraints": ["indoor"], "explicit_place": "上海博物馆"}},
+  {"case_id": "cn-tower-explicit", "utterance": "把第二天晚上换成东方明珠", "expected": {"accepted": true, "target_day": 2, "target_slot": "晚上", "constraints": [], "explicit_place": "东方明珠"}},
+  {"case_id": "cn-road-explicit", "utterance": "把第一天下午换成逛南京路", "expected": {"accepted": true, "target_day": 1, "target_slot": "下午", "constraints": [], "explicit_place": "南京路"}},
+  {"case_id": "cn-cross-city-named", "utterance": "把第二天下午换成香港故宫文化博物馆", "expected": {"accepted": true, "target_day": 2, "target_slot": "下午", "constraints": ["indoor", "culture"], "explicit_place": "香港故宫文化博物馆"}},
+  {"case_id": "cn-indoor-generic", "utterance": "把第二天下午改成室内博物馆", "expected": {"accepted": true, "target_day": 2, "target_slot": "下午", "constraints": ["indoor"]}},
+  {"case_id": "cn-relaxed-generic", "utterance": "把第三天改得轻松一点", "expected": {"accepted": true, "target_day": 3, "target_slot": null, "constraints": ["relaxed"]}},
+  {"case_id": "cn-named-needs-slot", "utterance": "把第二天换成东方明珠", "expected": {"accepted": true, "target_day": 2, "target_slot": null, "constraints": [], "explicit_place": "东方明珠"}},
+  {"case_id": "en-museum-explicit", "utterance": "Change day 2 afternoon to Shanghai Museum", "expected": {"accepted": true, "target_day": 2, "target_slot": "下午", "constraints": ["indoor"], "explicit_place": "Shanghai Museum"}},
+  {"case_id": "en-named-needs-slot", "utterance": "Change day 2 to Shanghai Museum", "expected": {"accepted": true, "target_day": 2, "target_slot": null, "constraints": ["indoor"], "explicit_place": "Shanghai Museum"}},
+  {"case_id": "en-indoor-generic", "utterance": "Change day 2 to an indoor activity", "expected": {"accepted": true, "target_day": 2, "target_slot": null, "constraints": ["indoor"]}},
+  {"case_id": "qa-cn-place-question", "utterance": "第三天下午去哪里", "expected": {"accepted": false}},
+  {"case_id": "qa-cn-constraint-question", "utterance": "第二天有没有室内安排", "expected": {"accepted": false}},
+  {"case_id": "qa-en-day-question", "utterance": "What is day 2 afternoon?", "expected": {"accepted": false}},
+  {"case_id": "invalid-cn-day", "utterance": "把第九天下午换成上海博物馆", "expected": {"accepted": false}},
+  {"case_id": "invalid-en-day", "utterance": "Change day 9 afternoon to Shanghai Museum", "expected": {"accepted": false}},
+  {"case_id": "chat-with-day", "utterance": "帮我看看第二天", "expected": {"accepted": false}}
+]

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,8 @@ class RankingEvalCaseResult:
     policy_rejected_ids: list[str]
     expected_good_ids: list[str]
     expected_rejected: dict[str, list[str]]
+    legacy_good_hit_count: int
+    legacy_good_hit_rate: float | None
     good_hit_count: int
     good_hit_rate: float | None
     rejected_expected_count: int
@@ -41,6 +44,10 @@ class RankingEvalCaseResult:
     unexpected_rejected_good_ids: list[str]
     missing_expected_rejected_ids: list[str]
     reject_reason_mismatches: dict[str, dict[str, list[str]]]
+    unsafe_accepted_ids: list[str]
+    policy_evidence_count: int
+    policy_top_count: int
+    ranking_latency_ms: float
     shadow_report: dict[str, Any]
 
     @property
@@ -64,6 +71,8 @@ class RankingEvalCaseResult:
             "policy_rejected_ids": self.policy_rejected_ids,
             "expected_good_ids": self.expected_good_ids,
             "expected_rejected": self.expected_rejected,
+            "legacy_good_hit_count": self.legacy_good_hit_count,
+            "legacy_good_hit_rate": self.legacy_good_hit_rate,
             "good_hit_count": self.good_hit_count,
             "good_hit_rate": self.good_hit_rate,
             "rejected_expected_count": self.rejected_expected_count,
@@ -71,6 +80,12 @@ class RankingEvalCaseResult:
             "unexpected_rejected_good_ids": self.unexpected_rejected_good_ids,
             "missing_expected_rejected_ids": self.missing_expected_rejected_ids,
             "reject_reason_mismatches": self.reject_reason_mismatches,
+            "unsafe_accepted_ids": self.unsafe_accepted_ids,
+            "policy_evidence_coverage": (
+                round(self.policy_evidence_count / self.policy_top_count, 4)
+                if self.policy_top_count else None
+            ),
+            "ranking_latency_ms": round(self.ranking_latency_ms, 4),
             "shadow_report": self.shadow_report,
         }
 
@@ -115,6 +130,7 @@ def evaluate_case(case: dict[str, Any]) -> RankingEvalCaseResult:
         for candidate_id, reasons in dict(case.get("expected_rejected") or {}).items()
     }
 
+    started = time.perf_counter()
     legacy_ranked = RankingScorer().rank(
         candidates,
         preferences=preferences,
@@ -131,13 +147,23 @@ def evaluate_case(case: dict[str, Any]) -> RankingEvalCaseResult:
         top_k=max(len(candidates), top_k),
         include_rejected=True,
     )
+    ranking_latency_ms = (time.perf_counter() - started) * 1000
 
     accepted = [item for item in policy_ranked if item.accepted]
     rejected = [item for item in policy_ranked if not item.accepted]
     policy_top_ids = _candidate_ids(accepted[:top_k])
+    legacy_top_ids = _candidate_ids(legacy_ranked[:top_k])
     rejected_by_id = {item.candidate.candidate_id: item for item in rejected}
 
+    legacy_good_hit_count = sum(1 for candidate_id in expected_good_ids if candidate_id in legacy_top_ids)
     good_hit_count = sum(1 for candidate_id in expected_good_ids if candidate_id in policy_top_ids)
+    unsafe_accepted_ids = [
+        candidate_id
+        for candidate_id in expected_rejected
+        if any(item.candidate.candidate_id == candidate_id for item in accepted)
+    ]
+    policy_top = accepted[:top_k]
+    policy_evidence_count = sum(1 for item in policy_top if _has_publishable_evidence(item.candidate))
     rejected_expected_ids = [
         candidate_id for candidate_id in expected_rejected
         if candidate_id in rejected_by_id
@@ -175,11 +201,16 @@ def evaluate_case(case: dict[str, Any]) -> RankingEvalCaseResult:
         destination=destination,
         recalled_count=len(candidates),
         top_k=top_k,
-        legacy_top_ids=_candidate_ids(legacy_ranked[:top_k]),
+        legacy_top_ids=legacy_top_ids,
         policy_top_ids=policy_top_ids,
         policy_rejected_ids=_candidate_ids(rejected),
         expected_good_ids=expected_good_ids,
         expected_rejected=expected_rejected,
+        legacy_good_hit_count=legacy_good_hit_count,
+        legacy_good_hit_rate=(
+            round(legacy_good_hit_count / len(expected_good_ids), 4)
+            if expected_good_ids else None
+        ),
         good_hit_count=good_hit_count,
         good_hit_rate=round(good_hit_count / len(expected_good_ids), 4) if expected_good_ids else None,
         rejected_expected_count=len(rejected_expected_ids),
@@ -190,6 +221,10 @@ def evaluate_case(case: dict[str, Any]) -> RankingEvalCaseResult:
         unexpected_rejected_good_ids=unexpected_rejected_good_ids,
         missing_expected_rejected_ids=missing_expected_rejected_ids,
         reject_reason_mismatches=reject_reason_mismatches,
+        unsafe_accepted_ids=unsafe_accepted_ids,
+        policy_evidence_count=policy_evidence_count,
+        policy_top_count=len(policy_top),
+        ranking_latency_ms=ranking_latency_ms,
         shadow_report=shadow_report,
     )
 
@@ -202,14 +237,20 @@ def build_report(cases: list[dict[str, Any]]) -> dict[str, Any]:
         reason_counts.update(result.shadow_report.get("reject_reason_counts") or {})
 
     expected_good_total = sum(len(result.expected_good_ids) for result in results)
+    legacy_good_hit_total = sum(result.legacy_good_hit_count for result in results)
     good_hit_total = sum(result.good_hit_count for result in results)
     expected_rejected_total = sum(len(result.expected_rejected) for result in results)
     rejected_expected_total = sum(result.rejected_expected_count for result in results)
+    unsafe_accepted_count = sum(len(result.unsafe_accepted_ids) for result in results)
+    evidence_count = sum(result.policy_evidence_count for result in results)
+    policy_top_count = sum(result.policy_top_count for result in results)
+    latencies = [result.ranking_latency_ms for result in results]
 
     return {
         "schema_version": "ranking_eval_report_v1",
         "status": "passed" if not failed else "failed",
         "case_count": len(results),
+        "destination_count": len({result.destination for result in results if result.destination}),
         "passed_cases": len(results) - len(failed),
         "failed_cases": len(failed),
         "summary": {
@@ -219,16 +260,46 @@ def build_report(cases: list[dict[str, Any]]) -> dict[str, Any]:
                 round(good_hit_total / expected_good_total, 4)
                 if expected_good_total else None
             ),
+            "legacy_good_hit_rate": (
+                round(legacy_good_hit_total / expected_good_total, 4)
+                if expected_good_total else None
+            ),
+            "policy_good_hit_rate": (
+                round(good_hit_total / expected_good_total, 4)
+                if expected_good_total else None
+            ),
             "expected_rejected_total": expected_rejected_total,
             "rejected_expected_total": rejected_expected_total,
             "rejected_expected_rate": (
                 round(rejected_expected_total / expected_rejected_total, 4)
                 if expected_rejected_total else None
             ),
+            "unsafe_accepted_count": unsafe_accepted_count,
+            "policy_evidence_coverage": (
+                round(evidence_count / policy_top_count, 4)
+                if policy_top_count else None
+            ),
+            "ranking_latency_p50_ms": round(_percentile(latencies, 0.50), 4),
+            "ranking_latency_p95_ms": round(_percentile(latencies, 0.95), 4),
             "reject_reason_counts": dict(reason_counts),
         },
         "cases": [result.to_dict() for result in results],
     }
+
+
+def _has_publishable_evidence(candidate: ProviderCandidate) -> bool:
+    return any(
+        candidate.extra.get(field) not in (None, "", [], 0, 0.0)
+        for field in ("url", "address", "rating", "website", "photos", "tel")
+    )
+
+
+def _percentile(values: list[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, int(round((len(ordered) - 1) * quantile))))
+    return ordered[index]
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -239,7 +310,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Status: `{report['status']}`",
         f"- Cases: {report['passed_cases']}/{report['case_count']} passed",
         f"- Good hit rate: {summary.get('good_hit_rate')}",
+        f"- Legacy / policy good hit rate: {summary.get('legacy_good_hit_rate')} / {summary.get('policy_good_hit_rate')}",
         f"- Expected reject rate: {summary.get('rejected_expected_rate')}",
+        f"- Unsafe accepted: {summary.get('unsafe_accepted_count')}",
+        f"- Evidence coverage: {summary.get('policy_evidence_coverage')}",
+        f"- Ranking latency P50 / P95: {summary.get('ranking_latency_p50_ms')} / {summary.get('ranking_latency_p95_ms')} ms",
         f"- Reject reasons: `{json.dumps(summary.get('reject_reason_counts') or {}, ensure_ascii=False)}`",
         "",
         "| Case | Destination | Status | Legacy Top | Policy Top | Rejected |",

@@ -15,8 +15,14 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.services.destination_grounding import (
+    DestinationProfile,
+    has_valid_coordinates,
+    validate_candidate_destination,
+)
 from app.services.geo_bounds import is_coord_within_destination
 from app.services.providers.base import ProviderCandidate
+from app.services.ranking_scorer import ScoredCandidate
 
 
 _EVIDENCE_FIELDS = ("url", "address", "rating", "website", "photos", "tel")
@@ -66,7 +72,9 @@ class CandidateFeature:
     resolvable_score: float = 0.5
     alias_hit: bool = False
     bbox_valid: bool | None = None
+    destination_grounding_reason: str | None = None
     has_geo: bool = False
+    mock_disallowed: bool = False
     is_generic_activity: bool = False
     is_duplicate: bool = False
     risk_flags: list[str] = field(default_factory=list)
@@ -77,18 +85,29 @@ class CandidateFeature:
         candidate: ProviderCandidate,
         *,
         destination: str = "",
+        destination_profile: DestinationProfile | None = None,
         preferences: list[str] | None = None,
         daily_budget: float | None = None,
         seen_titles: set[str] | None = None,
+        allow_mock: bool = False,
     ) -> "CandidateFeature":
         lat = _as_float(candidate.extra.get("lat"))
         lng = _as_float(candidate.extra.get("lng"))
-        has_geo = lat is not None and lng is not None
-        bbox_valid = (
-            is_coord_within_destination(destination, lat, lng)
-            if destination and has_geo
-            else None
-        )
+        has_geo = has_valid_coordinates(candidate)
+        grounding_reason: str | None = None
+        if destination_profile is not None and has_geo:
+            grounding = validate_candidate_destination(candidate, destination_profile)
+            bbox_valid = grounding.accepted
+            if not grounding.accepted:
+                grounding_reason = grounding.reason
+        else:
+            bbox_valid = (
+                is_coord_within_destination(destination, lat, lng)
+                if destination and has_geo and lat is not None and lng is not None
+                else None
+            )
+            if bbox_valid is False:
+                grounding_reason = "bbox_invalid"
 
         title_key = _normalize_text(candidate.title or "")
         is_duplicate = bool(title_key and seen_titles is not None and title_key in seen_titles)
@@ -96,10 +115,10 @@ class CandidateFeature:
             seen_titles.add(title_key)
 
         risk_flags: list[str] = []
-        if bbox_valid is False:
-            risk_flags.append("bbox_invalid")
         if not has_geo:
             risk_flags.append("missing_geo")
+        elif grounding_reason:
+            risk_flags.append(grounding_reason)
         if is_duplicate:
             risk_flags.append("duplicate_poi")
 
@@ -124,7 +143,9 @@ class CandidateFeature:
             resolvable_score=_resolvable_score(candidate, has_geo=has_geo, alias_hit=alias_hit),
             alias_hit=alias_hit,
             bbox_valid=bbox_valid,
+            destination_grounding_reason=grounding_reason,
             has_geo=has_geo,
+            mock_disallowed=candidate.source.lower().startswith("mock") and not allow_mock,
             is_generic_activity=is_generic,
             is_duplicate=is_duplicate,
             risk_flags=risk_flags,
@@ -170,21 +191,30 @@ class POIRankingPolicy:
         candidates: list[ProviderCandidate],
         *,
         destination: str = "",
+        destination_profile: DestinationProfile | None = None,
         preferences: list[str] | None = None,
         budget: float | None = None,
         days: int | None = None,
         top_k: int = 15,
         include_rejected: bool = False,
+        allow_mock: bool = False,
     ) -> list[RankedPOICandidate]:
+        effective_destination = (
+            destination_profile.canonical_name
+            if destination_profile is not None
+            else destination
+        )
         daily_budget = budget / days if budget is not None and days and days > 0 else None
         seen_titles: set[str] = set()
         features = [
             CandidateFeature.from_candidate(
                 candidate,
-                destination=destination,
+                destination=effective_destination,
+                destination_profile=destination_profile,
                 preferences=preferences,
                 daily_budget=daily_budget,
                 seen_titles=seen_titles,
+                allow_mock=allow_mock,
             )
             for candidate in candidates
         ]
@@ -237,13 +267,45 @@ class POIRankingPolicy:
     @staticmethod
     def _hard_gate(feature: CandidateFeature) -> list[str]:
         reasons: list[str] = []
+        if not feature.has_geo:
+            reasons.append("missing_geo")
+        if feature.mock_disallowed:
+            reasons.append("mock_candidate")
         if feature.is_generic_activity:
             reasons.append("generic_activity")
         if feature.is_duplicate:
             reasons.append("duplicate_poi")
-        if feature.bbox_valid is False:
-            reasons.append("bbox_invalid")
+        if feature.destination_grounding_reason:
+            reasons.append(feature.destination_grounding_reason)
         return reasons
+
+
+def policy_ranked_to_scored(
+    ranked: list[RankedPOICandidate],
+) -> list[ScoredCandidate]:
+    """Adapt accepted policy decisions to the planner's stable input contract."""
+    return [
+        ScoredCandidate(
+            candidate=item.candidate,
+            total_score=item.rank_score,
+            breakdown=dict(item.score_breakdown),
+        )
+        for item in ranked
+        if item.accepted
+    ]
+
+
+def select_runtime_ranking(
+    mode: str,
+    legacy_ranked: list[ScoredCandidate],
+    policy_ranked: list[RankedPOICandidate],
+) -> list[ScoredCandidate]:
+    """Select the planner input while keeping rollout reversible."""
+    if mode == "candidate":
+        return policy_ranked_to_scored(policy_ranked)
+    if mode in {"legacy", "shadow"}:
+        return legacy_ranked
+    raise ValueError(f"Unsupported POI ranking mode: {mode}")
 
 
 def build_ranking_shadow_report(

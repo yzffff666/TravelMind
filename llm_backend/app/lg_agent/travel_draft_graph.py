@@ -3,7 +3,6 @@ import json
 import re as _re
 import time
 import uuid
-from collections import Counter
 from datetime import datetime, timezone
 from hashlib import md5
 from typing import Any, TypedDict
@@ -42,12 +41,12 @@ from app.schemas.itinerary_v1 import (
     TripProfile,
     ValidationResult,
 )
+from app.services.candidate_publishability import evaluate_candidate_publishability
 from app.services.constraint_filter import ConstraintFilter, FilterResult
 from app.services.coverage_tracker import CoverageTracker
 from app.services.destination_grounding import (
     DestinationProfile,
     DestinationResolver,
-    filter_candidates_for_destination,
 )
 from app.services.evidence_builder import EvidenceBuilder, PipelineResult
 from app.services.geo_bounds import is_coord_within_destination
@@ -57,7 +56,11 @@ from app.services.itinerary_planner import (
     PlannerResult,
     apply_plan_skeleton,
 )
-from app.services.poi_ranking_policy import POIRankingPolicy, build_ranking_shadow_report
+from app.services.poi_ranking_policy import (
+    POIRankingPolicy,
+    build_ranking_shadow_report,
+    select_runtime_ranking,
+)
 from app.services.ranking_scorer import RankingScorer
 from app.services.recall_service import RecallService
 
@@ -826,6 +829,7 @@ async def recall_node(state: TravelDraftState) -> dict:
     planner_result: PlannerResult | None = None
     plan_skeleton: dict = {}
     planner_status = "disabled"
+    profile: DestinationProfile | None = None
     try:
         qp, recall_svc, scorer, flt, eb, _ = _get_pipeline()
         qp_output = qp.process(state["query"])
@@ -869,18 +873,19 @@ async def recall_node(state: TravelDraftState) -> dict:
 
         recall_result = await recall_svc.recall_from_qp(qp_output)
         if settings.ENABLE_DESTINATION_GROUNDING:
-            valid_candidates, grounding_decisions = filter_candidates_for_destination(
+            recalled_count = len(recall_result.candidates)
+            publishability = evaluate_candidate_publishability(
                 recall_result.candidates,
                 profile,
+                required_count=settings.DESTINATION_GROUNDING_MIN_CANDIDATES,
+                allow_mock=settings.ALLOW_MOCK_PUBLISH,
             )
-            grounding_reject_reason_counts = dict(
-                Counter(decision.reason for decision in grounding_decisions if not decision.accepted)
-            )
-            recall_result.candidates = valid_candidates
-            if profile.is_dynamic and len(valid_candidates) < settings.DESTINATION_GROUNDING_MIN_CANDIDATES:
-                grounding_status = "insufficient_candidates"
+            grounding_reject_reason_counts = publishability.reject_reason_counts
+            recall_result.candidates = publishability.accepted
+            if not publishability.ready:
+                grounding_status = publishability.status
                 grounding_message = (
-                    f"已定位到“{profile.canonical_name}”，但当前只找到 {len(valid_candidates)} 个"
+                    f"已定位到“{profile.canonical_name}”，但当前只找到 {len(publishability.accepted)} 个"
                     "可验证的本地景点。为避免生成串城行程，请补充更具体的区域或稍后重试。"
                 )
                 logger.info(
@@ -890,8 +895,8 @@ async def recall_node(state: TravelDraftState) -> dict:
                         "status": grounding_status,
                         "destination": destination,
                         "profile": destination_profile,
-                        "candidate_count": len(grounding_decisions),
-                        "validated_candidate_count": len(valid_candidates),
+                        "candidate_count": recalled_count,
+                        "validated_candidate_count": len(publishability.accepted),
                         "reject_reason_counts": grounding_reject_reason_counts,
                     },
                 )
@@ -935,23 +940,33 @@ async def recall_node(state: TravelDraftState) -> dict:
                 })
                 recall_geo_index[title] = entry
 
-        ranked = scorer.rank_from_qp(recall_result.candidates, qp_output, top_k=15)
-        policy_ranked = POIRankingPolicy().rank(
-            recall_result.candidates,
-            destination=constraints.get("destination_city") or recall_result.city,
-            preferences=constraints.get("preferences"),
-            budget=constraints.get("budget"),
-            days=constraints.get("days"),
-            top_k=max(len(recall_result.candidates), 15),
-            include_rejected=True,
+        legacy_ranked = scorer.rank_from_qp(recall_result.candidates, qp_output, top_k=15)
+        policy_ranked = []
+        if settings.POI_RANKING_MODE != "legacy":
+            policy_ranked = POIRankingPolicy().rank(
+                recall_result.candidates,
+                destination=constraints.get("destination_city") or recall_result.city,
+                destination_profile=profile,
+                preferences=constraints.get("preferences"),
+                budget=constraints.get("budget"),
+                days=constraints.get("days"),
+                top_k=max(len(recall_result.candidates), 15),
+                include_rejected=True,
+                allow_mock=settings.ALLOW_MOCK_PUBLISH,
+            )
+            poi_ranking_shadow_report = build_ranking_shadow_report(
+                destination=constraints.get("destination_city") or recall_result.city,
+                recalled_count=len(recall_result.candidates),
+                legacy_ranked=legacy_ranked,
+                policy_ranked=policy_ranked,
+            )
+            poi_ranking_shadow_report["ranking_mode"] = settings.POI_RANKING_MODE
+            logger.info("poi_ranking_shadow", extra=poi_ranking_shadow_report)
+        ranked = select_runtime_ranking(
+            settings.POI_RANKING_MODE,
+            legacy_ranked,
+            policy_ranked,
         )
-        poi_ranking_shadow_report = build_ranking_shadow_report(
-            destination=constraints.get("destination_city") or recall_result.city,
-            recalled_count=len(recall_result.candidates),
-            legacy_ranked=ranked,
-            policy_ranked=policy_ranked,
-        )
-        logger.info("poi_ranking_shadow", extra=poi_ranking_shadow_report)
         if settings.ENABLE_DESTINATION_GROUNDING:
             logger.info(
                 "destination_grounding",
@@ -1031,7 +1046,9 @@ async def recall_node(state: TravelDraftState) -> dict:
         if pipeline_result.assumptions:
             logger.info(f"Pipeline assumptions: {pipeline_result.assumptions}")
     except Exception as exc:
-        logger.warning(f"Pipeline failed, will proceed with LLM-only: {exc}")
+        grounding_status = "pipeline_error"
+        grounding_message = "候选服务暂时不可用，为避免生成未经验证的地点，本次未生成行程，请稍后重试。"
+        logger.warning(f"Pipeline failed closed before LLM generation: {exc}")
         recall_degraded = True
 
     elapsed = (time.perf_counter() - t0) * 1000
@@ -1318,7 +1335,12 @@ def _should_continue_after_extract(state: TravelDraftState) -> str:
 
 
 def _should_continue_after_recall(state: TravelDraftState) -> str:
-    if state.get("grounding_status") in {"unresolved", "insufficient_candidates", "planner_infeasible"}:
+    if state.get("grounding_status") in {
+        "unresolved",
+        "insufficient_candidates",
+        "planner_infeasible",
+        "pipeline_error",
+    }:
         return "grounding_exit_node"
     return "llm_draft_node"
 

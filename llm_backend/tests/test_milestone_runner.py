@@ -7,10 +7,12 @@ from scripts.milestone_runner import (
     run_command_gate,
     run_golden_demo_eval_gate,
     run_hybrid_qp_eval_gate,
+    run_explicit_poi_edit_eval_gate,
     run_structured_edit_replan_eval_gate,
     run_qp_eval_gate,
     run_ranking_eval_gate,
     run_planner_eval_gate,
+    run_destination_readiness_eval_gate,
     run_unseen_destination_eval_gate,
     write_artifacts,
 )
@@ -47,6 +49,19 @@ def test_structured_edit_replan_eval_gate_passes_default_cases():
     assert result.failures == []
 
 
+def test_explicit_poi_edit_eval_gate_passes_default_cases():
+    result = run_explicit_poi_edit_eval_gate(
+        {"type": "explicit_poi_edit_eval", "name": "explicit_poi_edit_eval"}
+    )
+
+    assert result.status == "passed"
+    assert result.summary["case_count"] >= 16
+    assert result.summary["explicit_cases"] >= 7
+    assert result.summary["failed_cases"] == 0
+    assert result.summary["unsafe_revision_failures"] == 0
+    assert result.failures == []
+
+
 def test_status_and_artifacts_are_compact(tmp_path):
     gate = run_qp_eval_gate({"type": "qp_eval", "name": "qp_eval"})
     status = build_status({"name": "test-milestone"}, [gate], run_id="run-1")
@@ -74,9 +89,13 @@ def test_ranking_eval_gate_passes_default_cases():
     result = run_ranking_eval_gate({"type": "ranking_eval", "name": "ranking_eval"})
 
     assert result.status == "passed"
-    assert result.summary["case_count"] >= 1
+    assert result.summary["case_count"] >= 20
+    assert result.summary["destination_count"] >= 10
     assert result.summary["good_hit_rate"] == 1.0
+    assert result.summary["policy_good_hit_rate"] >= result.summary["legacy_good_hit_rate"]
     assert result.summary["rejected_expected_rate"] == 1.0
+    assert result.summary["unsafe_accepted_count"] == 0
+    assert result.summary["ranking_latency_p95_ms"] < 50
     assert result.failures == []
 
 
@@ -101,6 +120,20 @@ def test_unseen_destination_eval_gate_passes_default_cases():
     assert result.failures == []
 
 
+def test_destination_readiness_eval_gate_passes_mixed_city_matrix():
+    result = run_destination_readiness_eval_gate(
+        {"type": "destination_readiness_eval", "name": "destination_readiness_eval"}
+    )
+
+    assert result.status == "passed"
+    assert result.summary["case_count"] == 12
+    assert result.summary["ready_cases"] == 10
+    assert result.summary["safe_degradation_cases"] == 2
+    assert result.summary["static_cases"] == 6
+    assert result.summary["dynamic_cases"] == 6
+    assert result.failures == []
+
+
 def test_planner_eval_gate_passes_default_cases():
     result = run_planner_eval_gate({"type": "planner_eval", "name": "planner_eval"})
 
@@ -118,10 +151,12 @@ def test_default_config_covers_core_integration_gates():
         "qp_eval",
         "hybrid_qp_eval",
         "structured_edit_replan_eval",
+        "explicit_poi_edit_eval",
         "golden_demo_eval",
         "ranking_eval",
         "planner_eval",
         "unseen_destination_eval",
+        "destination_readiness_eval",
         "backend_core_integration_tests",
         "frontend_chat_component_tests",
         "frontend_type_check",
@@ -132,6 +167,7 @@ def test_default_config_covers_core_integration_gates():
     assert "tests/test_golden_demo_eval.py" in backend_gate["targets"]
     assert "tests/test_hybrid_qp_eval.py" in backend_gate["targets"]
     assert "tests/test_structured_edit_replan_eval.py" in backend_gate["targets"]
+    assert "tests/test_explicit_poi_edit_eval.py" in backend_gate["targets"]
     assert "tests/test_structured_qp_shadow_eval.py" in backend_gate["targets"]
     assert "tests/test_ranking_eval_report.py" in backend_gate["targets"]
     assert "tests/test_destination_grounding.py" in backend_gate["targets"]
@@ -139,6 +175,7 @@ def test_default_config_covers_core_integration_gates():
     assert "tests/test_itinerary_planner.py" in backend_gate["targets"]
     assert "tests/test_planner_eval.py" in backend_gate["targets"]
     assert "tests/test_unseen_destination_eval.py" in backend_gate["targets"]
+    assert "tests/test_destination_readiness_eval.py" in backend_gate["targets"]
     assert "tests/test_geo_bounds.py" in backend_gate["targets"]
     assert "tests/test_patch_engine.py" in backend_gate["targets"]
     assert "tests/test_day_replan_service.py" in backend_gate["targets"]

@@ -50,6 +50,7 @@ class PatchResult:
 
 
 _DAY_PATTERN = re.compile(r"第\s*(\d+|[一二两三四五六七八九十]+)\s*天")
+_ENGLISH_DAY_PATTERN = re.compile(r"\bday\s*(\d{1,2})\b", re.IGNORECASE)
 _CN_DAY_NUM = {
     "一": 1,
     "二": 2,
@@ -80,6 +81,19 @@ def _normalize_slot(label: str | None) -> str | None:
 _DELETE_HINTS = ("删掉", "删除", "去掉", "不要", "取消")
 _ADD_HINTS = ("增加", "加上", "添加", "插入", "新增")
 _REPLACE_HINTS = ("换成", "替换", "改成", "改为", "变成")
+_ENGLISH_REPLACE_PATTERN = re.compile(
+    r"\b(?:please\s+)?(?:change|replace|switch|set)\s+day\s*(\d{1,2})\s+"
+    r"(morning|afternoon|evening)\s+(?:to|with)\s+(.+?)\s*[.!?]*$",
+    re.IGNORECASE,
+)
+_ENGLISH_DAY_REPLACE_PATTERN = re.compile(
+    r"\b(?:please\s+)?(?:change|replace|switch|set)\s+day\s*(\d{1,2})\s+(?:to|with)\s+(.+?)\s*[.!?]*$",
+    re.IGNORECASE,
+)
+_ENGLISH_MUTATION_PATTERN = re.compile(
+    r"\b(change|modify|adjust|replace|switch|swap|remove|delete|add|insert|make|move|reschedule)\b",
+    re.IGNORECASE,
+)
 _DAY_REPLAN_HINTS = (*_REPLACE_HINTS, "安排", "调整", "调整为", "改一下", "换一下")
 _MUTATION_HINTS = (
     *_DELETE_HINTS,
@@ -97,10 +111,10 @@ _MUTATION_HINTS = (
 _BUDGET_PATTERN = re.compile(r"预算[改调]?[成为到]?\s*(\d+)")
 _PREFERENCE_PATTERN = re.compile(r"偏好[改调]?[成为到]?\s*(.+?)(?:\s|$)")
 _DAY_REPLAN_CONSTRAINT_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "indoor": ("室内", "下雨", "避雨", "少晒", "不晒", "博物馆", "美术馆", "展馆", "商场"),
-    "relaxed": ("轻松", "悠闲", "慢一点", "慢节奏", "少走路", "别太累", "不要太累", "别太赶", "不要太赶", "不赶"),
-    "food": ("美食", "吃喝", "逛吃", "小吃", "茶餐厅", "餐厅"),
-    "culture": ("文化", "历史", "人文", "艺术", "展览"),
+    "indoor": ("室内", "下雨", "避雨", "少晒", "不晒", "博物馆", "美术馆", "展馆", "商场", "indoor", "museum", "gallery", "mall"),
+    "relaxed": ("轻松", "悠闲", "慢一点", "慢节奏", "少走路", "别太累", "不要太累", "别太赶", "不要太赶", "不赶", "relaxed", "easy"),
+    "food": ("美食", "吃喝", "逛吃", "小吃", "茶餐厅", "餐厅", "food", "restaurant"),
+    "culture": ("文化", "历史", "人文", "艺术", "展览", "culture", "history", "art"),
 }
 _READONLY_DAY_QUESTION_HINTS = (
     "是什么",
@@ -129,6 +143,15 @@ _PLACE_TRAILING_ACTIONS = (
     "吃饭",
     "体验",
 )
+_GENERIC_EXPLICIT_PLACE_PATTERNS = (
+    re.compile(r"^(?:室内|避雨|轻松|悠闲|慢节奏|美食|文化|艺术|休闲|自由)?(?:活动|行程|安排|体验)?$"),
+    re.compile(r"^(?:室内|避雨|轻松|悠闲|慢节奏)?(?:博物馆|美术馆|展馆|商场|餐厅|景点|活动)$"),
+    re.compile(r"^(?:一(?:个|间)?|一个|一间)?(?:博物馆|美术馆|展馆|商场|餐厅|景点)$"),
+)
+_GENERIC_ENGLISH_EXPLICIT_PLACE_PATTERNS = (
+    re.compile(r"^(?:an?\s+)?(?:indoor|relaxed|easy|cultural|food)?\s*(?:activity|plan|experience)$", re.IGNORECASE),
+    re.compile(r"^(?:an?\s+)?(?:indoor\s+)?(?:museum|gallery|exhibition|mall|restaurant|attraction)$", re.IGNORECASE),
+)
 
 
 def has_mutation_intent(utterance: str) -> bool:
@@ -137,6 +160,7 @@ def has_mutation_intent(utterance: str) -> bool:
     return bool(text) and (
         any(hint in text for hint in _MUTATION_HINTS)
         or _has_contextual_day_replan_intent(text)
+        or bool(_ENGLISH_MUTATION_PATTERN.search(text))
     )
 
 # 解析编辑操作
@@ -159,6 +183,20 @@ def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
     # Collect all matching ops (no early return — supports multi-op edits)
 
     day_replan_constraints = _extract_day_replan_constraints(text)
+    explicit_place = _extract_explicit_place_request(text, target_day, target_slot)
+    if explicit_place:
+        ops.append(PatchOp(
+            op=PatchOpType.REPLAN_DAY,
+            day_index=target_day,
+            payload={
+                "constraints": day_replan_constraints,
+                "explicit_place": explicit_place,
+                "raw_request": text,
+                "target_slot": target_slot,
+                "execution_source": "rule_explicit_poi",
+            },
+        ))
+
     # Constraint edits are replan requests even when they name a specific
     # slot. A generic text replacement would leak phrases such as "改成室内"
     # into the itinerary instead of selecting a verified POI. Explicit add /
@@ -166,6 +204,7 @@ def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
     if (
         target_day
         and day_replan_constraints
+        and not explicit_place
         and has_mutation_intent(text)
         and not _match_any(text, _DELETE_HINTS)
         and not _match_any(text, _ADD_HINTS)
@@ -217,7 +256,9 @@ def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
             payload={"preferences": [p.strip() for p in re.split(r"[,，、/+]", pref_m.group(1)) if p.strip()]},
         ))
 
-    if not ops and _match_any(text, _REPLACE_HINTS):
+    if not ops and (_match_any(text, _REPLACE_HINTS) or _ENGLISH_MUTATION_PATTERN.search(text)):
+        if target_day is None:
+            return []
         new_content = _extract_content_after_hints(text, _REPLACE_HINTS)
         ops.append(PatchOp(
             op=PatchOpType.REPLACE_SLOT,
@@ -227,6 +268,8 @@ def parse_edit_ops(utterance: str, current_itinerary: dict) -> list[PatchOp]:
         ))
 
     if not ops:
+        if target_slot is None:
+            return []
         ops.append(_fallback_replace(target_day, target_slot, text))
 
     return ops
@@ -331,6 +374,10 @@ def _extract_target_day(text: str, total_days: int) -> int | None:
         raw = m.group(1)
         d = int(raw) if raw.isdigit() else _cn_day_to_int(raw)
         return d if 1 <= d <= total_days else None
+    english_match = _ENGLISH_DAY_PATTERN.search(text)
+    if english_match:
+        day_index = int(english_match.group(1))
+        return day_index if 1 <= day_index <= total_days else None
     return None
 
 
@@ -347,22 +394,64 @@ def _cn_day_to_int(raw: str) -> int:
 
 
 def _extract_target_slot(text: str) -> str | None:
+    lower_text = text.lower()
     for variant, canonical in _SLOT_NORMALIZE.items():
-        if variant in text:
+        if variant in text or (variant.isascii() and variant in lower_text):
             return canonical
     return None
 
 
 def _extract_day_replan_constraints(text: str) -> list[str]:
     constraints: list[str] = []
+    lower_text = text.lower()
     for constraint, keywords in _DAY_REPLAN_CONSTRAINT_KEYWORDS.items():
-        if any(keyword in text for keyword in keywords):
+        if any(keyword in text or (keyword.isascii() and keyword in lower_text) for keyword in keywords):
             constraints.append(constraint)
     return constraints
 
 
+def _extract_explicit_place_request(
+    text: str,
+    target_day: int | None,
+    target_slot: str | None,
+) -> str | None:
+    """Extract a named POI only for bounded day/slot replacement commands.
+
+    Generic phrases such as ``室内博物馆`` must stay on the constraint-replan
+    path.  A name like ``上海博物馆`` is deliberately treated differently and
+    must be verified against provider candidates before a revision is emitted.
+    """
+    if not target_day:
+        return None
+
+    english_match = _ENGLISH_REPLACE_PATTERN.search(text)
+    if english_match:
+        raw = english_match.group(3).strip()
+    elif english_match := _ENGLISH_DAY_REPLACE_PATTERN.search(text):
+        raw = english_match.group(2).strip()
+    elif _match_any(text, _REPLACE_HINTS):
+        raw = _extract_content_after_hints(text, _REPLACE_HINTS)
+    else:
+        return None
+
+    place = _infer_place_from_activity(raw)
+    if not place or _is_generic_place_request(place):
+        return None
+    return place
+
+
+def _is_generic_place_request(place: str) -> bool:
+    normalized = re.sub(r"\s+", " ", (place or "").strip(" ，,。.!?"))
+    if not normalized:
+        return True
+    return any(pattern.fullmatch(normalized) for pattern in (
+        *_GENERIC_EXPLICIT_PLACE_PATTERNS,
+        *_GENERIC_ENGLISH_EXPLICIT_PLACE_PATTERNS,
+    ))
+
+
 def _has_contextual_day_replan_intent(text: str) -> bool:
-    if not _DAY_PATTERN.search(text):
+    if not (_DAY_PATTERN.search(text) or _ENGLISH_DAY_PATTERN.search(text)):
         return False
     if _is_readonly_day_question(text):
         return False
@@ -372,7 +461,9 @@ def _has_contextual_day_replan_intent(text: str) -> bool:
 
 
 def _is_readonly_day_question(text: str) -> bool:
-    return bool(_DAY_PATTERN.search(text)) and any(hint in text for hint in _READONLY_DAY_QUESTION_HINTS)
+    has_day = bool(_DAY_PATTERN.search(text) or _ENGLISH_DAY_PATTERN.search(text))
+    english_question = bool(re.match(r"^\s*(?:what|where|when|how|is|are|can)\b", text, re.IGNORECASE))
+    return has_day and (any(hint in text for hint in _READONLY_DAY_QUESTION_HINTS) or english_question)
 
 
 def _match_any(text: str, hints: tuple[str, ...]) -> bool:
@@ -393,6 +484,7 @@ def _extract_content_after_hints(text: str, hints: tuple[str, ...]) -> str:
 def _infer_place_from_activity(activity: str) -> str | None:
     place = (activity or "").strip(" ，,。")
     place = re.sub(r"^(去|到|前往|游览|参观|逛|打卡|体验)", "", place).strip(" ，,。")
+    place = re.sub(r"^(?:go\s+to|visit|tour|see)\s+", "", place, flags=re.IGNORECASE).strip(" ，,。")
     for suffix in _PLACE_TRAILING_ACTIONS:
         if place.endswith(suffix) and len(place) > len(suffix):
             place = place[: -len(suffix)].strip(" ，,。")
@@ -560,6 +652,7 @@ def _apply_replan_day(
         return False
 
     constraints = list(op.payload.get("constraints") or [])
+    explicit_place = str(op.payload.get("explicit_place") or "").strip() or None
     target_slot = _normalize_slot(op.payload.get("target_slot"))
     target_slots = day.get("slots", [])
     if target_slot:
@@ -579,6 +672,7 @@ def _apply_replan_day(
     replan_requests.append({
         "day_index": op.day_index,
         "constraints": constraints,
+        "explicit_place": explicit_place,
         "raw_request": op.payload.get("raw_request"),
         "anchor_locations": anchor_locations,
         "target_slot": target_slot,
@@ -586,9 +680,14 @@ def _apply_replan_day(
     })
 
     old_desc = "、".join([s for s in old_slots if s][:3]) or "原安排"
-    constraint_desc = "、".join(_constraint_label(c) for c in constraints) or "新偏好"
     scope_desc = f"{target_slot}时段" if target_slot else ""
-    diff_items.append(f"第{op.day_index}天{scope_desc}按「{constraint_desc}」候选重新规划（原安排：{old_desc}）")
+    if explicit_place:
+        diff_items.append(
+            f"第{op.day_index}天{scope_desc}将验证指定地点「{explicit_place}」（原安排：{old_desc}）"
+        )
+    else:
+        constraint_desc = "、".join(_constraint_label(c) for c in constraints) or "新偏好"
+        diff_items.append(f"第{op.day_index}天{scope_desc}按「{constraint_desc}」候选重新规划（原安排：{old_desc}）")
     return True
 
 

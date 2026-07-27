@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     DESTINATION_GROUNDING_MIN_CANDIDATES: int = 3
     ALLOW_MOCK_PUBLISH: bool = False
     ENABLE_CONSTRAINT_PLANNER: bool = True
+    POI_RANKING_MODE: Literal["legacy", "shadow", "candidate"] = "shadow"
 
     # Amap (高德地图) settings
     AMAP_API_KEY: str = ""

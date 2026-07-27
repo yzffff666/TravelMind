@@ -17,6 +17,11 @@
       "cases": "evaluation/structured_edit_replan_cases.json"
     },
     {
+      "type": "explicit_poi_edit_eval",
+      "name": "explicit_poi_edit_eval",
+      "cases": "evaluation/explicit_poi_edit_cases.json"
+    },
+    {
       "type": "golden_demo_eval",
       "name": "golden_demo_eval",
       "cases": "evaluation/golden_demo_cases.json"
@@ -36,12 +41,18 @@
       "cases": "evaluation/unseen_destination_cases.json"
     },
     {
+      "type": "destination_readiness_eval",
+      "name": "destination_readiness_eval",
+      "cases": "evaluation/destination_readiness_cases.json"
+    },
+    {
       "type": "pytest",
       "name": "backend_core_integration_tests",
       "targets": [
         "tests/test_qp_rule_evaluation.py",
         "tests/test_hybrid_qp_eval.py",
         "tests/test_structured_edit_replan_eval.py",
+        "tests/test_explicit_poi_edit_eval.py",
         "tests/test_structured_qp_shadow_eval.py",
         "tests/test_travel_m2_011.py",
         "tests/test_golden_demo_eval.py",
@@ -52,6 +63,7 @@
         "tests/test_itinerary_planner.py",
         "tests/test_planner_eval.py",
         "tests/test_unseen_destination_eval.py",
+        "tests/test_destination_readiness_eval.py",
         "tests/test_geo_bounds.py",
         "tests/test_patch_engine.py",
         "tests/test_day_replan_service.py",

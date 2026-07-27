@@ -151,6 +151,28 @@ def test_dynamic_grounding_stops_before_llm_when_verified_candidates_are_insuffi
     assert llm.calls == 0
 
 
+def test_static_destination_stops_before_llm_without_coordinate_backed_local_candidates():
+    """Static bbox compatibility must not let an ungrounded draft hallucinate POIs."""
+    import app.lg_agent.travel_draft_graph as tdg
+
+    recall = _FixtureRecall([
+        _candidate("东京塔", lat=35.6586, lng=139.7454, city="Tokyo"),
+        _candidate("无坐标上海候选", lat=None, lng=None, city="上海"),
+    ])
+    llm = _FixtureLLM(["东京塔", "无坐标上海候选", "东京塔"])
+    resolver = DestinationResolver(lookups=[])
+
+    with patch.object(tdg, "_get_pipeline", return_value=_pipeline(recall)), patch.object(
+        tdg, "_get_destination_resolver", return_value=resolver
+    ), patch.object(tdg, "_get_llm", return_value=llm):
+        result = _run(tdg.travel_draft_graph.ainvoke({"query": "帮我规划上海3天，预算5000"}))
+
+    assert result["grounding_status"] == "insufficient_candidates"
+    assert result["final_itinerary"] is None
+    assert "可验证的本地景点" in result["final_text"]
+    assert llm.calls == 0
+
+
 def test_dynamic_grounding_planner_replaces_llm_hallucinated_place_with_verified_candidate():
     import app.lg_agent.travel_draft_graph as tdg
 

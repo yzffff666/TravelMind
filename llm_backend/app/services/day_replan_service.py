@@ -8,15 +8,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.services.destination_grounding import (
-    DestinationResolver,
-    filter_candidates_for_destination,
-)
+from app.core.config import settings
+from app.services.candidate_publishability import evaluate_candidate_publishability
+from app.services.destination_grounding import DestinationResolver
 from app.services.itinerary_planner import (
     SLOT_LABELS,
     ConstraintAwareItineraryPlanner,
     plan_slots_as_payloads,
 )
+from app.services.poi_name_match import is_verified_poi_name_match
+from app.services.poi_ranking_policy import POIRankingPolicy, select_runtime_ranking
 from app.services.providers.base import ProviderCallContext
 from app.services.ranking_scorer import RankingScorer
 from app.services.recall_service import RecallResult, RecallService
@@ -78,9 +79,16 @@ class DayReplanService:
                 continue
 
             constraints = [str(c) for c in (request.get("constraints") or []) if c]
+            explicit_place = str(request.get("explicit_place") or "").strip() or None
             target_slot = _normalize_slot(request.get("target_slot"))
             if target_slot and not any(_normalize_slot(slot.get("slot")) == target_slot for slot in day.get("slots") or []):
                 report.assumptions.append(f"第{day_index}天未找到{target_slot}时段，已保留原行程。")
+                continue
+            if explicit_place and not target_slot:
+                report.planner_statuses[day_index] = "explicit_place_requires_slot"
+                report.assumptions.append(
+                    f"请说明要把第{day_index}天的哪个时段换成“{explicit_place}”，已保留原行程。"
+                )
                 continue
             target_slots = [target_slot] if target_slot else list(SLOT_LABELS)
             required_count = len(target_slots)
@@ -95,7 +103,8 @@ class DayReplanService:
             report.grounding_statuses[day_index] = "static" if not profile.is_dynamic else "grounded"
             preferences = _user_preferences(itinerary)
             terms = _query_terms(constraints, preferences)
-            query = " ".join([profile.canonical_name, *terms]).strip() or profile.canonical_name
+            query_terms = [explicit_place] if explicit_place else terms
+            query = " ".join([profile.canonical_name, *query_terms]).strip() or profile.canonical_name
 
             recall_result = await self._recall_service.recall_simple(
                 query=query,
@@ -104,25 +113,63 @@ class DayReplanService:
                 context=context,
             )
             report.assumptions.extend(recall_result.assumptions)
-            validated_candidates, grounding_decisions = filter_candidates_for_destination(
+            publishability = evaluate_candidate_publishability(
                 recall_result.candidates,
                 profile,
+                required_count=required_count,
+                allow_mock=settings.ALLOW_MOCK_PUBLISH,
             )
-            recall_result.candidates = validated_candidates
-            if profile.is_dynamic and len(validated_candidates) < required_count:
-                report.grounding_statuses[day_index] = "insufficient_candidates"
-                report.candidate_counts[day_index] = len(validated_candidates)
-                report.assumptions.append(
-                    f"第{day_index}天仅找到 {len(validated_candidates)} 个可验证本地候选，已保留原行程。"
-                )
+            recall_result.candidates = publishability.accepted
+            report.candidate_counts[day_index] = len(recall_result.candidates)
+            if not publishability.ready:
+                report.grounding_statuses[day_index] = publishability.status
+                if explicit_place:
+                    report.assumptions.append(
+                        f"第{day_index}天未找到与“{explicit_place}”位于“{profile.canonical_name}”的可验证地点，已保留原行程。"
+                    )
+                else:
+                    report.assumptions.append(
+                        f"第{day_index}天候选不足：仅找到 {len(recall_result.candidates)} 个可验证本地候选，已保留原行程。"
+                    )
                 continue
+            if explicit_place:
+                recall_result.candidates = [
+                    candidate
+                    for candidate in recall_result.candidates
+                    if is_verified_poi_name_match(explicit_place, candidate.title)
+                ]
+                report.candidate_counts[day_index] = len(recall_result.candidates)
+                if not recall_result.candidates:
+                    report.planner_statuses[day_index] = "explicit_place_unverified"
+                    report.assumptions.append(
+                        f"第{day_index}天未找到与“{explicit_place}”名称相符且位于“{profile.canonical_name}”的可验证地点，已保留原行程。"
+                    )
+                    continue
 
-            ranked = self._ranking_scorer.rank(
+            legacy_ranked = self._ranking_scorer.rank(
                 recall_result.candidates,
                 preferences=terms,
                 budget=_total_budget(itinerary),
                 days=len(itinerary.get("days") or []),
                 top_k=12,
+            )
+            policy_ranked = []
+            if settings.POI_RANKING_MODE != "legacy":
+                policy_ranked = POIRankingPolicy().rank(
+                    recall_result.candidates,
+                    destination=profile.canonical_name,
+                    destination_profile=profile,
+                    preferences=terms,
+                    budget=_total_budget(itinerary),
+                    days=len(itinerary.get("days") or []),
+                    top_k=max(12, len(recall_result.candidates)),
+                    include_rejected=True,
+                    allow_mock=settings.ALLOW_MOCK_PUBLISH,
+                )
+            ranked = select_runtime_ranking(
+                settings.POI_RANKING_MODE,
+                legacy_ranked,
+                policy_ranked,
             )
             plan_result = self._planner.plan(
                 ranked,
@@ -131,8 +178,11 @@ class DayReplanService:
                 total_budget=_daily_budget(itinerary),
                 preferences=terms,
                 pace="relaxed" if "relaxed" in constraints else "moderate",
-                constraints=constraints,
-                excluded_titles=_locked_places(itinerary, day_index, target_slot=target_slot),
+                constraints=() if explicit_place else constraints,
+                # An explicit user command may intentionally reuse a POI that
+                # appears elsewhere. Candidate title verification and the
+                # destination gate remain mandatory.
+                excluded_titles=() if explicit_place else _locked_places(itinerary, day_index, target_slot=target_slot),
                 anchor_location=_anchor_location(request),
                 day_indexes=[day_index],
                 slots_per_day=required_count,
@@ -167,7 +217,11 @@ class DayReplanService:
             report.applied_days.append(day_index)
             scope = f"{target_slot}时段" if target_slot else ""
             report.diff_items.append(
-                f"第{day_index}天{scope}已基于共享约束规划器重新规划（候选{selected_count}个，来源召回排序）。"
+                (
+                    f"第{day_index}天{scope}已替换为已验证地点“{explicit_place}”（候选{selected_count}个，来源召回排序）。"
+                    if explicit_place
+                    else f"第{day_index}天{scope}已基于共享约束规划器重新规划（候选{selected_count}个，来源召回排序）。"
+                )
             )
 
         _dedupe_preserve_order(report.assumptions)

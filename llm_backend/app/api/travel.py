@@ -698,12 +698,20 @@ async def _stream_edit_result(
         yield line
 
     try:
+        # A literal place named by the user is stronger than a model-produced
+        # generic edit constraint.  It remains candidate-verified downstream;
+        # this only selects the correct bounded control path.
+        rule_ops = parse_edit_ops(utterance, current_itinerary)
+        has_explicit_poi_request = any(op.payload.get("explicit_place") for op in rule_ops)
         structured_command = build_structured_edit_command(
             qp_output,
             utterance=utterance,
             current_itinerary=current_itinerary,
         )
-        if structured_command is not None:
+        if has_explicit_poi_request:
+            ops = rule_ops
+            execution_source = "rule_explicit_poi"
+        elif structured_command is not None:
             ops = [structured_command.to_patch_op()]
             execution_source = "structured_qp"
         elif not has_mutation_intent(utterance):
@@ -723,8 +731,19 @@ async def _stream_edit_result(
             )
             return
         else:
-            ops = parse_edit_ops(utterance, current_itinerary)
+            ops = rule_ops
             execution_source = "rule"
+        if not ops:
+            yield build_event_line(
+                "final_text",
+                build_event_envelope(
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    revision_id=None,
+                    payload={"text": "未指定修改哪一天或时段，请说明第N天和上午/下午/晚上。"},
+                ),
+            )
+            return
         result = apply_patch(current_itinerary, ops)
 
         if not result.success:

@@ -27,6 +27,7 @@ DEFAULT_PYTEST_TARGETS = (
     "tests/test_qp_rule_evaluation.py",
     "tests/test_hybrid_qp_eval.py",
     "tests/test_structured_edit_replan_eval.py",
+    "tests/test_explicit_poi_edit_eval.py",
     "tests/test_structured_qp_shadow_eval.py",
     "tests/test_travel_m2_011.py",
     "tests/test_golden_demo_eval.py",
@@ -37,6 +38,7 @@ DEFAULT_PYTEST_TARGETS = (
     "tests/test_itinerary_planner.py",
     "tests/test_planner_eval.py",
     "tests/test_unseen_destination_eval.py",
+    "tests/test_destination_readiness_eval.py",
     "tests/test_geo_bounds.py",
     "tests/test_patch_engine.py",
     "tests/test_day_replan_service.py",
@@ -59,6 +61,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "name": "structured_edit_replan_eval",
             "cases": "evaluation/structured_edit_replan_cases.json",
         },
+        {
+            "type": "explicit_poi_edit_eval",
+            "name": "explicit_poi_edit_eval",
+            "cases": "evaluation/explicit_poi_edit_cases.json",
+        },
         {"type": "golden_demo_eval", "name": "golden_demo_eval", "cases": "evaluation/golden_demo_cases.json"},
         {"type": "ranking_eval", "name": "ranking_eval", "cases": "evaluation/ranking_eval_cases.json"},
         {"type": "planner_eval", "name": "planner_eval"},
@@ -66,6 +73,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "type": "unseen_destination_eval",
             "name": "unseen_destination_eval",
             "cases": "evaluation/unseen_destination_cases.json",
+        },
+        {
+            "type": "destination_readiness_eval",
+            "name": "destination_readiness_eval",
+            "cases": "evaluation/destination_readiness_cases.json",
         },
         {"type": "pytest", "name": "backend_core_integration_tests", "targets": list(DEFAULT_PYTEST_TARGETS)},
         {
@@ -211,6 +223,34 @@ def run_structured_edit_replan_eval_gate(gate: dict[str, Any]) -> GateResult:
     )
 
 
+def run_explicit_poi_edit_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from scripts.explicit_poi_edit_eval import (
+        DEFAULT_CASES_PATH as DEFAULT_EXPLICIT_POI_EDIT_CASES_PATH,
+        evaluate_cases as evaluate_explicit_poi_edit_cases,
+        is_passing,
+        load_cases,
+    )
+
+    start = time.perf_counter()
+    cases_path = Path(gate.get("cases") or DEFAULT_EXPLICIT_POI_EDIT_CASES_PATH)
+    summary = evaluate_explicit_poi_edit_cases(load_cases(cases_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    return GateResult(
+        name=str(gate.get("name") or "explicit_poi_edit_eval"),
+        type="explicit_poi_edit_eval",
+        status="passed" if is_passing(summary) else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "case_count": summary.get("case_count"),
+            "passed_cases": summary.get("passed_cases"),
+            "failed_cases": summary.get("failed_cases"),
+            "explicit_cases": summary.get("explicit_cases"),
+            "unsafe_revision_failures": summary.get("unsafe_revision_failures"),
+        },
+        failures=list(summary.get("failures") or []),
+    )
+
+
 def run_ranking_eval_gate(gate: dict[str, Any]) -> GateResult:
     from scripts.ranking_eval_report import build_report, load_cases
 
@@ -218,6 +258,18 @@ def run_ranking_eval_gate(gate: dict[str, Any]) -> GateResult:
     cases_path = Path(gate.get("cases") or "evaluation/ranking_eval_cases.json")
     report = build_report(load_cases(cases_path))
     elapsed_ms = (time.perf_counter() - start) * 1000
+    report_summary = report.get("summary") or {}
+    guardrails = {
+        "case_count": int(report.get("case_count") or 0) >= 20,
+        "destination_count": int(report.get("destination_count") or 0) >= 10,
+        "unsafe_accepted_count": int(report_summary.get("unsafe_accepted_count") or 0) == 0,
+        "non_regressing_good_hit_rate": (
+            float(report_summary.get("policy_good_hit_rate") or 0.0)
+            >= float(report_summary.get("legacy_good_hit_rate") or 0.0)
+        ),
+        "ranking_latency_p95": float(report_summary.get("ranking_latency_p95_ms") or 0.0) < 50.0,
+    }
+    gate_passed = report.get("status") == "passed" and all(guardrails.values())
     failures: list[dict[str, Any]] = []
     if report.get("status") != "passed":
         failures = [
@@ -230,16 +282,20 @@ def run_ranking_eval_gate(gate: dict[str, Any]) -> GateResult:
             for case in report.get("cases") or []
             if case.get("status") != "passed"
         ]
+    if not all(guardrails.values()):
+        failures.append({"type": "ranking_guardrail", "guardrails": guardrails})
     return GateResult(
         name=str(gate.get("name") or "ranking_eval"),
         type="ranking_eval",
-        status="passed" if report.get("status") == "passed" else "failed",
+        status="passed" if gate_passed else "failed",
         elapsed_ms=elapsed_ms,
         summary={
             "case_count": report.get("case_count"),
+            "destination_count": report.get("destination_count"),
             "passed_cases": report.get("passed_cases"),
             "failed_cases": report.get("failed_cases"),
-            **(report.get("summary") or {}),
+            "guardrails": guardrails,
+            **report_summary,
         },
         failures=failures,
     )
@@ -303,6 +359,41 @@ def run_unseen_destination_eval_gate(gate: dict[str, Any]) -> GateResult:
             "failed_cases": report.get("failed_cases"),
             "ready_cases": report.get("ready_cases"),
             "insufficient_candidate_cases": report.get("insufficient_candidate_cases"),
+        },
+        failures=failures,
+    )
+
+
+def run_destination_readiness_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from scripts.destination_readiness_eval import build_report, load_cases
+
+    start = time.perf_counter()
+    cases_path = Path(gate.get("cases") or "evaluation/destination_readiness_cases.json")
+    report = build_report(load_cases(cases_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    failures = [
+        {
+            "case_id": item.get("case_id"),
+            "destination": item.get("destination"),
+            "errors": item.get("errors") or [],
+            "actual_outcome": item.get("actual_outcome"),
+            "quality_status": item.get("quality_status"),
+        }
+        for item in report.get("failures") or []
+    ]
+    return GateResult(
+        name=str(gate.get("name") or "destination_readiness_eval"),
+        type="destination_readiness_eval",
+        status="passed" if report.get("status") == "passed" else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "case_count": report.get("case_count"),
+            "passed_cases": report.get("passed_cases"),
+            "failed_cases": report.get("failed_cases"),
+            "ready_cases": report.get("ready_cases"),
+            "safe_degradation_cases": report.get("safe_degradation_cases"),
+            "static_cases": report.get("static_cases"),
+            "dynamic_cases": report.get("dynamic_cases"),
         },
         failures=failures,
     )
@@ -475,12 +566,16 @@ def run_gate(gate: dict[str, Any]) -> GateResult:
         return run_hybrid_qp_eval_gate(gate)
     if gate_type == "structured_edit_replan_eval":
         return run_structured_edit_replan_eval_gate(gate)
+    if gate_type == "explicit_poi_edit_eval":
+        return run_explicit_poi_edit_eval_gate(gate)
     if gate_type == "golden_demo_eval":
         return run_golden_demo_eval_gate(gate)
     if gate_type == "ranking_eval":
         return run_ranking_eval_gate(gate)
     if gate_type == "unseen_destination_eval":
         return run_unseen_destination_eval_gate(gate)
+    if gate_type == "destination_readiness_eval":
+        return run_destination_readiness_eval_gate(gate)
     if gate_type == "planner_eval":
         return run_planner_eval_gate(gate)
     if gate_type == "pytest":
@@ -547,6 +642,13 @@ def render_summary(status: dict[str, Any]) -> str:
                 f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
                 f"unsafe_revision_failures={summary.get('unsafe_revision_failures')})"
             )
+        elif gate.get("type") == "explicit_poi_edit_eval":
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
+                f"explicit={summary.get('explicit_cases')}, "
+                f"unsafe_revision_failures={summary.get('unsafe_revision_failures')})"
+            )
         elif gate.get("type") == "golden_demo_eval":
             lines.append(
                 f"- {gate['name']}: {gate['status']} "
@@ -558,6 +660,13 @@ def render_summary(status: dict[str, Any]) -> str:
                 f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
                 f"good_hit={summary.get('good_hit_rate')}, "
                 f"expected_reject={summary.get('rejected_expected_rate')})"
+            )
+        elif gate.get("type") == "destination_readiness_eval":
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
+                f"ready={summary.get('ready_cases')}, "
+                f"safe_degrade={summary.get('safe_degradation_cases')})"
             )
         elif gate.get("type") == "planner_eval":
             lines.append(

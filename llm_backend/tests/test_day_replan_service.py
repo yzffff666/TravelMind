@@ -8,6 +8,7 @@ import pytest
 from app.services.day_replan_service import DayReplanService
 from app.services.destination_grounding import DestinationProfile, DestinationResolver
 from app.services.providers.base import ProviderCandidate
+from app.services.ranking_scorer import ScoredCandidate
 from app.services.recall_service import RecallResult
 
 
@@ -59,6 +60,14 @@ class _FakeRecall:
             recall_query=query,
             calls_made=1,
         )
+
+
+class _FixedLegacyScorer:
+    def rank(self, candidates, **kwargs):
+        return [
+            ScoredCandidate(candidate=candidate, total_score=1.0 - index * 0.5)
+            for index, candidate in enumerate(candidates)
+        ]
 
 
 class _DunhuangLookup:
@@ -158,8 +167,48 @@ async def test_day_replan_keeps_existing_day_when_candidates_are_insufficient():
 
     assert report.applied_days == []
     assert report.candidate_counts[2] == 1
+    assert report.grounding_statuses[2] == "insufficient_candidates"
     assert itinerary["days"][1] == original_day2
     assert any("候选不足" in assumption for assumption in report.assumptions)
+
+
+@pytest.mark.asyncio
+async def test_static_slot_replan_rejects_candidate_without_coordinates_before_planning():
+    itinerary = _make_itinerary()
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    candidate = _candidate("上海图书馆")
+    candidate.extra.pop("lat")
+    candidate.extra.pop("lng")
+    service = DayReplanService(recall_service=_FakeRecall([candidate]))
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "target_slot": "下午", "constraints": ["indoor"]}],
+    )
+
+    assert report.applied_days == []
+    assert report.candidate_counts[2] == 0
+    assert report.grounding_statuses[2] == "insufficient_candidates"
+    assert itinerary["days"][1] == original_day2
+
+
+@pytest.mark.asyncio
+async def test_static_slot_replan_rejects_mock_candidate_by_default():
+    itinerary = _make_itinerary()
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    candidate = _candidate("上海图书馆")
+    candidate.source = "mock"
+    service = DayReplanService(recall_service=_FakeRecall([candidate]))
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "target_slot": "下午", "constraints": ["indoor"]}],
+    )
+
+    assert report.applied_days == []
+    assert report.candidate_counts[2] == 0
+    assert report.grounding_statuses[2] == "insufficient_candidates"
+    assert itinerary["days"][1] == original_day2
 
 
 @pytest.mark.asyncio
@@ -191,6 +240,181 @@ async def test_day_replan_replaces_only_requested_slot_with_verified_candidate()
     assert day2["slots"][1]["activity"] != "把第二天下午改成室内"
     assert day2["slots"][1]["evidence_refs"]
     assert day2["slots"][1]["location"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "expected_place"),
+    [("shadow", "Popular Mall"), ("candidate", "上海博物馆")],
+)
+async def test_day_replan_ranking_mode_controls_planner_input(monkeypatch, mode, expected_place):
+    itinerary = _make_itinerary()
+    weak = _candidate("Popular Mall", rating=5.0, tags=["购物"], snippet="popular shopping stop")
+    weak.extra.update({"url": "", "photos": [], "tel": "", "provider_confidence": 0.3})
+    strong = _candidate("上海博物馆", rating=3.5, tags=["文化", "博物馆"], snippet="上海文化博物馆")
+    strong.extra.update({"alias_hit": True, "url": "https://example.com/museum", "tel": "123", "provider_confidence": 0.95})
+    service = DayReplanService(
+        recall_service=_FakeRecall([weak, strong]),
+        ranking_scorer=_FixedLegacyScorer(),
+    )
+    monkeypatch.setattr("app.services.day_replan_service.settings.POI_RANKING_MODE", mode)
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "target_slot": "下午", "constraints": ["culture"]}],
+    )
+
+    assert report.applied_days == [2]
+    assert itinerary["days"][1]["slots"][1]["place"] == expected_place
+
+
+@pytest.mark.asyncio
+async def test_explicit_poi_replan_requires_name_match_and_changes_only_target_slot():
+    itinerary = _make_itinerary()
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    # The unrelated candidate has a better ranking score. Explicit user intent
+    # must still resolve Shanghai Museum exactly instead of selecting it.
+    recall = _FakeRecall([
+        _candidate("上海当代艺术博物馆", rating=5.0),
+        _candidate("上海博物馆（人民广场馆）", rating=4.5),
+    ])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{
+            "day_index": 2,
+            "target_slot": "下午",
+            "constraints": ["indoor"],
+            "explicit_place": "上海博物馆",
+            "raw_request": "把第二天下午换成上海博物馆",
+        }],
+    )
+
+    assert report.applied_days == [2]
+    assert report.candidate_counts[2] == 1
+    assert "上海博物馆" in recall.last_query
+    assert "替换为已验证地点“上海博物馆”" in report.diff_items[0]
+    day2 = itinerary["days"][1]
+    assert day2["theme"] == original_day2["theme"]
+    assert day2["slots"][0] == original_day2["slots"][0]
+    assert day2["slots"][2] == original_day2["slots"][2]
+    assert day2["slots"][1]["place"] == "上海博物馆（人民广场馆）"
+    assert day2["slots"][1]["evidence_refs"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_poi_replan_preserves_original_day_when_provider_cannot_verify_name():
+    itinerary = _make_itinerary()
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    recall = _FakeRecall([_candidate("上海当代艺术博物馆", rating=5.0)])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{
+            "day_index": 2,
+            "target_slot": "下午",
+            "explicit_place": "上海博物馆",
+            "raw_request": "把第二天下午换成上海博物馆",
+        }],
+    )
+
+    assert report.applied_days == []
+    assert report.candidate_counts[2] == 0
+    assert report.planner_statuses[2] == "explicit_place_unverified"
+    assert itinerary["days"][1] == original_day2
+    assert any("上海博物馆" in item and "已保留原行程" in item for item in report.assumptions)
+
+
+@pytest.mark.asyncio
+async def test_english_explicit_poi_does_not_accept_a_different_longer_museum_name():
+    itinerary = _make_itinerary()
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    recall = _FakeRecall([_candidate("Shanghai Contemporary Art Museum", rating=5.0)])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{
+            "day_index": 2,
+            "target_slot": "下午",
+            "explicit_place": "Shanghai Museum",
+            "raw_request": "Change day 2 afternoon to Shanghai Museum",
+        }],
+    )
+
+    assert report.applied_days == []
+    assert itinerary["days"][1] == original_day2
+    assert report.planner_statuses[2] == "explicit_place_unverified"
+
+
+@pytest.mark.asyncio
+async def test_explicit_poi_without_target_slot_is_a_no_commit_clarification():
+    itinerary = _make_itinerary()
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    recall = _FakeRecall([_candidate("东方明珠", rating=4.8)])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "explicit_place": "东方明珠", "raw_request": "把第二天换成东方明珠"}],
+    )
+
+    assert report.applied_days == []
+    assert report.planner_statuses[2] == "explicit_place_requires_slot"
+    assert itinerary["days"][1] == original_day2
+    assert recall.last_query == ""
+    assert any("哪个时段" in item for item in report.assumptions)
+
+
+@pytest.mark.asyncio
+async def test_explicit_poi_replan_rejects_cross_city_candidate_before_name_selection():
+    itinerary = _make_itinerary()
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    recall = _FakeRecall([
+        _candidate("香港故宫文化博物馆", lat=22.3000, lng=114.1700, rating=4.9),
+    ])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{
+            "day_index": 2,
+            "target_slot": "下午",
+            "explicit_place": "香港故宫文化博物馆",
+            "raw_request": "把第二天下午换成香港故宫文化博物馆",
+        }],
+    )
+
+    assert report.applied_days == []
+    assert report.candidate_counts[2] == 0
+    assert itinerary["days"][1] == original_day2
+    assert any("香港故宫文化博物馆" in item and "已保留原行程" in item for item in report.assumptions)
+
+
+@pytest.mark.asyncio
+async def test_explicit_poi_replan_requires_coordinate_backed_destination_evidence():
+    itinerary = _make_itinerary()
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    candidate = _candidate("上海博物馆", rating=4.8)
+    candidate.extra.pop("lat")
+    candidate.extra.pop("lng")
+    service = DayReplanService(recall_service=_FakeRecall([candidate]))
+
+    report = await service.replan_days(
+        itinerary,
+        [{
+            "day_index": 2,
+            "target_slot": "下午",
+            "explicit_place": "上海博物馆",
+            "raw_request": "把第二天下午换成上海博物馆",
+        }],
+    )
+
+    assert report.applied_days == []
+    assert report.candidate_counts[2] == 0
+    assert itinerary["days"][1] == original_day2
 
 
 @pytest.mark.asyncio

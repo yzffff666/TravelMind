@@ -17,6 +17,8 @@ import re
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 _MOCK_LLM_RESPONSE = json.dumps({
     "days": [
         {
@@ -78,6 +80,13 @@ def _reset_pipeline_singletons():
     tdg._pipeline_eb = None
     from app.services.providers.orchestrator import clear_recall_cache
     clear_recall_cache()
+
+
+@pytest.fixture(autouse=True)
+def _allow_mock_publish_for_offline_pipeline_tests():
+    """Keep mock providers usable only inside this offline integration suite."""
+    with patch("app.lg_agent.travel_draft_graph.settings.ALLOW_MOCK_PUBLISH", True):
+        yield
 
 
 def _invoke_graph(query: str) -> dict:
@@ -492,10 +501,12 @@ class TestDraftPipelineDataFlow:
         itinerary = result["final_itinerary"]
         assert itinerary["trip_profile"]["destination_city"] == "北京"
 
-    def test_unknown_city_still_produces_itinerary(self):
-        """Pipeline degrades for unknown cities but LLM still generates."""
+    def test_static_destination_without_verified_candidates_stops_before_draft(self):
+        """A destination without local evidence must not fall through to an LLM draft."""
         result = _invoke_graph("巴黎 3天 预算10000")
-        assert result["final_itinerary"] is not None
+        assert result["final_itinerary"] is None
+        assert result["grounding_status"] == "insufficient_candidates"
+        assert "可验证的本地景点" in result["final_text"]
 
     def test_missing_p0_returns_final_text(self):
         """P0 missing -> no pipeline, no LLM, just final_text."""
@@ -588,8 +599,8 @@ class TestPromptInjection:
         assert "cost_breakdown" not in user_msg
         assert "transit" not in user_msg
 
-    def test_no_candidates_no_injection(self):
-        """When pipeline returns no candidates, prompt should not have candidate section."""
+    def test_no_candidates_do_not_call_llm(self):
+        """No verified candidates means no prompt and no hallucinated itinerary."""
         captured_messages = []
 
         mock_llm = MagicMock()
@@ -608,8 +619,7 @@ class TestPromptInjection:
             from app.lg_agent.travel_draft_graph import travel_draft_graph
             _run(travel_draft_graph.ainvoke({"query": "巴黎 3天 预算10000"}))
 
-        user_msg = captured_messages[1]["content"]
-        assert "推荐地点" not in user_msg
+        assert captured_messages == []
 
     def test_system_prompt_mentions_recommendations(self):
         """System prompt should mention using recommended places."""
@@ -938,28 +948,30 @@ class TestCandidateCapping:
 
 
 class TestPipelineFailureGraceful:
-    """Verify draft node still works when pipeline fails."""
+    """Candidate-stage failures must stop before free-form LLM generation."""
 
     def setup_method(self):
         _reset_pipeline_singletons()
 
-    def test_pipeline_exception_does_not_block_llm(self):
-        """If _get_pipeline raises, LLM should still generate."""
+    def test_pipeline_exception_fails_closed_before_llm(self):
         def boom():
             raise RuntimeError("Pipeline exploded")
 
+        llm_factory = MagicMock(return_value=_make_mock_llm())
         with patch("app.lg_agent.travel_draft_graph._get_pipeline", side_effect=boom), \
-             patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
+             patch("app.lg_agent.travel_draft_graph._get_llm", llm_factory):
             from app.lg_agent.travel_draft_graph import travel_draft_graph
             result = _run(travel_draft_graph.ainvoke({"query": "上海 3天 预算5000"}))
 
-        assert result["final_itinerary"] is not None
-        assert result["final_text"] is None
+        assert result["grounding_status"] == "pipeline_error"
+        assert result["final_itinerary"] is None
+        assert "候选服务" in result["final_text"]
+        llm_factory.assert_not_called()
 
-    def test_recall_failure_does_not_block_llm(self):
-        """If recall raises mid-pipeline, LLM should still generate."""
+    def test_recall_failure_fails_closed_before_llm(self):
+        llm_factory = MagicMock(return_value=_make_mock_llm())
         with patch("app.services.providers.factory._get_key", return_value=None), \
-             patch("app.lg_agent.travel_draft_graph._get_llm", return_value=_make_mock_llm()):
+             patch("app.lg_agent.travel_draft_graph._get_llm", llm_factory):
             from app.lg_agent.travel_draft_graph import _get_pipeline, travel_draft_graph
             qp, recall_svc, scorer, flt, eb, backfill = _get_pipeline()
 
@@ -969,7 +981,10 @@ class TestPipelineFailureGraceful:
             with patch.object(recall_svc, "recall_from_qp", side_effect=broken_recall):
                 result = _run(travel_draft_graph.ainvoke({"query": "上海 3天 预算5000"}))
 
-        assert result["final_itinerary"] is not None
+        assert result["grounding_status"] == "pipeline_error"
+        assert result["final_itinerary"] is None
+        assert result["final_text"]
+        llm_factory.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

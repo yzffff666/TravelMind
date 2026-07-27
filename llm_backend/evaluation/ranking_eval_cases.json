@@ -5,7 +5,7 @@
     "preferences": ["海边", "文化"],
     "budget": 3000,
     "days": 3,
-    "top_k": 3,
+    "top_k": 2,
     "expected_good_ids": ["kata_beach", "old_phuket_town"],
     "expected_rejected": {
       "eiffel_tower": ["bbox_invalid"],
@@ -179,6 +179,168 @@
           "is_generic_activity": true
         }
       }
+    ]
+  },
+  {
+    "case_id": "beijing_cross_city_guard", "destination": "北京", "preferences": ["历史"], "budget": 4000, "days": 3, "top_k": 2,
+    "expected_good_ids": ["beijing_palace"], "expected_rejected": {"beijing_wrong": ["bbox_invalid"], "beijing_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "beijing_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "beijing_palace", "source": "amap_search", "title": "故宫博物院", "snippet": "北京历史文化地标", "score": 0.78, "tags": ["历史", "文化"], "extra": {"lat": 39.9163, "lng": 116.3972, "address": "北京", "rating": 4.8, "url": "https://example.com/beijing", "photos": ["https://example.com/beijing.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "beijing_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "shenzhen_cross_city_guard", "destination": "深圳", "preferences": ["城市"], "budget": 3500, "days": 3, "top_k": 2,
+    "expected_good_ids": ["shenzhen_civic"], "expected_rejected": {"shenzhen_wrong": ["bbox_invalid"], "shenzhen_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "shenzhen_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "shenzhen_civic", "source": "amap_search", "title": "深圳市民中心", "snippet": "深圳城市地标", "score": 0.78, "tags": ["城市", "建筑"], "extra": {"lat": 22.5431, "lng": 114.0579, "address": "深圳", "rating": 4.7, "url": "https://example.com/shenzhen", "photos": ["https://example.com/shenzhen.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "shenzhen_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "hongkong_cross_city_guard", "destination": "香港", "preferences": ["夜景"], "budget": 5000, "days": 3, "top_k": 2,
+    "expected_good_ids": ["hongkong_peak"], "expected_rejected": {"hongkong_wrong": ["bbox_invalid"], "hongkong_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "hongkong_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "hongkong_peak", "source": "geoapify_map", "title": "Victoria Peak", "snippet": "Hong Kong skyline night view", "score": 0.78, "tags": ["夜景", "城市"], "extra": {"lat": 22.2759, "lng": 114.1455, "address": "Hong Kong", "rating": 4.7, "url": "https://example.com/hongkong", "photos": ["https://example.com/hongkong.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "hongkong_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "macau_cross_city_guard", "destination": "澳门", "preferences": ["历史"], "budget": 5000, "days": 3, "top_k": 2,
+    "expected_good_ids": ["macau_ruins"], "expected_rejected": {"macau_wrong": ["bbox_invalid"], "macau_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "macau_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "macau_ruins", "source": "geoapify_map", "title": "Ruins of St. Paul's", "snippet": "Macau historic landmark", "score": 0.78, "tags": ["历史", "建筑"], "extra": {"lat": 22.1977, "lng": 113.5409, "address": "Macau", "rating": 4.7, "url": "https://example.com/macau", "photos": ["https://example.com/macau.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "macau_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "guangzhou_cross_city_guard", "destination": "广州", "preferences": ["建筑"], "budget": 3500, "days": 3, "top_k": 2,
+    "expected_good_ids": ["guangzhou_tower"], "expected_rejected": {"guangzhou_wrong": ["bbox_invalid"], "guangzhou_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "guangzhou_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "guangzhou_tower", "source": "amap_search", "title": "广州塔", "snippet": "广州城市建筑地标", "score": 0.78, "tags": ["建筑", "夜景"], "extra": {"lat": 23.1065, "lng": 113.3246, "address": "广州", "rating": 4.7, "url": "https://example.com/guangzhou", "photos": ["https://example.com/guangzhou.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "guangzhou_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "hangzhou_cross_city_guard", "destination": "杭州", "preferences": ["自然"], "budget": 3500, "days": 3, "top_k": 2,
+    "expected_good_ids": ["hangzhou_west_lake"], "expected_rejected": {"hangzhou_wrong": ["bbox_invalid"], "hangzhou_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "hangzhou_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "hangzhou_west_lake", "source": "amap_search", "title": "西湖", "snippet": "杭州自然风景", "score": 0.78, "tags": ["自然", "湖泊"], "extra": {"lat": 30.2431, "lng": 120.1500, "address": "杭州", "rating": 4.8, "url": "https://example.com/hangzhou", "photos": ["https://example.com/hangzhou.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "hangzhou_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "chengdu_cross_city_guard", "destination": "成都", "preferences": ["文化"], "budget": 3500, "days": 3, "top_k": 2,
+    "expected_good_ids": ["chengdu_kuanzhai"], "expected_rejected": {"chengdu_wrong": ["bbox_invalid"], "chengdu_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "chengdu_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "chengdu_kuanzhai", "source": "amap_search", "title": "宽窄巷子", "snippet": "成都文化街区", "score": 0.78, "tags": ["文化", "街区"], "extra": {"lat": 30.6696, "lng": 104.0550, "address": "成都", "rating": 4.6, "url": "https://example.com/chengdu", "photos": ["https://example.com/chengdu.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "chengdu_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "nanjing_cross_city_guard", "destination": "南京", "preferences": ["历史"], "budget": 3500, "days": 3, "top_k": 2,
+    "expected_good_ids": ["nanjing_museum"], "expected_rejected": {"nanjing_wrong": ["bbox_invalid"], "nanjing_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "nanjing_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "nanjing_museum", "source": "amap_search", "title": "南京博物院", "snippet": "南京历史文化博物馆", "score": 0.78, "tags": ["历史", "博物馆"], "extra": {"lat": 32.0400, "lng": 118.8220, "address": "南京", "rating": 4.8, "url": "https://example.com/nanjing", "photos": ["https://example.com/nanjing.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "nanjing_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "xian_cross_city_guard", "destination": "西安", "preferences": ["历史"], "budget": 3500, "days": 3, "top_k": 2,
+    "expected_good_ids": ["xian_wall"], "expected_rejected": {"xian_wrong": ["bbox_invalid"], "xian_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "xian_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "xian_wall", "source": "amap_search", "title": "西安城墙", "snippet": "西安历史遗迹", "score": 0.78, "tags": ["历史", "遗迹"], "extra": {"lat": 34.2619, "lng": 108.9422, "address": "西安", "rating": 4.7, "url": "https://example.com/xian", "photos": ["https://example.com/xian.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "xian_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "bangkok_cross_city_guard", "destination": "曼谷", "preferences": ["文化"], "budget": 4000, "days": 3, "top_k": 2,
+    "expected_good_ids": ["bangkok_palace"], "expected_rejected": {"bangkok_wrong": ["bbox_invalid"], "bangkok_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "bangkok_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "bangkok_palace", "source": "geoapify_map", "title": "Grand Palace", "snippet": "Bangkok culture and history", "score": 0.78, "tags": ["文化", "历史"], "extra": {"lat": 13.7500, "lng": 100.4913, "address": "Bangkok", "rating": 4.7, "url": "https://example.com/bangkok", "photos": ["https://example.com/bangkok.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "bangkok_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "tokyo_cross_city_guard", "destination": "东京", "preferences": ["城市"], "budget": 7000, "days": 4, "top_k": 2,
+    "expected_good_ids": ["tokyo_tower_local"], "expected_rejected": {"tokyo_wrong": ["bbox_invalid"], "tokyo_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "tokyo_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "tokyo_tower_local", "source": "geoapify_map", "title": "Tokyo Tower", "snippet": "Tokyo city landmark", "score": 0.78, "tags": ["城市", "建筑"], "extra": {"lat": 35.6586, "lng": 139.7454, "address": "Tokyo", "rating": 4.7, "url": "https://example.com/tokyo", "photos": ["https://example.com/tokyo.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "tokyo_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "osaka_cross_city_guard", "destination": "大阪", "preferences": ["历史"], "budget": 6500, "days": 4, "top_k": 2,
+    "expected_good_ids": ["osaka_castle"], "expected_rejected": {"osaka_wrong": ["bbox_invalid"], "osaka_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "osaka_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "osaka_castle", "source": "geoapify_map", "title": "Osaka Castle", "snippet": "Osaka history landmark", "score": 0.78, "tags": ["历史", "建筑"], "extra": {"lat": 34.6873, "lng": 135.5262, "address": "Osaka", "rating": 4.7, "url": "https://example.com/osaka", "photos": ["https://example.com/osaka.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "osaka_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "kyoto_cross_city_guard", "destination": "京都", "preferences": ["文化"], "budget": 6500, "days": 4, "top_k": 2,
+    "expected_good_ids": ["kyoto_kiyomizu"], "expected_rejected": {"kyoto_wrong": ["bbox_invalid"], "kyoto_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "kyoto_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "kyoto_kiyomizu", "source": "geoapify_map", "title": "Kiyomizu-dera", "snippet": "Kyoto culture and temple", "score": 0.78, "tags": ["文化", "寺庙"], "extra": {"lat": 34.9949, "lng": 135.7850, "address": "Kyoto", "rating": 4.7, "url": "https://example.com/kyoto", "photos": ["https://example.com/kyoto.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "kyoto_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "seoul_cross_city_guard", "destination": "首尔", "preferences": ["历史"], "budget": 6000, "days": 4, "top_k": 2,
+    "expected_good_ids": ["seoul_palace"], "expected_rejected": {"seoul_wrong": ["bbox_invalid"], "seoul_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "seoul_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "seoul_palace", "source": "geoapify_map", "title": "Gyeongbokgung Palace", "snippet": "Seoul history palace", "score": 0.78, "tags": ["历史", "文化"], "extra": {"lat": 37.5796, "lng": 126.9770, "address": "Seoul", "rating": 4.7, "url": "https://example.com/seoul", "photos": ["https://example.com/seoul.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "seoul_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "singapore_cross_city_guard", "destination": "新加坡", "preferences": ["建筑"], "budget": 7000, "days": 4, "top_k": 2,
+    "expected_good_ids": ["singapore_gardens"], "expected_rejected": {"singapore_wrong": ["bbox_invalid"], "singapore_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "singapore_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "singapore_gardens", "source": "geoapify_map", "title": "Gardens by the Bay", "snippet": "Singapore garden architecture", "score": 0.78, "tags": ["建筑", "自然"], "extra": {"lat": 1.2816, "lng": 103.8636, "address": "Singapore", "rating": 4.8, "url": "https://example.com/singapore", "photos": ["https://example.com/singapore.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "singapore_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "paris_cross_city_guard", "destination": "巴黎", "preferences": ["艺术"], "budget": 9000, "days": 4, "top_k": 2,
+    "expected_good_ids": ["paris_louvre"], "expected_rejected": {"paris_wrong": ["bbox_invalid"], "paris_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "paris_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "paris_louvre", "source": "geoapify_map", "title": "Louvre Museum", "snippet": "Paris art museum", "score": 0.78, "tags": ["艺术", "博物馆"], "extra": {"lat": 48.8606, "lng": 2.3376, "address": "Paris", "rating": 4.8, "url": "https://example.com/paris", "photos": ["https://example.com/paris.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "paris_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "london_cross_city_guard", "destination": "伦敦", "preferences": ["历史"], "budget": 9000, "days": 4, "top_k": 2,
+    "expected_good_ids": ["london_museum"], "expected_rejected": {"london_wrong": ["bbox_invalid"], "london_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "london_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "london_museum", "source": "geoapify_map", "title": "British Museum", "snippet": "London history museum", "score": 0.78, "tags": ["历史", "博物馆"], "extra": {"lat": 51.5194, "lng": -0.1270, "address": "London", "rating": 4.8, "url": "https://example.com/london", "photos": ["https://example.com/london.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "london_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
+    ]
+  },
+  {
+    "case_id": "sanfrancisco_cross_city_guard", "destination": "旧金山", "preferences": ["建筑"], "budget": 10000, "days": 4, "top_k": 2,
+    "expected_good_ids": ["sf_bridge"], "expected_rejected": {"sf_wrong": ["bbox_invalid"], "sf_generic": ["generic_activity"]},
+    "candidates": [
+      {"candidate_id": "sf_wrong", "source": "serp_map", "title": "Remote Famous Landmark", "snippet": "high score landmark", "score": 0.99, "tags": ["landmark"], "extra": {"lat": 0.0, "lng": 0.0, "address": "Elsewhere", "rating": 5.0, "url": "https://example.com/wrong"}},
+      {"candidate_id": "sf_bridge", "source": "geoapify_map", "title": "Golden Gate Bridge", "snippet": "San Francisco architecture landmark", "score": 0.78, "tags": ["建筑", "城市"], "extra": {"lat": 37.8199, "lng": -122.4783, "address": "San Francisco", "rating": 4.8, "url": "https://example.com/sf", "photos": ["https://example.com/sf.jpg"], "provider_confidence": 0.9}},
+      {"candidate_id": "sf_generic", "source": "mock", "title": "自由活动", "snippet": "随便玩", "score": 0.8, "tags": [], "extra": {}}
     ]
   }
 ]

@@ -65,15 +65,77 @@ class TestParseEditOps:
         assert not has_mutation_intent("第三天下午去哪里")
         assert not has_mutation_intent("第2天安排是什么")
 
-    def test_replace_slot_with_day_and_slot(self):
+    def test_named_poi_replacement_becomes_verified_replan_request(self):
         it = _make_itinerary()
         ops = parse_edit_ops("把第2天下午换成逛南京路", it)
-        assert len(ops) >= 1
+        assert len(ops) == 1
         op = ops[0]
-        assert op.op == PatchOpType.REPLACE_SLOT
+        assert op.op == PatchOpType.REPLAN_DAY
         assert op.day_index == 2
-        assert op.slot_label == "下午"
-        assert "南京路" in op.payload.get("activity", "")
+        assert op.payload["target_slot"] == "下午"
+        assert op.payload["explicit_place"] == "南京路"
+        assert op.payload["execution_source"] == "rule_explicit_poi"
+
+    def test_named_museum_is_not_reduced_to_generic_indoor_constraint(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("把第二天下午换成上海博物馆", it)
+
+        assert len(ops) == 1
+        assert ops[0].op == PatchOpType.REPLAN_DAY
+        assert ops[0].payload["explicit_place"] == "上海博物馆"
+        assert "indoor" in ops[0].payload["constraints"]
+
+    def test_generic_indoor_museum_stays_constraint_replan(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("把第二天下午改成室内博物馆", it)
+
+        assert len(ops) == 1
+        assert ops[0].op == PatchOpType.REPLAN_DAY
+        assert ops[0].payload.get("explicit_place") is None
+        assert ops[0].payload["constraints"] == ["indoor"]
+
+    def test_english_named_poi_replacement_is_supported(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("Change day 2 afternoon to Shanghai Museum", it)
+
+        assert has_mutation_intent("Change day 2 afternoon to Shanghai Museum")
+        assert len(ops) == 1
+        assert ops[0].op == PatchOpType.REPLAN_DAY
+        assert ops[0].day_index == 2
+        assert ops[0].payload["target_slot"] == "下午"
+        assert ops[0].payload["explicit_place"] == "Shanghai Museum"
+
+    def test_english_day_question_is_not_an_edit(self):
+        it = _make_itinerary()
+        assert not has_mutation_intent("What is day 2 afternoon?")
+        assert parse_edit_ops("What is day 2 afternoon?", it) == []
+
+    def test_named_poi_without_slot_stays_deferred_instead_of_replacing_first_slot(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("把第二天换成东方明珠", it)
+
+        assert len(ops) == 1
+        assert ops[0].op == PatchOpType.REPLAN_DAY
+        assert ops[0].day_index == 2
+        assert ops[0].payload["target_slot"] is None
+        assert ops[0].payload["explicit_place"] == "东方明珠"
+
+    def test_english_generic_indoor_replan_does_not_become_raw_slot_text(self):
+        it = _make_itinerary()
+        ops = parse_edit_ops("Change day 2 to an indoor activity", it)
+
+        assert len(ops) == 1
+        assert ops[0].op == PatchOpType.REPLAN_DAY
+        assert ops[0].payload.get("explicit_place") is None
+        assert ops[0].payload["constraints"] == ["indoor"]
+
+    @pytest.mark.parametrize(
+        "utterance",
+        ["把第九天下午换成上海博物馆", "Change day 9 afternoon to Shanghai Museum"],
+    )
+    def test_out_of_range_named_poi_edit_does_not_fallback_to_raw_replace(self, utterance):
+        it = _make_itinerary()
+        assert parse_edit_ops(utterance, it) == []
 
     def test_delete_slot(self):
         it = _make_itinerary()
@@ -273,6 +335,7 @@ class TestApplyPatch:
             {
                 "day_index": 2,
                 "constraints": ["indoor"],
+                "explicit_place": None,
                 "raw_request": None,
                 "anchor_locations": [],
                 "target_slot": "下午",
@@ -347,15 +410,18 @@ class TestApplyPatch:
 # ---------- end-to-end: parse → apply ----------
 
 class TestParseAndApply:
-    def test_e2e_replace(self):
+    def test_e2e_named_poi_replacement_defers_mutation_until_provider_validation(self):
         it = _make_itinerary()
+        original_day2 = copy.deepcopy(it["days"][1])
         ops = parse_edit_ops("把第2天下午换成逛南京路", it)
         result = apply_patch(it, ops)
         assert result.success
         assert 2 in result.change_summary["changed_days"]
-        day2 = next(d for d in result.new_itinerary["days"] if d["day_index"] == 2)
-        pm = next(s for s in day2["slots"] if s["slot"] == "下午")
-        assert "南京路" in pm["activity"]
+        assert result.new_itinerary["days"][1] == original_day2
+        request = result.change_summary["replan_requests"][0]
+        assert request["explicit_place"] == "南京路"
+        assert request["target_slot"] == "下午"
+        assert "验证指定地点" in result.change_summary["diff_items"][0]
 
     def test_e2e_constraint_replan_with_chinese_day_number_defers_mutation(self):
         it = _make_itinerary()

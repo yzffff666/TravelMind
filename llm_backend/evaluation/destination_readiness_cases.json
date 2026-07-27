@@ -1,0 +1,165 @@
+[
+  {
+    "case_id": "static_shenzhen_ready",
+    "destination": "深圳",
+    "profile_mode": "static",
+    "expected_outcome": "ready",
+    "expected_quality_status": "ready",
+    "locals": [
+      {"title": "深圳湾公园", "lat": 22.5104, "lng": 113.9402, "city": "深圳市", "evidence": true, "image": true},
+      {"title": "南头古城", "lat": 22.5382, "lng": 113.9177, "city": "深圳市", "evidence": true, "image": true},
+      {"title": "华侨城创意文化园", "lat": 22.5413, "lng": 113.9682, "city": "深圳市", "evidence": true, "image": true}
+    ],
+    "legacy_no_geo": [{"title": "深圳无坐标旧候选", "city": "深圳市"}]
+  },
+  {
+    "case_id": "static_hong_kong_ready",
+    "destination": "香港",
+    "profile_mode": "static",
+    "expected_outcome": "ready",
+    "expected_quality_status": "ready",
+    "locals": [
+      {"title": "维多利亚港", "lat": 22.2933, "lng": 114.1694, "city": "香港", "evidence": true, "image": true},
+      {"title": "太平山顶", "lat": 22.2759, "lng": 114.1455, "city": "香港", "evidence": true, "image": true},
+      {"title": "大馆", "lat": 22.2819, "lng": 114.1546, "city": "香港", "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "static_macau_ready",
+    "destination": "澳门",
+    "profile_mode": "static",
+    "expected_outcome": "ready",
+    "expected_quality_status": "ready",
+    "locals": [
+      {"title": "大三巴牌坊", "lat": 22.1971, "lng": 113.5402, "city": "澳门", "evidence": true, "image": true},
+      {"title": "妈阁庙", "lat": 22.1852, "lng": 113.5316, "city": "澳门", "evidence": true, "image": true},
+      {"title": "官也街", "lat": 22.1547, "lng": 113.5567, "city": "澳门", "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "static_tokyo_ready",
+    "destination": "东京",
+    "profile_mode": "static",
+    "expected_outcome": "ready",
+    "expected_quality_status": "ready",
+    "exclude_default_decoys": ["tokyo_tower"],
+    "locals": [
+      {"title": "浅草寺", "lat": 35.7148, "lng": 139.7967, "city": "东京", "evidence": true, "image": true},
+      {"title": "东京国立博物馆", "lat": 35.7188, "lng": 139.7765, "city": "东京", "evidence": true, "image": true},
+      {"title": "明治神宫", "lat": 35.6764, "lng": 139.6993, "city": "东京", "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "static_kyoto_ready",
+    "destination": "京都",
+    "profile_mode": "static",
+    "expected_outcome": "ready",
+    "expected_quality_status": "ready",
+    "exclude_default_decoys": ["kyoto_station"],
+    "locals": [
+      {"title": "清水寺", "lat": 34.9949, "lng": 135.7850, "city": "京都", "evidence": true, "image": true},
+      {"title": "伏见稻荷大社", "lat": 34.9671, "lng": 135.7727, "city": "京都", "evidence": true, "image": true},
+      {"title": "二条城", "lat": 35.0142, "lng": 135.7482, "city": "京都", "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "static_san_francisco_ready",
+    "destination": "旧金山",
+    "profile_mode": "static",
+    "expected_outcome": "ready",
+    "expected_quality_status": "ready",
+    "locals": [
+      {"title": "Golden Gate Bridge", "lat": 37.8199, "lng": -122.4783, "city": "San Francisco", "evidence": true, "image": true},
+      {"title": "Ferry Building", "lat": 37.7955, "lng": -122.3937, "city": "San Francisco", "evidence": true, "image": true},
+      {"title": "Palace of Fine Arts", "lat": 37.8021, "lng": -122.4482, "city": "San Francisco", "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "dynamic_jingdezhen_ready",
+    "destination": "景德镇",
+    "profile_mode": "dynamic",
+    "canonical_name": "景德镇",
+    "country": "中国",
+    "center": [29.2687, 117.1784],
+    "expected_outcome": "ready",
+    "expected_quality_status": "ready",
+    "locals": [
+      {"title": "陶溪川文创街区", "lat": 29.2750, "lng": 117.1910, "city": "景德镇市", "evidence": true, "image": true},
+      {"title": "中国陶瓷博物馆", "lat": 29.2920, "lng": 117.1910, "city": "景德镇市", "evidence": true, "image": true},
+      {"title": "古窑民俗博览区", "lat": 29.2470, "lng": 117.1790, "city": "景德镇市", "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "dynamic_dunhuang_ready",
+    "destination": "敦煌",
+    "profile_mode": "dynamic",
+    "canonical_name": "敦煌",
+    "country": "中国",
+    "center": [40.1421, 94.6619],
+    "expected_outcome": "ready",
+    "expected_quality_status": "ready",
+    "locals": [
+      {"title": "莫高窟", "lat": 40.1424, "lng": 94.6615, "city": "敦煌市", "evidence": true, "image": true},
+      {"title": "敦煌博物馆", "lat": 40.1340, "lng": 94.6620, "city": "敦煌市", "evidence": true, "image": true},
+      {"title": "鸣沙山月牙泉", "lat": 40.0885, "lng": 94.6811, "city": "敦煌市", "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "dynamic_kashgar_safe_degrade",
+    "destination": "喀什",
+    "profile_mode": "dynamic",
+    "canonical_name": "喀什",
+    "country": "中国",
+    "center": [39.4704, 75.9898],
+    "expected_outcome": "insufficient_candidates",
+    "expected_quality_status": "not_applicable",
+    "locals": [
+      {"title": "喀什古城", "lat": 39.4750, "lng": 75.9820, "city": "喀什市", "evidence": true, "image": true},
+      {"title": "艾提尕尔清真寺", "lat": 39.4710, "lng": 75.9890, "city": "喀什市", "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "dynamic_tromso_ready",
+    "destination": "Tromso",
+    "profile_mode": "dynamic",
+    "canonical_name": "Tromso",
+    "country": "Norway",
+    "center": [69.6492, 18.9553],
+    "expected_outcome": "ready",
+    "expected_quality_status": "ready",
+    "locals": [
+      {"title": "Arctic Cathedral", "lat": 69.6480, "lng": 18.9870, "city": "Tromso", "evidence": true, "image": true},
+      {"title": "Polaria", "lat": 69.6390, "lng": 18.9460, "city": "Tromso", "evidence": true, "image": true},
+      {"title": "Fjellheisen Cable Car", "lat": 69.6550, "lng": 18.9990, "city": "Tromso", "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "dynamic_hobart_ready",
+    "destination": "Hobart",
+    "profile_mode": "dynamic",
+    "canonical_name": "Hobart",
+    "country": "Australia",
+    "center": [-42.8821, 147.3272],
+    "expected_outcome": "ready",
+    "expected_quality_status": "ready",
+    "locals": [
+      {"title": "Salamanca Place", "lat": -42.8860, "lng": 147.3310, "city": "Hobart", "evidence": true, "image": true},
+      {"title": "Tasmanian Museum and Art Gallery", "lat": -42.8820, "lng": 147.3330, "city": "Hobart", "evidence": true, "image": true},
+      {"title": "Mount Wellington", "lat": -42.8900, "lng": 147.2350, "city": "Hobart", "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "dynamic_oaxaca_safe_degrade",
+    "destination": "Oaxaca",
+    "profile_mode": "dynamic",
+    "canonical_name": "Oaxaca",
+    "country": "Mexico",
+    "center": [17.0732, -96.7266],
+    "expected_outcome": "insufficient_candidates",
+    "expected_quality_status": "not_applicable",
+    "locals": [
+      {"title": "Templo de Santo Domingo", "lat": 17.0680, "lng": -96.7240, "city": "Oaxaca", "evidence": true, "image": true},
+      {"title": "Zocalo Oaxaca", "lat": 17.0600, "lng": -96.7250, "city": "Oaxaca", "evidence": true, "image": true}
+    ]
+  }
+]

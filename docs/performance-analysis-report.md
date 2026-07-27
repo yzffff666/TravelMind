@@ -1,6 +1,6 @@
 # TravelMind Agentic POI Ranking 与性能/质量综合分析报告
 
-> 版本：v5.14（低成本海外 Provider 接入） | 日期：2026-05-22 | 作者：TravelMind Dev Team
+> 版本：v5.16（Agentic Candidate Decision Runtime v1） | 日期：2026-07-22 | 作者：TravelMind Dev Team
 >
 > 说明：本文是“当前状态型”报告，保留核心数据、阶段演进和下一步判断；完整历史长文已归档到 [performance-analysis-report-v5.6-full-history.md](archive/performance-analysis-report-v5.6-full-history.md)。
 
@@ -26,7 +26,10 @@ TravelMind = Agentic POI Ranking for Travel Planning
 - Redis 语义缓存已从 `KEYS + Python 全扫` 升级为 `L1 exact + L2 FAISS + SCAN fallback`。
 - 基于已有行程的 QA 已增加本地 fast path，明确问“第 N 天安排”时可跳过 Structured QP LLM。
 - 双语链路已完成首轮闭环：`observability_smoke.py` 增加 `bilingual` 用例集，`original_query` 与 `recall_query` 分层，英文 create / QA 可按英文输出并进入 `response_language` 观测。
-- `POIRankingPolicy` 已作为 rule-based baseline 落地，并以 shadow mode 在 `recall_node` 中并行产出 `poi_ranking_shadow` 结构化日志，不改变线上主链路结果。
+- `POIRankingPolicy` 已从固定 shadow 升级为 `legacy / shadow / candidate` 三档运行模式；candidate 模式可真实驱动创建与局部重规划，legacy 可即时回滚。
+- 创建和局部重规划已复用共享 Candidate Publishability Gate：合法坐标、目的地一致、禁止生产 Mock、候选数量充足后才允许进入排序与规划。
+- 候选服务异常、目的地未解析或候选不足时改为 fail-closed，不再调用 LLM 生成未经验证的地点。
+- 排序评测已扩到 20 个目的地、63 个候选决策：candidate good-hit 100%，legacy 约 95.45%，unsafe accepted 0，evidence coverage 100%，规则排序 P95 远低于 50ms 门槛（以每次本地报告为准）。
 - `observability_summary.py` 已能汇总 POI Ranking Shadow 的 accepted/rejected 数量、reject reasons、Top-K overlap 和 rejected samples，为后续排序策略迭代提供数据入口。
 - Provider HTTP 失败已能被结构化诊断：SerpAPI live probe 复测确认当前 SerpAPI 失败是 HTTP `429` 额度耗尽（`Your account has run out of searches`），不是 query、bbox 或 ranking 策略问题。
 - 低成本海外 Provider 已接入第一版：新增 Geoapify geocoding / places adapter，注册顺序调整为 `Amap -> Geoapify -> SerpAPI -> Mock`，让海外日常调试先走 `low_cost` provider，再用 SerpAPI 做 expensive fallback。
@@ -52,7 +55,9 @@ TravelMind = Agentic POI Ranking for Travel Planning
   -> QP: rule baseline + optional Structured QP
   -> LangGraph: extract -> recall -> llm_draft -> postprocess
   -> Provider: Amap / SerpAPI / fallback
-  -> POI Ranking Shadow: CandidateFeature -> hard gates -> soft score -> observability
+  -> Publishability Gate: destination / geo / mock / candidate count
+  -> POI Ranking Runtime: legacy / shadow / candidate
+  -> Constraint Planner -> verified plan skeleton -> LLM Draft
   -> Cache: Redis 真源 + L1 exact + FAISS L2 index
   -> MySQL: 用户、会话、行程状态
 ```
@@ -67,7 +72,7 @@ TravelMind = Agentic POI Ranking for Travel Planning
 | QP            | 规则 baseline + Structured QP feature flag      | Structured QP 样例量仍小，生产默认开启需继续观察   |
 | DeepSeek LLM  | 已补 timeout/retry/latency logging，并完成 draft 输出瘦身 | 远程 API 仍是尾延迟核心来源，后续继续验证更多真实样例 |
 | Provider      | 并行调用、timeout、结构化日志                            | Provider 调用已较快，剩余风险集中在长尾 POI 质量和 evidence URL |
-| POI Ranking   | `POIRankingPolicy` 已 shadow mode 运行，不影响主链路输出 | 样本仍少，需通过 smoke/summary 验证 reject 是否误伤真实 POI |
+| POI Ranking   | 三档灰度模式已接入 create/replan；20 城离线门禁通过 | 真实 Provider 覆盖和自然分布 badcase 仍需持续积累 |
 | Redis / FAISS | Redis 存 response/vector/meta，FAISS 做进程内 L2 检索 | 多进程下 FAISS index 不共享，后续可评估 Qdrant |
 | Embedding     | 仍使用 Ollama embedding                          | `EMBEDDING_TYPE` 配置尚未真正生效         |
 
@@ -129,6 +134,16 @@ TravelMind = Agentic POI Ranking for Travel Planning
 | v5.13 Provider HTTP 诊断 | 区分 Provider 失败是额度、认证、限流、参数还是服务不可用 | SerpAPI HTTP 错误包装为结构化异常，Provider 日志补 `http_status_code` / `error_response_snippet`，summary 汇总 HTTP 状态与响应片段 | live probe 确认 SerpAPI 当前为 HTTP 429 额度耗尽；ranking 无候选不是策略问题，而是 upstream recall 不可用 |
 | v5.14 低成本海外 Provider | 减少海外 smoke / 数据集积累对 SerpAPI 的依赖 | 新增 `GeoapifySearchProvider` / `GeoapifyMapProvider`、响应缓存、HTTP 诊断与 factory 注册顺序 | `PROVIDER_COST_MODE=cheap` 下仍可使用 Geoapify，SerpAPI 被跳过；新增单测覆盖解析、缓存、factory 顺序和 429 映射 |
 | v5.15 Provider 额度阀门 | 防止低成本 Provider 也被调试流量用爆 | Geoapify 增加每日 live 上限、429 冷却状态和 `budget_exhausted` / `budget_cooldown` cache source | API 用完时系统进入可观测降级，不继续打 live；cache 命中不消耗预算 |
+| v5.16 Candidate Decision Runtime | 让候选安全和排序策略真实进入 create/replan | 共享 publishability gate、fail-closed、三档排序模式、20 城排序评测 | 13/13 milestone 通过；真实国内 probe 4 城 ready，海外 probe 暴露召回/城市归一化缺口且均安全停止 |
+
+### 4.1 2026-07-23 真实 Provider 就绪度
+
+预算受控 live probe 不调用 LLM，也不允许 Mock 候选：
+
+- 国内 6 城：4 城达到 `ready`，景德镇和喀什 `profile_unresolved`；ready 城市因 Geoapify timeout 或图片覆盖不足标记为 `degraded`。
+- 海外 4 城：Tromso 0 个、Hobart 2 个可发布候选，Valletta Profile 未解析，Oaxaca 按预期候选不足。
+- 海外主要拒绝原因为 `outside_destination_radius` 与 `candidate_city_mismatch`，说明下一阶段优先修 Provider 召回与城市字段归一化，不应先调排序权重。
+- 所有 not-ready 案例均在 LLM 前 fail-closed，没有用 Mock 或自由生成掩盖数据源缺口。
 
 
 ---

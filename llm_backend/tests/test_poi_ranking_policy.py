@@ -5,10 +5,17 @@ Agent decision quality: extract features, apply hard gates, then rank accepted
 POI candidates with explainable score breakdown.
 """
 
+import pytest
+from pydantic import TypeAdapter, ValidationError
+
+from app.core.config import Settings
+from app.services.destination_grounding import DestinationProfile
 from app.services.poi_ranking_policy import (
     CandidateFeature,
     POIRankingPolicy,
     build_ranking_shadow_report,
+    policy_ranked_to_scored,
+    select_runtime_ranking,
 )
 from app.services.providers.base import ProviderCandidate
 from app.services.ranking_scorer import ScoredCandidate
@@ -131,6 +138,73 @@ def test_policy_rejects_generic_activity_candidate():
 
     assert ranked[0].accepted is False
     assert "generic_activity" in ranked[0].reject_reasons
+
+
+def test_policy_rejects_missing_geo_even_when_text_matches_destination():
+    candidate = _candidate("Phuket Museum", lat=None, lng=None)
+
+    ranked = POIRankingPolicy().rank(
+        [candidate],
+        destination="普吉岛",
+        include_rejected=True,
+    )
+
+    assert ranked[0].accepted is False
+    assert "missing_geo" in ranked[0].reject_reasons
+
+
+def test_policy_uses_dynamic_destination_profile_radius():
+    tokyo = DestinationProfile(
+        requested_name="东京",
+        canonical_name="Tokyo",
+        country="Japan",
+        center_lat=35.6762,
+        center_lng=139.6503,
+        radius_km=40,
+        confidence=0.95,
+        source="fixture",
+        is_dynamic=True,
+    )
+    osaka = _candidate("Osaka Castle", lat=34.6873, lng=135.5262)
+
+    ranked = POIRankingPolicy().rank(
+        [osaka],
+        destination_profile=tokyo,
+        include_rejected=True,
+    )
+
+    assert ranked[0].accepted is False
+    assert "outside_destination_radius" in ranked[0].reject_reasons
+
+
+def test_runtime_mode_selects_candidate_or_legacy_order_and_adapts_contract():
+    weak = _candidate("Shopping stop", score=0.95, tags=["购物"], extra={"url": "", "photos": [], "tel": ""})
+    strong = _candidate("Kata Beach", score=0.70, tags=["海边"], extra={"alias_hit": True})
+    legacy = [
+        ScoredCandidate(candidate=weak, total_score=0.95),
+        ScoredCandidate(candidate=strong, total_score=0.70),
+    ]
+    policy = POIRankingPolicy().rank(
+        [weak, strong],
+        destination="普吉岛",
+        preferences=["海边"],
+        include_rejected=True,
+    )
+
+    candidate_ranked = select_runtime_ranking("candidate", legacy, policy)
+    shadow_ranked = select_runtime_ranking("shadow", legacy, policy)
+
+    assert [item.candidate.title for item in candidate_ranked] == ["Kata Beach", "Shopping stop"]
+    assert [item.candidate.title for item in shadow_ranked] == ["Shopping stop", "Kata Beach"]
+    assert policy_ranked_to_scored(policy)[0].breakdown["alias_bonus"] == 1.0
+
+
+def test_runtime_mode_rejects_invalid_value():
+    annotation = Settings.model_fields["POI_RANKING_MODE"].annotation
+    with pytest.raises(ValidationError):
+        TypeAdapter(annotation).validate_python("unknown")
+    with pytest.raises(ValueError):
+        select_runtime_ranking("unknown", [], [])
 
 
 def test_shadow_report_summarizes_legacy_vs_policy_decisions():

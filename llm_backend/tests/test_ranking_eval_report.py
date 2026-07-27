@@ -14,8 +14,14 @@ def test_default_ranking_eval_cases_pass():
     assert report["schema_version"] == "ranking_eval_report_v1"
     assert report["status"] == "passed"
     assert report["passed_cases"] == report["case_count"]
+    assert report["case_count"] >= 20
+    assert report["destination_count"] >= 10
     assert report["summary"]["good_hit_rate"] == 1.0
+    assert report["summary"]["policy_good_hit_rate"] >= report["summary"]["legacy_good_hit_rate"]
     assert report["summary"]["rejected_expected_rate"] == 1.0
+    assert report["summary"]["unsafe_accepted_count"] == 0
+    assert report["summary"]["policy_evidence_coverage"] >= 0.8
+    assert report["summary"]["ranking_latency_p95_ms"] < 50
     assert report["summary"]["reject_reason_counts"]["bbox_invalid"] >= 1
     assert report["summary"]["reject_reason_counts"]["generic_activity"] >= 1
 
