@@ -44,6 +44,7 @@ llm_backend/reports/
 # Local development
 .env.local
 .env.*.local
+.worktrees/
 
 # Node
 node_modules/
