@@ -30,6 +30,12 @@ class ConversationService:
                         "ALTER TABLE travel_conversation_states "
                         "ADD COLUMN chat_summary TEXT NULL COMMENT '远期对话压缩摘要'"
                     ))
+                if "dialogue_state_json" not in cols:
+                    sync_conn.execute(text(
+                        "ALTER TABLE travel_conversation_states "
+                        "ADD COLUMN dialogue_state_json JSON NULL "
+                        "COMMENT '对话状态快照（澄清/路由/目标迁移）'"
+                    ))
             await conn.run_sync(_check_columns)
 
     @staticmethod
@@ -79,6 +85,7 @@ class ConversationService:
                 "current_revision_id": state.current_revision_id,
                 "trip_profile": state.trip_profile_json,
                 "current_itinerary": state.current_itinerary_json,
+                "dialogue_state": state.dialogue_state_json,
                 "chat_history": state.chat_history_json,
                 "chat_summary": state.chat_summary,
                 "last_user_query": state.last_user_query,
@@ -95,6 +102,7 @@ class ConversationService:
         current_revision_id: str | None = None,
         trip_profile: Dict[str, Any] | None = None,
         current_itinerary: Dict[str, Any] | None = None,
+        dialogue_state: Dict[str, Any] | None = None,
         last_user_query: str | None = None,
     ) -> Dict[str, Any]:
         """创建或更新旅行会话状态。"""
@@ -115,6 +123,7 @@ class ConversationService:
                     current_revision_id=current_revision_id,
                     trip_profile_json=trip_profile,
                     current_itinerary_json=current_itinerary,
+                    dialogue_state_json=dialogue_state,
                     last_user_query=last_user_query,
                 )
                 db.add(state) # 添加新的旅行会话状态
@@ -128,6 +137,8 @@ class ConversationService:
                     state.trip_profile_json = trip_profile
                 if current_itinerary is not None:
                     state.current_itinerary_json = current_itinerary
+                if dialogue_state is not None:
+                    state.dialogue_state_json = dialogue_state
                 if last_user_query is not None:
                     state.last_user_query = last_user_query
             # 提交事务
@@ -141,6 +152,7 @@ class ConversationService:
                 "current_revision_id": state.current_revision_id,
                 "trip_profile": state.trip_profile_json,
                 "current_itinerary": state.current_itinerary_json,
+                "dialogue_state": state.dialogue_state_json,
                 "last_user_query": state.last_user_query,
                 "created_at": state.created_at.isoformat() if state.created_at else None,
                 "updated_at": state.updated_at.isoformat() if state.updated_at else None,
@@ -180,6 +192,7 @@ class ConversationService:
                 state.current_revision_id = None
                 state.trip_profile_json = None
                 state.current_itinerary_json = None
+                state.dialogue_state_json = None
                 if last_user_query is not None:
                     state.last_user_query = last_user_query
             # 提交事务
@@ -192,10 +205,23 @@ class ConversationService:
                 "current_revision_id": state.current_revision_id,
                 "trip_profile": state.trip_profile_json,
                 "current_itinerary": state.current_itinerary_json,
+                "dialogue_state": state.dialogue_state_json,
                 "last_user_query": state.last_user_query,
                 "created_at": state.created_at.isoformat() if state.created_at else None,
                 "updated_at": state.updated_at.isoformat() if state.updated_at else None,
             }
+
+    @staticmethod
+    async def update_dialogue_state(
+        *,
+        conversation_id: str,
+        dialogue_state: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Persist only the conversation-routing state."""
+        return await ConversationService.upsert_travel_conversation_state(
+            conversation_id=conversation_id,
+            dialogue_state=dialogue_state,
+        )
 
     @staticmethod
     async def append_chat_history(
@@ -415,4 +441,4 @@ class ConversationService:
                 logger.info(f"已更新会话 {conversation_id} 的名称为 {name}")
         except Exception as e:
             logger.error(f"更新会话名称失败: {str(e)}", exc_info=True)
-            raise 
+            raise
