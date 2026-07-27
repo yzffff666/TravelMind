@@ -29,6 +29,7 @@ KNOWN_EVENTS = {
     "poi_ranking_shadow",
     "qp_parsed",
     "qa_local_fast_path",
+    "conversation_transition",
 }
 
 MAX_BACKFILL_SAMPLE_ROWS = 10
@@ -211,6 +212,33 @@ def summarize_events(events: Iterable[ObservabilityEvent]) -> dict[str, Any]:
         "poi_ranking": _summarize_poi_ranking(event_list),
         "qp": _summarize_qp(event_list),
         "qa": _summarize_qa(event_list),
+        "conversation": _summarize_conversation_transitions(event_list),
+    }
+
+
+def _summarize_conversation_transitions(
+    events: list[ObservabilityEvent],
+) -> dict[str, Any]:
+    relevant = [
+        event for event in events if event.event_type == "conversation_transition"
+    ]
+    return {
+        "events": len(relevant),
+        "intent_counts": _compact_counter(
+            Counter(event.payload.get("intent") for event in relevant)
+        ),
+        "mutation_scope_counts": _compact_counter(
+            Counter(event.payload.get("mutation_scope") for event in relevant)
+        ),
+        "revision_changed_count": sum(
+            1 for event in relevant if _as_bool(event.payload.get("revision_changed"))
+        ),
+        "blocked_count": sum(
+            1 for event in relevant if _as_bool(event.payload.get("blocked"))
+        ),
+        "block_reason_counts": _compact_counter(
+            Counter(event.payload.get("block_reason") for event in relevant)
+        ),
     }
 
 
@@ -691,6 +719,15 @@ def render_markdown(summary: dict[str, Any]) -> str:
 
     lines.extend(
         [
+            "## Conversation Transitions",
+            "",
+            f"- Events: {summary['conversation']['events']}",
+            f"- Intent counts: `{json.dumps(summary['conversation']['intent_counts'], ensure_ascii=False)}`",
+            f"- Mutation scope counts: `{json.dumps(summary['conversation']['mutation_scope_counts'], ensure_ascii=False)}`",
+            f"- Revision changed count: {summary['conversation']['revision_changed_count']}",
+            f"- Blocked count: {summary['conversation']['blocked_count']}",
+            f"- Block reasons: `{json.dumps(summary['conversation']['block_reason_counts'], ensure_ascii=False)}`",
+            "",
             "## QP",
             "",
             f"- Events: {summary['qp']['events']}",

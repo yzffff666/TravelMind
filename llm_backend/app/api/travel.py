@@ -1,9 +1,11 @@
 import os
+import re
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from hashlib import md5
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -14,6 +16,12 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.logger import get_logger
 from app.domain.travel.patch_engine import apply_patch, has_mutation_intent, parse_edit_ops
+from app.domain.travel.conversation_runtime import (
+    ConversationDecisionService,
+    ConversationRuntimeSnapshot,
+    ConversationTransitionResult,
+    apply_transition,
+)
 from app.domain.travel.structured_edit_command import build_structured_edit_command
 from app.domain.travel.sse_envelope import (
     build_data_line,
@@ -43,6 +51,7 @@ logger = get_logger(service="travel_api")
 clarification_service = TravelClarificationService()
 # QP baseline：统一上游 query 与下游输入语义（T-M2-000a）。
 query_processor = TravelQueryProcessor()
+conversation_decision_service = ConversationDecisionService()
 edit_backfill_service = LocationBackfillService(
     max_slots_per_request=3,
     max_variants_per_place=3,
@@ -51,6 +60,240 @@ edit_backfill_service = LocationBackfillService(
 )
 day_replan_service = DayReplanService()
 _active_request_fingerprints: dict[str, float] = {}
+
+
+def _conversation_snapshot_from_state(
+    conversation_id: str,
+    state: dict[str, Any] | None,
+) -> ConversationRuntimeSnapshot:
+    state = state or {}
+    itinerary = state.get("current_itinerary")
+    trip_profile = dict(
+        state.get("trip_profile")
+        or (itinerary or {}).get("trip_profile")
+        or {}
+    )
+    dialogue_state = dict(state.get("dialogue_state") or {})
+    active_destination = (
+        dialogue_state.get("active_destination")
+        or trip_profile.get("destination_city")
+    )
+    return ConversationRuntimeSnapshot(
+        conversation_id=conversation_id,
+        active_destination=active_destination,
+        trip_profile=trip_profile,
+        current_itinerary=itinerary,
+        current_revision_id=state.get("current_revision_id"),
+        pending_clarification=dialogue_state.get("pending_clarification"),
+        asked_fields=list(dialogue_state.get("asked_fields") or []),
+        last_decision=dialogue_state.get("last_decision"),
+        last_user_query=state.get("last_user_query"),
+    )
+
+
+def _resolve_conversation_transition(
+    *,
+    conversation_id: str,
+    query: str,
+    qp_output: dict[str, Any],
+    state: dict[str, Any] | None,
+) -> ConversationTransitionResult:
+    snapshot = _conversation_snapshot_from_state(conversation_id, state)
+    decision = conversation_decision_service.decide(query, qp_output, snapshot)
+    return apply_transition(snapshot, decision)
+
+
+def _dialogue_state_from_snapshot(
+    snapshot: ConversationRuntimeSnapshot,
+) -> dict[str, Any]:
+    return {
+        "active_goal": "travel_planning",
+        "active_destination": snapshot.active_destination,
+        "pending_clarification": snapshot.pending_clarification,
+        "asked_fields": list(snapshot.asked_fields),
+        "last_decision": snapshot.last_decision,
+    }
+
+
+async def _load_conversation_runtime(
+    conversation_id: str,
+) -> tuple[dict[str, Any] | None, ConversationRuntimeSnapshot]:
+    state = await ConversationService.get_travel_conversation_state(conversation_id)
+    snapshot = _conversation_snapshot_from_state(conversation_id, state)
+    clarification_service.restore_pending(
+        conversation_id,
+        snapshot.pending_clarification,
+    )
+    return state, snapshot
+
+
+async def _persist_dialogue_runtime(
+    conversation_id: str,
+    snapshot: ConversationRuntimeSnapshot,
+) -> None:
+    await ConversationService.update_dialogue_state(
+        conversation_id=conversation_id,
+        dialogue_state=_dialogue_state_from_snapshot(snapshot),
+    )
+
+
+def _extract_numeric_budget(value: Any) -> int | None:
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    match = re.search(r"\d+(?:\.\d+)?", str(value or "").replace(",", ""))
+    return int(float(match.group())) if match else None
+
+
+def _build_destination_change_query(
+    destination: str,
+    state: dict[str, Any] | None,
+) -> str:
+    """Build a fresh create query while retaining portable trip constraints."""
+    state = state or {}
+    itinerary = state.get("current_itinerary") or {}
+    profile = dict(state.get("trip_profile") or itinerary.get("trip_profile") or {})
+    constraints = dict(profile.get("constraints") or {})
+    parts = [f"去{destination}"]
+
+    days = itinerary.get("days") or []
+    if days:
+        parts.append(f"玩{len(days)}天")
+
+    budget = _extract_numeric_budget(
+        constraints.get("budget_range")
+        or (itinerary.get("budget_summary") or {}).get("total_estimate")
+    )
+    if budget is not None:
+        parts.append(f"预算{budget}元")
+
+    traveler_type = constraints.get("traveler_type") or profile.get("travelers")
+    if traveler_type:
+        parts.append(f"{traveler_type}出行")
+
+    preferences = [
+        str(item).strip()
+        for item in constraints.get("preferences") or []
+        if str(item).strip()
+    ]
+    if preferences:
+        parts.append(f"偏好{'、'.join(preferences)}")
+
+    pace = constraints.get("pace") or profile.get("pace")
+    if pace:
+        parts.append(f"节奏{pace}")
+    return "，".join(parts)
+
+
+@dataclass(slots=True)
+class PreparedConversationTurn:
+    qp_output: dict[str, Any]
+    transition: ConversationTransitionResult
+    runtime_snapshot: ConversationRuntimeSnapshot
+    intent: str
+    intent_detail: str
+    planning_query: str
+    normalized_query: str
+    recall_query: str
+
+
+def _log_conversation_transition(
+    transition: ConversationTransitionResult,
+) -> None:
+    logger.info(
+        "conversation_transition",
+        extra={
+            "event_type": "conversation_transition",
+            "conversation_id": transition.state_before.conversation_id,
+            "intent": transition.decision.intent,
+            "intent_detail": transition.decision.intent_detail,
+            "mutation_scope": transition.decision.mutation_scope,
+            "reason": transition.decision.reason,
+            "destination_before": transition.state_before.active_destination,
+            "destination_after": transition.state_after.active_destination,
+            "revision_before": transition.state_before.current_revision_id,
+            "revision_after": transition.state_after.current_revision_id,
+            "revision_changed": transition.revision_changed,
+            "blocked": transition.blocked,
+            "block_reason": transition.block_reason,
+        },
+    )
+
+
+async def _prepare_conversation_turn(
+    *,
+    conversation_id: str,
+    user_id: int,
+    query: str,
+    persisted_state: dict[str, Any] | None,
+) -> PreparedConversationTurn:
+    qp_output = await _process_qp(query, conversation_id)
+    transition = _resolve_conversation_transition(
+        conversation_id=conversation_id,
+        query=query,
+        qp_output=qp_output,
+        state=persisted_state,
+    )
+    _log_conversation_transition(transition)
+    runtime_snapshot = transition.state_after
+    intent = transition.decision.intent
+    intent_detail = transition.decision.intent_detail
+    planning_query = query
+
+    if intent == "change_destination":
+        planning_query = _build_destination_change_query(
+            transition.decision.destination or "",
+            persisted_state,
+        )
+        qp_output = await _process_qp(planning_query, conversation_id)
+
+    logger.info(
+        "QP parsed",
+        extra={
+            "event_type": "qp_parsed",
+            "conversation_id": conversation_id,
+            "intent": intent,
+            "intent_detail": intent_detail,
+            "missing_required": qp_output["missing_required"],
+            "qp_source": qp_output.get("qp_source"),
+            "confidence": qp_output.get("confidence"),
+            "fallback_reason": qp_output.get("fallback_reason"),
+            "structured_qp_mode": qp_output.get("structured_qp_mode"),
+            "route_reason": qp_output.get("route_reason"),
+            "safety_level": qp_output.get("safety_level"),
+            "shadow_intent": qp_output.get("shadow_intent"),
+        },
+    )
+
+    runtime_snapshot.last_user_query = query
+    if intent == "change_destination":
+        await ConversationService.replace_travel_conversation_runtime(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            current_revision_id=None,
+            trip_profile=runtime_snapshot.trip_profile,
+            current_itinerary=None,
+            dialogue_state=_dialogue_state_from_snapshot(runtime_snapshot),
+            last_user_query=query,
+        )
+        clarification_service.clear_pending(conversation_id)
+    else:
+        await ConversationService.upsert_travel_conversation_state(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            dialogue_state=_dialogue_state_from_snapshot(runtime_snapshot),
+            last_user_query=query,
+        )
+
+    return PreparedConversationTurn(
+        qp_output=qp_output,
+        transition=transition,
+        runtime_snapshot=runtime_snapshot,
+        intent=intent,
+        intent_detail=intent_detail,
+        planning_query=planning_query,
+        normalized_query=qp_output["normalized_query"],
+        recall_query=qp_output["recall_query"],
+    )
 
 
 def _request_fingerprint(*, user_id: int, conversation_id: str | None, query: str) -> str:
@@ -639,6 +882,13 @@ async def _build_local_qa_fast_response(
     qp_output = _classify_local_qa_fast_path(query_text)
     if not qp_output:
         return None
+    transition = _resolve_conversation_transition(
+        conversation_id=conversation_id,
+        query=query_text,
+        qp_output=qp_output,
+        state=state,
+    )
+    _log_conversation_transition(transition)
 
     response_language = _detect_response_language(query_text)
     text = _answer_itinerary_qa(query_text, itinerary, response_language=response_language)
@@ -658,6 +908,7 @@ async def _build_local_qa_fast_response(
     await ConversationService.upsert_travel_conversation_state(
         conversation_id=conversation_id,
         user_id=user_id,
+        dialogue_state=_dialogue_state_from_snapshot(transition.state_after),
         last_user_query=query_text,
     )
     return StreamingResponse(
@@ -1057,6 +1308,8 @@ async def langgraph_query(
             response.headers["X-Conversation-ID"] = thread_id
             return response
 
+        persisted_state, runtime_snapshot = await _load_conversation_runtime(thread_id)
+
         if conversation_id and not clarification_service.has_pending(thread_id):
             local_qa_response = await _build_local_qa_fast_response(
                 request_id=request_id,
@@ -1068,34 +1321,19 @@ async def langgraph_query(
                 local_qa_response.headers["X-Conversation-ID"] = thread_id
                 return _guard_response(local_qa_response, request_fingerprint)
 
-        qp_output = await _process_qp(query, thread_id)
-        normalized_query = qp_output["normalized_query"]
-        recall_query = qp_output["recall_query"]
-        logger.info(
-            "QP parsed",
-            extra={
-                "event_type": "qp_parsed",
-                "conversation_id": thread_id,
-                "intent": qp_output["intent"],
-                "intent_detail": qp_output["intent_detail"],
-                "missing_required": qp_output["missing_required"],
-                "qp_source": qp_output.get("qp_source"),
-                "confidence": qp_output.get("confidence"),
-                "fallback_reason": qp_output.get("fallback_reason"),
-                "structured_qp_mode": qp_output.get("structured_qp_mode"),
-                "route_reason": qp_output.get("route_reason"),
-                "safety_level": qp_output.get("safety_level"),
-                "shadow_intent": qp_output.get("shadow_intent"),
-            },
-        )
-        intent = qp_output["intent"]
-        intent_detail = qp_output["intent_detail"]
-
-        await ConversationService.upsert_travel_conversation_state(
+        prepared_turn = await _prepare_conversation_turn(
             conversation_id=thread_id,
             user_id=user_id,
-            last_user_query=query,
+            query=query,
+            persisted_state=persisted_state,
         )
+        qp_output = prepared_turn.qp_output
+        runtime_snapshot = prepared_turn.runtime_snapshot
+        intent = prepared_turn.intent
+        intent_detail = prepared_turn.intent_detail
+        planning_query = prepared_turn.planning_query
+        normalized_query = prepared_turn.normalized_query
+        recall_query = prepared_turn.recall_query
         # 配置会透传到 LangGraph 节点（例如 image_path 可触发图片分析分支）。
         thread_config = {
             "configurable": {
@@ -1119,10 +1357,17 @@ async def langgraph_query(
             return _guard_response(response, request_fingerprint)
 
         # --- Guided conversation: follow-up to pending clarification ---
-        if clarification_service.has_pending(thread_id):
+        if intent == "clarify" and clarification_service.has_pending(thread_id):
             decision = clarification_service.continue_pending(
                 thread_id=thread_id, query=normalized_query,
             )
+            runtime_snapshot.pending_clarification = clarification_service.snapshot_pending(
+                thread_id
+            )
+            runtime_snapshot.asked_fields = list(
+                (runtime_snapshot.pending_clarification or {}).get("asked_fields") or []
+            )
+            await _persist_dialogue_runtime(thread_id, runtime_snapshot)
             if decision.get("need_clarification"):
                 logger.info(
                     f"Guided follow-up for thread={thread_id}, "
@@ -1208,6 +1453,13 @@ async def langgraph_query(
 
         # --- Create intent: first clarification gate ---
         decision = clarification_service.start_new(thread_id=thread_id, query=normalized_query)
+        runtime_snapshot.pending_clarification = clarification_service.snapshot_pending(
+            thread_id
+        )
+        runtime_snapshot.asked_fields = list(
+            (runtime_snapshot.pending_clarification or {}).get("asked_fields") or []
+        )
+        await _persist_dialogue_runtime(thread_id, runtime_snapshot)
         if decision["need_clarification"]:
             logger.info(
                 f"Guided clarification for thread={thread_id}, "
@@ -1242,7 +1494,7 @@ async def langgraph_query(
                 yield line
             async for line in _stream_minimal_itinerary(
                 query_text=recall_query,
-                original_query=query,
+                original_query=planning_query,
                 thread_config=thread_config,
                 conversation_id=thread_id,
                 request_id=request_id,
@@ -1297,6 +1549,8 @@ async def langgraph_resume(request: LangGraphResumeRequest):
             response.headers["X-Conversation-ID"] = thread_id
             return response
 
+        persisted_state, runtime_snapshot = await _load_conversation_runtime(thread_id)
+
         if not clarification_service.has_pending(thread_id):
             local_qa_response = await _build_local_qa_fast_response(
                 request_id=request_id,
@@ -1308,34 +1562,19 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 local_qa_response.headers["X-Conversation-ID"] = thread_id
                 return _guard_response(local_qa_response, request_fingerprint)
 
-        qp_output = await _process_qp(request.query, thread_id)
-        normalized_query = qp_output["normalized_query"]
-        recall_query = qp_output["recall_query"]
-        logger.info(
-            "QP parsed",
-            extra={
-                "event_type": "qp_parsed",
-                "conversation_id": thread_id,
-                "intent": qp_output["intent"],
-                "intent_detail": qp_output["intent_detail"],
-                "missing_required": qp_output["missing_required"],
-                "qp_source": qp_output.get("qp_source"),
-                "confidence": qp_output.get("confidence"),
-                "fallback_reason": qp_output.get("fallback_reason"),
-                "structured_qp_mode": qp_output.get("structured_qp_mode"),
-                "route_reason": qp_output.get("route_reason"),
-                "safety_level": qp_output.get("safety_level"),
-                "shadow_intent": qp_output.get("shadow_intent"),
-            },
-        )
-        intent = qp_output["intent"]
-        intent_detail = qp_output["intent_detail"]
-
-        await ConversationService.upsert_travel_conversation_state(
+        prepared_turn = await _prepare_conversation_turn(
             conversation_id=thread_id,
             user_id=request.user_id,
-            last_user_query=request.query,
+            query=request.query,
+            persisted_state=persisted_state,
         )
+        qp_output = prepared_turn.qp_output
+        runtime_snapshot = prepared_turn.runtime_snapshot
+        intent = prepared_turn.intent
+        intent_detail = prepared_turn.intent_detail
+        planning_query = prepared_turn.planning_query
+        normalized_query = prepared_turn.normalized_query
+        recall_query = prepared_turn.recall_query
         thread_config = {"configurable": {"thread_id": thread_id, "user_id": request.user_id}}
 
         if intent == "reset":
@@ -1351,8 +1590,15 @@ async def langgraph_resume(request: LangGraphResumeRequest):
             return _guard_response(response, request_fingerprint)
 
         # 若该线程仍有待澄清项，优先完成澄清闭环。
-        if clarification_service.has_pending(thread_id):
+        if intent == "clarify" and clarification_service.has_pending(thread_id):
             decision = clarification_service.continue_pending(thread_id=thread_id, query=normalized_query)
+            runtime_snapshot.pending_clarification = clarification_service.snapshot_pending(
+                thread_id
+            )
+            runtime_snapshot.asked_fields = list(
+                (runtime_snapshot.pending_clarification or {}).get("asked_fields") or []
+            )
+            await _persist_dialogue_runtime(thread_id, runtime_snapshot)
             if decision.get("need_clarification"):
                 # 创建澄清响应
                 logger.info(
@@ -1424,6 +1670,21 @@ async def langgraph_resume(request: LangGraphResumeRequest):
             response.headers["X-Conversation-ID"] = thread_id
             return _guard_response(response, request_fingerprint)
 
+        if intent == "chat":
+            chat_text = await _generate_chat_response(request.query, thread_id)
+            response = StreamingResponse(
+                _stream_intent_text_response(
+                    request_id=request_id,
+                    conversation_id=thread_id,
+                    intent=intent,
+                    intent_detail=intent_detail,
+                    text=chat_text,
+                ),
+                media_type="text/event-stream",
+            )
+            response.headers["X-Conversation-ID"] = thread_id
+            return _guard_response(response, request_fingerprint)
+
         # 无 pending 时，直接按当前补充信息生成最小结构化草案。
         async def process_resume():
             async for line in _stream_intent_routed_event(
@@ -1435,7 +1696,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 yield line
             async for line in _stream_minimal_itinerary(
                 query_text=recall_query,
-                original_query=request.query,
+                original_query=planning_query,
                 thread_config=thread_config,
                 conversation_id=thread_id,
                 request_id=request_id,

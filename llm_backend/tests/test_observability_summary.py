@@ -352,6 +352,72 @@ def test_render_markdown_includes_major_sections():
     assert "- No POI ranking rejected samples." in markdown
 
 
+def test_summarize_conversation_transitions_and_render_markdown():
+    events = [
+        parse_log_line(
+            _loguru_json(
+                "conversation_transition",
+                {
+                    "event_type": "conversation_transition",
+                    "intent": "qa",
+                    "mutation_scope": "none",
+                    "revision_changed": False,
+                    "blocked": False,
+                },
+            )
+        ),
+        parse_log_line(
+            _loguru_json(
+                "conversation_transition",
+                {
+                    "event_type": "conversation_transition",
+                    "intent": "change_destination",
+                    "mutation_scope": "whole_trip",
+                    "revision_changed": True,
+                    "blocked": False,
+                },
+            )
+        ),
+        parse_log_line(
+            _loguru_json(
+                "conversation_transition",
+                {
+                    "event_type": "conversation_transition",
+                    "intent": "edit",
+                    "mutation_scope": "single_day",
+                    "revision_changed": False,
+                    "blocked": True,
+                    "block_reason": "missing_active_itinerary",
+                },
+            )
+        ),
+    ]
+
+    summary = summarize_events(event for event in events if event is not None)
+
+    assert summary["conversation"]["events"] == 3
+    assert summary["conversation"]["intent_counts"] == {
+        "qa": 1,
+        "change_destination": 1,
+        "edit": 1,
+    }
+    assert summary["conversation"]["mutation_scope_counts"] == {
+        "none": 1,
+        "whole_trip": 1,
+        "single_day": 1,
+    }
+    assert summary["conversation"]["revision_changed_count"] == 1
+    assert summary["conversation"]["blocked_count"] == 1
+    assert summary["conversation"]["block_reason_counts"] == {
+        "missing_active_itinerary": 1
+    }
+
+    markdown = render_markdown(summary)
+    assert "## Conversation Transitions" in markdown
+    assert "change_destination" in markdown
+    assert "missing_active_itinerary" in markdown
+
+
 def test_render_markdown_includes_backfill_unresolved_samples_table():
     summary = summarize_events(
         [

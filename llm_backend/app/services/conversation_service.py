@@ -224,6 +224,53 @@ class ConversationService:
         )
 
     @staticmethod
+    async def replace_travel_conversation_runtime(
+        *,
+        conversation_id: str,
+        user_id: int | None,
+        current_revision_id: str | None,
+        trip_profile: Dict[str, Any] | None,
+        current_itinerary: Dict[str, Any] | None,
+        dialogue_state: Dict[str, Any] | None,
+        last_user_query: str | None,
+    ) -> Dict[str, Any]:
+        """Atomically replace active runtime fields, including explicit nulls."""
+        await ConversationService._ensure_travel_state_table()
+        async with AsyncSessionLocal() as db:
+            stmt = select(TravelConversationState).where(
+                TravelConversationState.conversation_id == conversation_id
+            )
+            result = await db.execute(stmt)
+            state = result.scalar_one_or_none()
+            if state is None:
+                state = TravelConversationState(
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                )
+                db.add(state)
+
+            if user_id is not None:
+                state.user_id = user_id
+            state.current_revision_id = current_revision_id
+            state.trip_profile_json = trip_profile
+            state.current_itinerary_json = current_itinerary
+            state.dialogue_state_json = dialogue_state
+            state.last_user_query = last_user_query
+            await db.commit()
+            await db.refresh(state)
+            return {
+                "conversation_id": state.conversation_id,
+                "user_id": state.user_id,
+                "current_revision_id": state.current_revision_id,
+                "trip_profile": state.trip_profile_json,
+                "current_itinerary": state.current_itinerary_json,
+                "dialogue_state": state.dialogue_state_json,
+                "last_user_query": state.last_user_query,
+                "created_at": state.created_at.isoformat() if state.created_at else None,
+                "updated_at": state.updated_at.isoformat() if state.updated_at else None,
+            }
+
+    @staticmethod
     async def append_chat_history(
         conversation_id: str,
         user_msg: str,

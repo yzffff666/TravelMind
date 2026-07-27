@@ -117,6 +117,28 @@ def test_chat_is_read_only_and_preserves_active_goal():
     assert result.revision_changed is False
 
 
+def test_pending_clarification_reclassifies_flexible_chat_reply():
+    snapshot = _snapshot(destination=None, revision_id=None, has_itinerary=False)
+    snapshot.pending_clarification = {
+        "values": {
+            "destination": "香港",
+            "duration": None,
+            "budget": None,
+            "travelers": None,
+        }
+    }
+
+    decision = ConversationDecisionService().decide(
+        "都可以",
+        _qp(intent="chat"),
+        snapshot,
+    )
+
+    assert decision.intent == "clarify"
+    assert decision.mutation_scope == "constraints_only"
+    assert decision.reason == "pending_clarification_reply"
+
+
 @pytest.mark.parametrize(
     ("query", "incoming"),
     [

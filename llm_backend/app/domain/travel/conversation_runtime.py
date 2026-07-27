@@ -170,6 +170,16 @@ class ConversationDecisionService:
                 reason="read_only_question",
             )
 
+        if snapshot.pending_clarification:
+            return ConversationDecision(
+                intent="clarify",
+                intent_detail="guided_clarification",
+                confidence=confidence,
+                destination=incoming_destination or active_destination,
+                mutation_scope="constraints_only",
+                reason="pending_clarification_reply",
+            )
+
         if qp_intent == "chat":
             return ConversationDecision(
                 intent="chat",

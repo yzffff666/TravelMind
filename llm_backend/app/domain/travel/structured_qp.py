@@ -143,6 +143,7 @@ STRUCTURED_QP_SYSTEM_PROMPT = """\
 - 只做意图识别、约束抽取、query 改写和缺字段判断。
 - 不生成行程正文，不调用地图/搜索 Provider，不修改 itinerary。
 - 当前 itinerary / trip_profile 是显式状态，只能作为理解上下文使用。
+- 是否真正切换目的地由下游 ConversationDecisionService 结合当前状态最终决定；这里只抽取用户提到的 destination_city。
 - 输出必须是纯 JSON，不要 markdown，不要解释性正文。
 
 intent 只能是：
