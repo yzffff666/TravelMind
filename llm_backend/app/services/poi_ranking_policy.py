@@ -12,9 +12,15 @@ rankers.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+import time
 from typing import Any
 
+from app.services.learned_poi_ranker import (
+    load_runtime_ranker,
+    runtime_feature_values,
+)
 from app.services.destination_grounding import (
     DestinationProfile,
     has_valid_coordinates,
@@ -293,6 +299,77 @@ def policy_ranked_to_scored(
         for item in ranked
         if item.accepted
     ]
+
+
+def apply_learned_ranking(
+    policy_ranked: list[RankedPOICandidate],
+    *,
+    mode: str,
+    model_path: Path,
+) -> tuple[list[RankedPOICandidate], dict[str, Any]]:
+    """Optionally reorder accepted policy candidates with fail-safe fallback."""
+    if mode not in {"off", "shadow", "active"}:
+        raise ValueError(f"Unsupported learned ranking mode: {mode}")
+    accepted = [item for item in policy_ranked if item.accepted]
+    rejected = [item for item in policy_ranked if not item.accepted]
+    rule_top_ids = [item.candidate.candidate_id for item in accepted[:5]]
+    diagnostics: dict[str, Any] = {
+        "mode": mode,
+        "status": "disabled" if mode == "off" else mode,
+        "fallback_used": False,
+        "fallback_reason": "",
+        "rule_top_ids": rule_top_ids,
+        "learned_top_ids": [],
+        "latency_ms": 0.0,
+    }
+    if mode == "off" or not accepted:
+        return policy_ranked, diagnostics
+
+    started = time.perf_counter()
+    try:
+        model = load_runtime_ranker(model_path)
+        rows = [
+            {
+                "features": runtime_feature_values(item.feature),
+            }
+            for item in accepted
+        ]
+        scores = model.predict_scores(rows)
+    except Exception as exc:
+        diagnostics.update(
+            {
+                "status": "fallback",
+                "fallback_used": True,
+                "fallback_reason": str(exc),
+                "latency_ms": round((time.perf_counter() - started) * 1000, 4),
+            }
+        )
+        return policy_ranked, diagnostics
+
+    learned = [
+        replace(
+            item,
+            rank_score=round(float(score), 6),
+            score_breakdown={
+                **item.score_breakdown,
+                "rule_score": item.rank_score,
+                "learned_score": round(float(score), 6),
+            },
+        )
+        for item, score in zip(accepted, scores, strict=True)
+    ]
+    learned.sort(key=lambda item: item.rank_score, reverse=True)
+    diagnostics.update(
+        {
+            "learned_top_ids": [
+                item.candidate.candidate_id for item in learned[:5]
+            ],
+            "latency_ms": round((time.perf_counter() - started) * 1000, 4),
+        }
+    )
+    if mode == "shadow":
+        return policy_ranked, diagnostics
+    return [*learned, *rejected], diagnostics
 
 
 def select_runtime_ranking(

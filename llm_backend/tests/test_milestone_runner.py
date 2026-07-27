@@ -8,6 +8,7 @@ from scripts.milestone_runner import (
     run_command_gate,
     run_golden_demo_eval_gate,
     run_hybrid_qp_eval_gate,
+    run_learned_ranking_eval_gate,
     run_multi_turn_conversation_eval_gate,
     run_explicit_poi_edit_eval_gate,
     run_structured_edit_replan_eval_gate,
@@ -100,6 +101,63 @@ def test_ranking_eval_gate_passes_default_cases():
     assert result.summary["unsafe_accepted_count"] == 0
     assert result.summary["ranking_latency_p95_ms"] < 50
     assert result.failures == []
+
+
+def test_learned_ranking_eval_gate_passes_destination_holdout():
+    result = run_learned_ranking_eval_gate(
+        {
+            "type": "learned_ranking_eval",
+            "name": "learned_ranking_eval",
+        }
+    )
+
+    assert result.status == "passed"
+    assert result.summary["row_count"] == 576
+    assert result.summary["query_count"] == 48
+    assert result.summary["destination_count"] == 12
+    assert result.summary["train_test_destination_overlap"] == []
+    assert result.summary["learned_ndcg_at_5"] >= result.summary["rule_ndcg_at_5"]
+    assert (
+        result.summary["learned_preference_top3_rate"]
+        >= result.summary["rule_preference_top3_rate"] + 0.05
+    )
+    assert result.summary["unsafe_accepted_count"] == 0
+    assert result.summary["inference_p95_ms"] < 100
+    assert result.failures == []
+
+
+def test_learned_ranking_gate_rejects_dataset_stale_relative_to_catalog(
+    tmp_path,
+):
+    from scripts.build_learned_ranking_dataset import (
+        build_dataset,
+        load_catalog,
+    )
+
+    rows, _manifest = build_dataset(load_catalog())
+    rows[0] = {**rows[0], "candidate_title": "stale dataset row"}
+    dataset_path = tmp_path / "stale.jsonl"
+    dataset_path.write_text(
+        "".join(
+            json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_learned_ranking_eval_gate(
+        {
+            "type": "learned_ranking_eval",
+            "name": "learned_ranking_eval",
+            "dataset": str(dataset_path),
+        }
+    )
+
+    assert result.status == "failed"
+    assert any(
+        failure["reason"] == "checked-in dataset is stale relative to catalog"
+        for failure in result.failures
+    )
 
 
 def test_golden_demo_eval_gate_passes_default_cases():
@@ -211,6 +269,7 @@ def test_default_config_covers_core_integration_gates():
         "explicit_poi_edit_eval",
         "golden_demo_eval",
         "ranking_eval",
+        "learned_ranking_eval",
         "planner_eval",
         "unseen_destination_eval",
         "destination_readiness_eval",
@@ -229,6 +288,9 @@ def test_default_config_covers_core_integration_gates():
     assert "tests/test_explicit_poi_edit_eval.py" in backend_gate["targets"]
     assert "tests/test_structured_qp_shadow_eval.py" in backend_gate["targets"]
     assert "tests/test_ranking_eval_report.py" in backend_gate["targets"]
+    assert "tests/test_build_learned_ranking_dataset.py" in backend_gate["targets"]
+    assert "tests/test_learned_poi_ranker.py" in backend_gate["targets"]
+    assert "tests/test_learned_ranking_eval.py" in backend_gate["targets"]
     assert "tests/test_destination_grounding.py" in backend_gate["targets"]
     assert "tests/test_destination_grounding_graph.py" in backend_gate["targets"]
     assert "tests/test_itinerary_planner.py" in backend_gate["targets"]

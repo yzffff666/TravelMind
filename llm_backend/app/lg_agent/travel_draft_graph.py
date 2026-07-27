@@ -5,13 +5,14 @@ import time
 import uuid
 from datetime import datetime, timezone
 from hashlib import md5
+from pathlib import Path
 from typing import Any, TypedDict
 
 from langchain_deepseek import ChatDeepSeek
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
 
-from app.core.config import ServiceType, settings
+from app.core.config import ROOT_DIR, ServiceType, settings
 from app.core.logger import get_logger
 from app.domain.travel.draft_builder import (
     build_slots,
@@ -58,6 +59,7 @@ from app.services.itinerary_planner import (
 )
 from app.services.poi_ranking_policy import (
     POIRankingPolicy,
+    apply_learned_ranking,
     build_ranking_shadow_report,
     select_runtime_ranking,
 )
@@ -954,6 +956,14 @@ async def recall_node(state: TravelDraftState) -> dict:
                 include_rejected=True,
                 allow_mock=settings.ALLOW_MOCK_PUBLISH,
             )
+            model_path = Path(settings.POI_LEARNED_RANKING_MODEL_PATH)
+            if not model_path.is_absolute():
+                model_path = ROOT_DIR / model_path
+            policy_ranked, learned_diagnostics = apply_learned_ranking(
+                policy_ranked,
+                mode=settings.POI_LEARNED_RANKING_MODE,
+                model_path=model_path,
+            )
             poi_ranking_shadow_report = build_ranking_shadow_report(
                 destination=constraints.get("destination_city") or recall_result.city,
                 recalled_count=len(recall_result.candidates),
@@ -961,6 +971,7 @@ async def recall_node(state: TravelDraftState) -> dict:
                 policy_ranked=policy_ranked,
             )
             poi_ranking_shadow_report["ranking_mode"] = settings.POI_RANKING_MODE
+            poi_ranking_shadow_report["learned_ranking"] = learned_diagnostics
             logger.info("poi_ranking_shadow", extra=poi_ranking_shadow_report)
         ranked = select_runtime_ranking(
             settings.POI_RANKING_MODE,

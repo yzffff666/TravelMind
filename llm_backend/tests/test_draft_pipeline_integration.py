@@ -282,6 +282,7 @@ class TestRecallNode:
         assert result["pipeline_result"] is not None
         assert result["poi_ranking_shadow_report"]["event_type"] == "poi_ranking_shadow"
         assert "policy_accepted_count" in result["poi_ranking_shadow_report"]
+        assert result["poi_ranking_shadow_report"]["learned_ranking"]["status"] == "disabled"
         assert "recall_ms" in result["perf"]
 
     def test_recall_failure_graceful(self):

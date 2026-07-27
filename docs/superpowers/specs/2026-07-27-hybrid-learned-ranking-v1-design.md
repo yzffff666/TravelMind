@@ -120,7 +120,8 @@ gradients, early stopping, or model selection.
 
 ## 5. Feature Vector
 
-The learned vector is built from the same runtime `CandidateFeature` object:
+The offline rows and runtime `CandidateFeature` adapter share the same
+versioned feature names and order:
 
 ```text
 preference_match
@@ -134,8 +135,11 @@ rating_score
 review_count_score
 ```
 
-`rating_score` normalizes a five-point rating to `[0, 1]`.
+At runtime, `rating_score` normalizes a five-point rating to `[0, 1]`, while
 `review_count_score` applies `log1p` and a fixed cap before normalization.
+The v1 offline values are curated feature values rather than raw Provider
+payloads, so this milestone establishes schema parity, not production feature
+distribution parity.
 
 Feature order is part of the model schema. A missing, extra, or reordered
 feature causes model loading to fail closed and triggers rule fallback.
@@ -162,8 +166,11 @@ weights, training configuration, and validation metrics.
 
 ## 7. Evaluation
 
-The report compares the existing rule score with the learned score on the
-destination-isolated test set.
+The report compares the existing rule score with the learned score on a
+destination-ID-isolated curated-rubric test set. Split destination IDs are
+disjoint, and model metadata must match the current train-split fingerprint and
+training destination set. Score ties preserve input order and never use labels
+as an implicit tie-breaker.
 
 Required metrics:
 
@@ -181,6 +188,12 @@ learned inference P95                     < 100 ms
 Preference-sensitive Top-3 rate is the fraction of available label-2 placements
 captured in the top three, averaged by query. This is stricter than checking
 whether any relevant candidate appears.
+
+All destinations deliberately share a compact set of POI archetypes. Therefore,
+this benchmark verifies the training/evaluation/deployment mechanism and the
+ability to recover the curated preference policy; it does not establish
+open-world destination generalization or online user benefit. Those claims
+require logged runtime candidates and human or user feedback.
 
 ## 8. Runtime Integration
 

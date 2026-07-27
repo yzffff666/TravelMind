@@ -1,0 +1,111 @@
+{
+  "schema_version": "learned_ranking_catalog_v1",
+  "label_source": "curated_rubric_v1",
+  "destinations": [
+    {"id": "shenzhen", "name": "深圳", "split": "train", "quality_offset": 0.02},
+    {"id": "chengdu", "name": "成都", "split": "train", "quality_offset": -0.02},
+    {"id": "xian", "name": "西安", "split": "train", "quality_offset": 0.01},
+    {"id": "qingdao", "name": "青岛", "split": "train", "quality_offset": -0.01},
+    {"id": "tokyo", "name": "Tokyo", "split": "train", "quality_offset": 0.03},
+    {"id": "bangkok", "name": "Bangkok", "split": "train", "quality_offset": -0.03},
+    {"id": "berlin", "name": "Berlin", "split": "train", "quality_offset": 0.015},
+    {"id": "lisbon", "name": "Lisbon", "split": "train", "quality_offset": -0.015},
+    {"id": "kashgar", "name": "喀什", "split": "validation", "quality_offset": 0.025},
+    {"id": "valletta", "name": "Valletta", "split": "validation", "quality_offset": -0.025},
+    {"id": "jingdezhen", "name": "景德镇", "split": "test", "quality_offset": 0.005},
+    {"id": "hobart", "name": "Hobart", "split": "test", "quality_offset": -0.005}
+  ],
+  "query_profiles": [
+    {"id": "culture", "preferences": ["culture", "history", "museum"]},
+    {"id": "food", "preferences": ["food", "local market", "nightlife"]},
+    {"id": "outdoor", "preferences": ["outdoor", "nature", "viewpoint"]},
+    {"id": "family", "preferences": ["family", "indoor", "interactive"]}
+  ],
+  "candidate_archetypes": [
+    {
+      "id": "museum",
+      "title": "{destination} City Museum",
+      "relevance": {"culture": 2, "food": 0, "outdoor": 0, "family": 1},
+      "preference_match": {"culture": 0.96, "food": 0.04, "outdoor": 0.08, "family": 0.58},
+      "features": {"evidence_score": 0.9, "provider_confidence": 0.82, "resolvable_score": 0.94, "distance_feasibility": 1.0, "budget_match": 0.9, "alias_hit": 0.0, "rating_score": 0.92, "review_count_score": 0.84}
+    },
+    {
+      "id": "heritage_district",
+      "title": "{destination} Heritage District",
+      "relevance": {"culture": 2, "food": 1, "outdoor": 1, "family": 0},
+      "preference_match": {"culture": 0.92, "food": 0.5, "outdoor": 0.48, "family": 0.18},
+      "features": {"evidence_score": 0.82, "provider_confidence": 0.76, "resolvable_score": 0.9, "distance_feasibility": 0.96, "budget_match": 0.94, "alias_hit": 1.0, "rating_score": 0.86, "review_count_score": 0.75}
+    },
+    {
+      "id": "food_market",
+      "title": "{destination} Local Food Market",
+      "relevance": {"culture": 1, "food": 2, "outdoor": 0, "family": 1},
+      "preference_match": {"culture": 0.46, "food": 0.97, "outdoor": 0.12, "family": 0.5},
+      "features": {"evidence_score": 0.68, "provider_confidence": 0.7, "resolvable_score": 0.82, "distance_feasibility": 0.98, "budget_match": 0.96, "alias_hit": 0.0, "rating_score": 0.82, "review_count_score": 0.72}
+    },
+    {
+      "id": "local_restaurant",
+      "title": "{destination} Traditional Restaurant",
+      "relevance": {"culture": 0, "food": 2, "outdoor": 0, "family": 1},
+      "preference_match": {"culture": 0.12, "food": 0.94, "outdoor": 0.05, "family": 0.46},
+      "features": {"evidence_score": 0.74, "provider_confidence": 0.72, "resolvable_score": 0.86, "distance_feasibility": 0.94, "budget_match": 0.68, "alias_hit": 0.0, "rating_score": 0.88, "review_count_score": 0.78}
+    },
+    {
+      "id": "night_market",
+      "title": "{destination} Night Market",
+      "relevance": {"culture": 0, "food": 2, "outdoor": 0, "family": 0},
+      "preference_match": {"culture": 0.1, "food": 0.9, "outdoor": 0.12, "family": 0.16},
+      "features": {"evidence_score": 0.62, "provider_confidence": 0.66, "resolvable_score": 0.78, "distance_feasibility": 0.92, "budget_match": 0.98, "alias_hit": 0.0, "rating_score": 0.8, "review_count_score": 0.7}
+    },
+    {
+      "id": "urban_park",
+      "title": "{destination} Riverside Park",
+      "relevance": {"culture": 0, "food": 0, "outdoor": 2, "family": 2},
+      "preference_match": {"culture": 0.18, "food": 0.06, "outdoor": 0.96, "family": 0.88},
+      "features": {"evidence_score": 0.58, "provider_confidence": 0.7, "resolvable_score": 0.88, "distance_feasibility": 1.0, "budget_match": 1.0, "alias_hit": 0.0, "rating_score": 0.84, "review_count_score": 0.76}
+    },
+    {
+      "id": "hiking_trail",
+      "title": "{destination} Scenic Hiking Trail",
+      "relevance": {"culture": 0, "food": 0, "outdoor": 2, "family": 0},
+      "preference_match": {"culture": 0.08, "food": 0.02, "outdoor": 0.98, "family": 0.2},
+      "features": {"evidence_score": 0.46, "provider_confidence": 0.58, "resolvable_score": 0.76, "distance_feasibility": 0.78, "budget_match": 1.0, "alias_hit": 0.0, "rating_score": 0.78, "review_count_score": 0.52}
+    },
+    {
+      "id": "viewpoint",
+      "title": "{destination} Panoramic Viewpoint",
+      "relevance": {"culture": 0, "food": 0, "outdoor": 2, "family": 1},
+      "preference_match": {"culture": 0.16, "food": 0.04, "outdoor": 0.92, "family": 0.52},
+      "features": {"evidence_score": 0.52, "provider_confidence": 0.62, "resolvable_score": 0.8, "distance_feasibility": 0.82, "budget_match": 1.0, "alias_hit": 0.0, "rating_score": 0.9, "review_count_score": 0.64}
+    },
+    {
+      "id": "science_center",
+      "title": "{destination} Science Center",
+      "relevance": {"culture": 2, "food": 0, "outdoor": 0, "family": 2},
+      "preference_match": {"culture": 0.86, "food": 0.02, "outdoor": 0.04, "family": 0.98},
+      "features": {"evidence_score": 0.8, "provider_confidence": 0.74, "resolvable_score": 0.88, "distance_feasibility": 0.98, "budget_match": 0.82, "alias_hit": 0.0, "rating_score": 0.86, "review_count_score": 0.68}
+    },
+    {
+      "id": "family_attraction",
+      "title": "{destination} Family Discovery Park",
+      "relevance": {"culture": 0, "food": 0, "outdoor": 1, "family": 2},
+      "preference_match": {"culture": 0.04, "food": 0.02, "outdoor": 0.48, "family": 0.94},
+      "features": {"evidence_score": 0.66, "provider_confidence": 0.68, "resolvable_score": 0.82, "distance_feasibility": 0.9, "budget_match": 0.54, "alias_hit": 0.0, "rating_score": 0.82, "review_count_score": 0.66}
+    },
+    {
+      "id": "premium_landmark",
+      "title": "{destination} Premium Landmark Lounge",
+      "relevance": {"culture": 0, "food": 0, "outdoor": 0, "family": 0},
+      "preference_match": {"culture": 0.14, "food": 0.12, "outdoor": 0.1, "family": 0.08},
+      "features": {"evidence_score": 1.0, "provider_confidence": 1.0, "resolvable_score": 1.0, "distance_feasibility": 1.0, "budget_match": 1.0, "alias_hit": 1.0, "rating_score": 0.98, "review_count_score": 1.0}
+    },
+    {
+      "id": "wrong_city_generic",
+      "title": "Generic Attraction Outside {destination}",
+      "relevance": {"culture": 0, "food": 0, "outdoor": 0, "family": 0},
+      "preference_match": {"culture": 0.5, "food": 0.5, "outdoor": 0.5, "family": 0.5},
+      "hard_gate_passed": false,
+      "features": {"evidence_score": 0.92, "provider_confidence": 0.95, "resolvable_score": 0.25, "distance_feasibility": 0.0, "budget_match": 0.8, "alias_hit": 0.0, "rating_score": 0.94, "review_count_score": 0.96}
+    }
+  ]
+}

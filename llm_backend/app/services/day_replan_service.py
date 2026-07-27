@@ -6,9 +6,10 @@ the same recall/ranking decision path used by the draft pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
-from app.core.config import settings
+from app.core.config import ROOT_DIR, settings
 from app.services.candidate_publishability import evaluate_candidate_publishability
 from app.services.destination_grounding import DestinationResolver
 from app.services.itinerary_planner import (
@@ -17,7 +18,11 @@ from app.services.itinerary_planner import (
     plan_slots_as_payloads,
 )
 from app.services.poi_name_match import is_verified_poi_name_match
-from app.services.poi_ranking_policy import POIRankingPolicy, select_runtime_ranking
+from app.services.poi_ranking_policy import (
+    POIRankingPolicy,
+    apply_learned_ranking,
+    select_runtime_ranking,
+)
 from app.services.providers.base import ProviderCallContext
 from app.services.ranking_scorer import RankingScorer
 from app.services.recall_service import RecallResult, RecallService
@@ -165,6 +170,14 @@ class DayReplanService:
                     top_k=max(12, len(recall_result.candidates)),
                     include_rejected=True,
                     allow_mock=settings.ALLOW_MOCK_PUBLISH,
+                )
+                model_path = Path(settings.POI_LEARNED_RANKING_MODEL_PATH)
+                if not model_path.is_absolute():
+                    model_path = ROOT_DIR / model_path
+                policy_ranked, _learned_diagnostics = apply_learned_ranking(
+                    policy_ranked,
+                    mode=settings.POI_LEARNED_RANKING_MODE,
+                    model_path=model_path,
                 )
             ranked = select_runtime_ranking(
                 settings.POI_RANKING_MODE,

@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     ALLOW_MOCK_PUBLISH: bool = False
     ENABLE_CONSTRAINT_PLANNER: bool = True
     POI_RANKING_MODE: Literal["legacy", "shadow", "candidate"] = "shadow"
+    POI_LEARNED_RANKING_MODE: Literal["off", "shadow", "active"] = "off"
+    POI_LEARNED_RANKING_MODEL_PATH: str = "models/poi_pairwise_ranker_v1.json"
 
     # Amap (高德地图) settings
     AMAP_API_KEY: str = ""

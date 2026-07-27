@@ -1,0 +1,75 @@
+{
+  "feature_names": [
+    "preference_match",
+    "evidence_score",
+    "provider_confidence",
+    "resolvable_score",
+    "distance_feasibility",
+    "budget_match",
+    "alias_hit",
+    "rating_score",
+    "review_count_score"
+  ],
+  "means": [
+    0.396818181818182,
+    0.7064204545454539,
+    0.724602272727273,
+    0.8573295454545455,
+    0.9345454545454529,
+    0.8927272727272725,
+    0.18181818181818182,
+    0.8598863636363638,
+    0.7309659090909093
+  ],
+  "scales": [
+    0.3642350185804907,
+    0.15579333058362552,
+    0.1065076330782241,
+    0.06951924546988757,
+    0.07139692333117045,
+    0.14629303774466496,
+    0.3856946079199346,
+    0.05854765576748371,
+    0.11622582337685583
+  ],
+  "schema_version": "poi_pairwise_linear_ranker_v1",
+  "training": {
+    "accepted_row_count": 352,
+    "algorithm": "full_batch_pairwise_logistic",
+    "best_validation_ndcg_at_5": 1.0,
+    "dataset_sha256": "5b8b6968252cad50061ce9c825d3c357d45dd6d60055f18b07f990c6b10828c8",
+    "epochs": 500,
+    "l2": 0.01,
+    "label_source": "curated_rubric_v1",
+    "learning_rate": 0.08,
+    "pair_count": 1104,
+    "row_count": 384,
+    "test_row_count": 0,
+    "train_destinations": [
+      "bangkok",
+      "berlin",
+      "chengdu",
+      "lisbon",
+      "qingdao",
+      "shenzhen",
+      "tokyo",
+      "xian"
+    ],
+    "validation_destinations": [
+      "kashgar",
+      "valletta"
+    ],
+    "validation_row_count": 96
+  },
+  "weights": [
+    0.06924180424321047,
+    -0.0060513092547460606,
+    -0.010974242370513435,
+    -0.004805258871217048,
+    0.004384551373577196,
+    -0.006498768856933051,
+    -0.009018173441219747,
+    -0.009381679848980353,
+    -0.009557854983874436
+  ]
+}

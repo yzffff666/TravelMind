@@ -5,14 +5,19 @@ Agent decision quality: extract features, apply hard gates, then rank accepted
 POI candidates with explainable score breakdown.
 """
 
+from pathlib import Path
+
+import numpy as np
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from app.core.config import Settings
 from app.services.destination_grounding import DestinationProfile
+from app.services.learned_poi_ranker import FEATURE_NAMES, PairwiseLinearRanker
 from app.services.poi_ranking_policy import (
     CandidateFeature,
     POIRankingPolicy,
+    apply_learned_ranking,
     build_ranking_shadow_report,
     policy_ranked_to_scored,
     select_runtime_ranking,
@@ -205,6 +210,147 @@ def test_runtime_mode_rejects_invalid_value():
         TypeAdapter(annotation).validate_python("unknown")
     with pytest.raises(ValueError):
         select_runtime_ranking("unknown", [], [])
+
+
+def _write_preference_model(path: Path) -> None:
+    weights = np.zeros(len(FEATURE_NAMES), dtype=np.float64)
+    weights[FEATURE_NAMES.index("preference_match")] = 5.0
+    PairwiseLinearRanker(
+        means=np.zeros(len(FEATURE_NAMES), dtype=np.float64),
+        scales=np.ones(len(FEATURE_NAMES), dtype=np.float64),
+        weights=weights,
+        training={"fixture": True},
+    ).save(path)
+
+
+def test_active_learned_ranking_reorders_only_hard_gate_accepted_candidates(tmp_path: Path):
+    high_rule_low_preference = _candidate(
+        "Premium Lounge",
+        score=1.0,
+        tags=["购物"],
+        extra={"provider_confidence": 1.0, "alias_hit": True},
+    )
+    lower_rule_high_preference = _candidate(
+        "Culture Museum",
+        score=0.55,
+        tags=["文化"],
+        extra={"provider_confidence": 0.55, "url": "", "photos": [], "tel": ""},
+    )
+    rejected = _candidate("Eiffel Tower", lat=48.8584, lng=2.2945)
+    policy_ranked = POIRankingPolicy().rank(
+        [high_rule_low_preference, lower_rule_high_preference, rejected],
+        destination="普吉岛",
+        preferences=["文化"],
+        include_rejected=True,
+    )
+    model_path = tmp_path / "model.json"
+    _write_preference_model(model_path)
+
+    learned_ranked, diagnostics = apply_learned_ranking(
+        policy_ranked,
+        mode="active",
+        model_path=model_path,
+    )
+
+    assert [item.candidate.title for item in learned_ranked[:2]] == [
+        "Culture Museum",
+        "Premium Lounge",
+    ]
+    assert learned_ranked[-1].candidate.title == "Eiffel Tower"
+    assert learned_ranked[-1].accepted is False
+    assert diagnostics["status"] == "active"
+    assert diagnostics["fallback_used"] is False
+
+
+def test_shadow_learned_ranking_preserves_rule_order(tmp_path: Path):
+    weak = _candidate("Premium Lounge", score=1.0, tags=["购物"])
+    strong = _candidate("Culture Museum", score=0.5, tags=["文化"])
+    policy_ranked = POIRankingPolicy().rank(
+        [weak, strong],
+        destination="普吉岛",
+        preferences=["文化"],
+        include_rejected=True,
+    )
+    model_path = tmp_path / "model.json"
+    _write_preference_model(model_path)
+
+    output, diagnostics = apply_learned_ranking(
+        policy_ranked,
+        mode="shadow",
+        model_path=model_path,
+    )
+
+    assert [item.candidate.title for item in output] == [
+        item.candidate.title for item in policy_ranked
+    ]
+    assert diagnostics["status"] == "shadow"
+    assert diagnostics["learned_top_ids"][0] == strong.candidate_id
+
+
+@pytest.mark.parametrize("contents", [None, "{"])
+def test_learned_ranking_failure_falls_back_to_rule_order(
+    tmp_path: Path,
+    contents: str | None,
+):
+    first = _candidate("First", score=0.9)
+    second = _candidate("Second", score=0.7)
+    policy_ranked = POIRankingPolicy().rank(
+        [first, second],
+        destination="普吉岛",
+        include_rejected=True,
+    )
+    model_path = tmp_path / "model.json"
+    if contents is not None:
+        model_path.write_text(contents, encoding="utf-8")
+
+    output, diagnostics = apply_learned_ranking(
+        policy_ranked,
+        mode="active",
+        model_path=model_path,
+    )
+
+    assert output == policy_ranked
+    assert diagnostics["status"] == "fallback"
+    assert diagnostics["fallback_used"] is True
+    assert diagnostics["fallback_reason"]
+
+
+def test_learned_inference_exception_falls_back_to_rule_order(
+    monkeypatch,
+    tmp_path: Path,
+):
+    policy_ranked = POIRankingPolicy().rank(
+        [_candidate("First"), _candidate("Second")],
+        destination="普吉岛",
+        include_rejected=True,
+    )
+
+    class _BrokenRanker:
+        def predict_scores(self, rows):
+            raise RuntimeError("inference backend failed")
+
+    monkeypatch.setattr(
+        "app.services.poi_ranking_policy.load_runtime_ranker",
+        lambda path: _BrokenRanker(),
+    )
+
+    output, diagnostics = apply_learned_ranking(
+        policy_ranked,
+        mode="active",
+        model_path=tmp_path / "unused.json",
+    )
+
+    assert output == policy_ranked
+    assert diagnostics["status"] == "fallback"
+    assert diagnostics["fallback_used"] is True
+    assert "inference backend failed" in diagnostics["fallback_reason"]
+
+
+def test_learned_ranking_setting_accepts_only_supported_modes():
+    annotation = Settings.model_fields["POI_LEARNED_RANKING_MODE"].annotation
+    assert TypeAdapter(annotation).validate_python("active") == "active"
+    with pytest.raises(ValidationError):
+        TypeAdapter(annotation).validate_python("invalid")
 
 
 def test_shadow_report_summarizes_legacy_vs_policy_decisions():

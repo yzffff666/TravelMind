@@ -1,0 +1,56 @@
+{
+  "catalog_schema_version": "learned_ranking_catalog_v1",
+  "dataset_schema_version": "learned_ranking_sample_v1",
+  "dataset_sha256": "7b7eb27ee97d3c970171325865c7668933cb556dbc6ee3dcf77c72799d005d77",
+  "destination_count": 12,
+  "feature_names": [
+    "preference_match",
+    "evidence_score",
+    "provider_confidence",
+    "resolvable_score",
+    "distance_feasibility",
+    "budget_match",
+    "alias_hit",
+    "rating_score",
+    "review_count_score"
+  ],
+  "label_counts": {
+    "0": 336,
+    "1": 96,
+    "2": 144
+  },
+  "label_source": "curated_rubric_v1",
+  "query_count": 48,
+  "row_count": 576,
+  "schema_version": "learned_ranking_dataset_manifest_v1",
+  "split_destination_counts": {
+    "test": 2,
+    "train": 8,
+    "validation": 2
+  },
+  "split_destinations": {
+    "test": [
+      "hobart",
+      "jingdezhen"
+    ],
+    "train": [
+      "bangkok",
+      "berlin",
+      "chengdu",
+      "lisbon",
+      "qingdao",
+      "shenzhen",
+      "tokyo",
+      "xian"
+    ],
+    "validation": [
+      "kashgar",
+      "valletta"
+    ]
+  },
+  "split_row_counts": {
+    "test": 96,
+    "train": 384,
+    "validation": 96
+  }
+}

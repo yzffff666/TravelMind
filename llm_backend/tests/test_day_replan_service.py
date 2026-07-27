@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import copy
 import uuid
+from pathlib import Path
 
+import numpy as np
 import pytest
 
 from app.services.day_replan_service import DayReplanService
 from app.services.destination_grounding import DestinationProfile, DestinationResolver
+from app.services.learned_poi_ranker import FEATURE_NAMES, PairwiseLinearRanker
 from app.services.providers.base import ProviderCandidate
 from app.services.ranking_scorer import ScoredCandidate
 from app.services.recall_service import RecallResult
@@ -266,6 +269,69 @@ async def test_day_replan_ranking_mode_controls_planner_input(monkeypatch, mode,
 
     assert report.applied_days == [2]
     assert itinerary["days"][1]["slots"][1]["place"] == expected_place
+
+
+@pytest.mark.asyncio
+async def test_day_replan_active_learned_ranking_reorders_rule_candidates(
+    monkeypatch,
+    tmp_path: Path,
+):
+    itinerary = _make_itinerary()
+    weak = _candidate(
+        "Popular Mall",
+        rating=5.0,
+        tags=["购物"],
+        snippet="popular shopping stop",
+    )
+    weak.extra.update(
+        {"url": "", "photos": [], "tel": "", "provider_confidence": 1.0}
+    )
+    strong = _candidate(
+        "上海博物馆",
+        rating=3.5,
+        tags=["culture", "博物馆"],
+        snippet="上海 culture 博物馆",
+    )
+    strong.extra.update(
+        {
+            "url": "",
+            "photos": [],
+            "tel": "",
+            "provider_confidence": 0.4,
+        }
+    )
+    service = DayReplanService(
+        recall_service=_FakeRecall([weak, strong]),
+        ranking_scorer=_FixedLegacyScorer(),
+    )
+    weights = np.zeros(len(FEATURE_NAMES), dtype=np.float64)
+    weights[FEATURE_NAMES.index("preference_match")] = 5.0
+    model_path = tmp_path / "ranker.json"
+    PairwiseLinearRanker(
+        means=np.zeros(len(FEATURE_NAMES), dtype=np.float64),
+        scales=np.ones(len(FEATURE_NAMES), dtype=np.float64),
+        weights=weights,
+    ).save(model_path)
+    monkeypatch.setattr(
+        "app.services.day_replan_service.settings.POI_RANKING_MODE",
+        "candidate",
+    )
+    monkeypatch.setattr(
+        "app.services.day_replan_service.settings.POI_LEARNED_RANKING_MODE",
+        "active",
+    )
+    monkeypatch.setattr(
+        "app.services.day_replan_service.settings.POI_LEARNED_RANKING_MODEL_PATH",
+        str(model_path),
+    )
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "target_slot": "下午", "constraints": ["culture"]}],
+    )
+
+    assert report.applied_days == [2]
+    assert itinerary["days"][1]["slots"][1]["place"] == "上海博物馆"
 
 
 @pytest.mark.asyncio

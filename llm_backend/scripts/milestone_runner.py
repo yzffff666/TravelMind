@@ -32,6 +32,9 @@ DEFAULT_PYTEST_TARGETS = (
     "tests/test_travel_m2_011.py",
     "tests/test_golden_demo_eval.py",
     "tests/test_ranking_eval_report.py",
+    "tests/test_build_learned_ranking_dataset.py",
+    "tests/test_learned_poi_ranker.py",
+    "tests/test_learned_ranking_eval.py",
     "tests/test_candidate_audit_dataset.py",
     "tests/test_destination_grounding.py",
     "tests/test_destination_grounding_graph.py",
@@ -72,6 +75,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
         {"type": "golden_demo_eval", "name": "golden_demo_eval", "cases": "evaluation/golden_demo_cases.json"},
         {"type": "ranking_eval", "name": "ranking_eval", "cases": "evaluation/ranking_eval_cases.json"},
+        {"type": "learned_ranking_eval", "name": "learned_ranking_eval"},
         {"type": "planner_eval", "name": "planner_eval"},
         {
             "type": "unseen_destination_eval",
@@ -310,6 +314,53 @@ def run_ranking_eval_gate(gate: dict[str, Any]) -> GateResult:
             "failed_cases": report.get("failed_cases"),
             "guardrails": guardrails,
             **report_summary,
+        },
+        failures=failures,
+    )
+
+
+def run_learned_ranking_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from app.services.learned_poi_ranker import PairwiseLinearRanker
+    from scripts.build_learned_ranking_dataset import build_dataset, load_catalog
+    from scripts.learned_ranking_eval import evaluate_rankers
+    from scripts.train_poi_ranker import (
+        DEFAULT_DATASET_PATH,
+        DEFAULT_MODEL_PATH,
+        read_rows,
+    )
+
+    start = time.perf_counter()
+    dataset_path = Path(gate.get("dataset") or DEFAULT_DATASET_PATH)
+    model_path = Path(gate.get("model") or DEFAULT_MODEL_PATH)
+    checked_in_rows = read_rows(dataset_path)
+    generated_rows, _generated_manifest = build_dataset(load_catalog())
+    report = evaluate_rankers(
+        checked_in_rows,
+        PairwiseLinearRanker.load(model_path),
+    )
+    if checked_in_rows != generated_rows:
+        report["status"] = "failed"
+        report["failures"].append("checked-in dataset is stale relative to catalog")
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    dataset = report.get("dataset") or {}
+    metrics = report.get("metrics") or {}
+    failures = [
+        {"type": "learned_ranking_guardrail", "reason": reason}
+        for reason in report.get("failures") or []
+    ]
+    return GateResult(
+        name=str(gate.get("name") or "learned_ranking_eval"),
+        type="learned_ranking_eval",
+        status=str(report.get("status") or "failed"),
+        elapsed_ms=elapsed_ms,
+        summary={
+            "row_count": dataset.get("row_count"),
+            "query_count": dataset.get("query_count"),
+            "destination_count": dataset.get("destination_count"),
+            "train_test_destination_overlap": dataset.get(
+                "train_test_destination_overlap"
+            ),
+            **metrics,
         },
         failures=failures,
     )
@@ -656,6 +707,8 @@ def run_gate(gate: dict[str, Any]) -> GateResult:
         return run_golden_demo_eval_gate(gate)
     if gate_type == "ranking_eval":
         return run_ranking_eval_gate(gate)
+    if gate_type == "learned_ranking_eval":
+        return run_learned_ranking_eval_gate(gate)
     if gate_type == "unseen_destination_eval":
         return run_unseen_destination_eval_gate(gate)
     if gate_type == "destination_readiness_eval":
@@ -748,6 +801,16 @@ def render_summary(status: dict[str, Any]) -> str:
                 f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
                 f"good_hit={summary.get('good_hit_rate')}, "
                 f"expected_reject={summary.get('rejected_expected_rate')})"
+            )
+        elif gate.get("type") == "learned_ranking_eval":
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"(rows={summary.get('row_count')}, "
+                f"ndcg={summary.get('rule_ndcg_at_5')}->"
+                f"{summary.get('learned_ndcg_at_5')}, "
+                f"top3={summary.get('rule_preference_top3_rate')}->"
+                f"{summary.get('learned_preference_top3_rate')}, "
+                f"p95={summary.get('inference_p95_ms')}ms)"
             )
         elif gate.get("type") == "destination_readiness_eval":
             lines.append(

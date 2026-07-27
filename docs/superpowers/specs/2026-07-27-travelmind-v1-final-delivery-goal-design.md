@@ -353,9 +353,20 @@ model-load/inference fallback tests        pass
 This is an engineering acceptance comparison, not a claim of novel ranking
 research.
 
+Implementation evidence uses a transparent `curated_rubric_v1` benchmark with
+576 rows, 48 requests, and 12 destinations split by destination into
+8 train / 2 validation / 2 test. The NumPy pairwise linear ranker is disabled
+by default, supports shadow/active rollout, and falls back to deterministic rule
+ranking when its artifact is unavailable or incompatible. These offline
+rubric results establish the engineering pipeline, not open-world city
+generalization: destinations share a compact POI archetype template, feature
+values are curated, and the results are not presented as online user-behavior
+gains. The gate binds catalog, generated dataset, split provenance, and model
+training fingerprint to prevent stale artifacts or train/test leakage.
+
 ### 6.4 Existing Regression And Demo Gate
 
-- The existing 13/13 core integration milestone remains green.
+- The current 16-gate core integration milestone remains green.
 - Training, model loading, fallback, state transition, and replay have focused
   automated tests.
 - Four end-to-end demonstrations run without manual database repair:

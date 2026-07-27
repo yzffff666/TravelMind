@@ -51,6 +51,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 | `explicit_poi_edit_eval` | 16 条指定 POI 编辑验收，验证中英文地点名不会退化为原文替换或泛化约束，越界/QA 不产生修改请求 |
 | `golden_demo_eval` | 演示主链路 golden cases，覆盖深圳/香港/澳门/旧金山 create、QA 只读、局部重规划、跨城 bbox |
 | `ranking_eval` | 20 个目的地、63 个候选的离线排序门禁，比较 legacy/candidate 命中率，并验证跨城、缺坐标、Mock、duplicate、generic 拒绝、证据覆盖与 P95 |
+| `learned_ranking_eval` | 576 条分级 query-candidate 样本、48 个请求、12 个目的地的 pairwise 排序门禁；训练/验证/测试目的地 ID 隔离，校验 catalog/dataset/model 指纹一致性，并比较 rule/learned NDCG@5、偏好 Top-3、hard gate 安全与推理 P95 |
 | `planner_eval` | 12 个约束规划案例，验证不重复、预算、日内距离、室内约束、锁定日期与候选不足降级 |
 | `unseen_destination_eval` | 10 个未配置 bbox/alias 的城市，验证动态目的地 Profile、本地候选接受、跨城候选拒绝与候选不足安全降级 |
 | `destination_readiness_eval` | 12 个中外混合城市矩阵，验证静态/动态 Profile、坐标必填发布门槛、东京/京都等跨城干扰拒绝，以及证据/图片覆盖质量信号 |
@@ -66,7 +67,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=15/15 passed
+gates=16/16 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -158,6 +159,41 @@ reports/ranking-eval/latest/
 - 泛活动：拒绝“核心景点参观”“室内休闲活动”这类不可落地图的泛化候选。
 - 好候选 Top-K：检查高证据、高可解析、目的地一致的 POI 是否进入 policy top。
 - 排序 Guardrail：`unsafe_accepted_count == 0`、candidate 命中率不低于 legacy、证据覆盖不低于 80%、P95 低于 50ms。
+
+## 单独运行学习排序评估
+
+学习排序的数据、训练和评测都是离线可复现的，不调用 Provider 或 LLM：
+
+```bash
+cd llm_backend
+./.venv/bin/python -m scripts.build_learned_ranking_dataset
+./.venv/bin/python -m scripts.train_poi_ranker
+./.venv/bin/python -m scripts.learned_ranking_eval \
+  --output-dir reports/learned-ranking-eval/latest
+```
+
+数据集包含 576 条样本、48 个 query 和 12 个目的地，按目的地切分为
+`8 train / 2 validation / 2 test`。标签来自可审查的
+`curated_rubric_v1`，不是线上用户点击或真实 A/B 数据。
+
+当前目的地 ID 隔离的 rubric 测试结果：
+
+```text
+rule NDCG@5                 0.693541
+learned NDCG@5              1.0
+rule preference Top-3       0.416667
+learned preference Top-3    1.0
+inference P95               < 1ms
+unsafe accepted             0
+hard-gate rejected          8
+```
+
+模型只重排 deterministic hard gate 已接受的候选。通过
+`POI_LEARNED_RANKING_MODE=off|shadow|active` 灰度控制，模型缺失、损坏或
+feature schema 不兼容时自动回退规则排序。门禁还会拒绝 train/validation/test
+目的地交叉、模型训练指纹不一致、catalog 与生成 dataset 不一致以及 test row
+被标记为训练输入等情况。上述数字只说明模型在共享 POI archetype 的 rubric
+benchmark 上学会了偏好权重，不证明真实城市泛化，也不代表线上用户收益。
 
 运行时通过 `POI_RANKING_MODE` 灰度和回滚：
 
