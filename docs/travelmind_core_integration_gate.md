@@ -6,6 +6,7 @@
 
 ```text
 创建/追问意图识别
+→ 多轮会话目标保持、目的地切换与状态迁移
 → Provider 候选发布门禁（坐标/目的地/Mock/数量）
 → 可灰度 POI 排序与约束规划
 → 局部编辑与候选驱动重规划（复用同一门禁）
@@ -53,6 +54,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 | `planner_eval` | 12 个约束规划案例，验证不重复、预算、日内距离、室内约束、锁定日期与候选不足降级 |
 | `unseen_destination_eval` | 10 个未配置 bbox/alias 的城市，验证动态目的地 Profile、本地候选接受、跨城候选拒绝与候选不足安全降级 |
 | `destination_readiness_eval` | 12 个中外混合城市矩阵，验证静态/动态 Profile、坐标必填发布门槛、东京/京都等跨城干扰拒绝，以及证据/图片覆盖质量信号 |
+| `multi_turn_conversation_eval` | 24 组、49 turn 的确定性回放，覆盖目的地切换/提及只读、QA 不误改、模糊澄清、闲聊目标保持、连续编辑与 reset 恢复 |
 | `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、候选人工审核、目的地 grounding 契约、runner 自测 |
 | `frontend_chat_component_tests` | DiffCard 与 PhaseIndicator，防止编辑结果重复展示、QA 状态误导 |
 | `frontend_type_check` | Vue/TypeScript 类型契约 |
@@ -63,7 +65,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=13/13 passed
+gates=14/14 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -79,6 +81,7 @@ llm_backend/reports/milestone-runs/<run_id>/failures.json
 建议在这些场景运行：
 
 - 修改 QP / intent routing 之后。
+- 修改多轮对话状态、澄清、目的地切换、连续编辑或 reset 逻辑之后。
 - 修改 Structured QP 路由、模型 schema、置信度阈值或安全回退之后。
 - 修改 Structured QP 到 PatchOp、候选重规划或局部 slot 替换之后。
 - 修改指定 POI 替换、名称匹配或目的地过滤之后。
@@ -89,6 +92,30 @@ llm_backend/reports/milestone-runs/<run_id>/failures.json
 - 修改 patch engine / day replan 之后。
 - 修改 SSE event payload 或前端聊天展示之后。
 - 准备演示或 push 前。
+
+## 单独运行多轮会话回放
+
+```bash
+cd llm_backend
+./.venv/bin/python -m scripts.multi_turn_conversation_eval \
+  --output-dir reports/multi-turn-conversation-eval/latest
+```
+
+通过标准是 `24/24 cases` 且 `49/49 turns`。评测集按六类平均分布：
+
+```text
+destination_switch
+destination_mention_readonly
+qa_readonly
+flexible_clarification
+chat_goal_retention
+edit_reset_recovery
+```
+
+失败报告会给出 `case_id`、类别、具体 turn、原始 query、expected/actual
+差异。该 gate 直接复用生产的 `ConversationDecisionService`、状态迁移和
+澄清服务，但不调用真实 LLM、地图或搜索 Provider，因此可以稳定地放进
+本地回归与 CI；外部服务质量仍由 live probe 和浏览器联调验证。
 
 ## 单独运行排序评估
 

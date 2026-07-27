@@ -44,6 +44,9 @@ DEFAULT_PYTEST_TARGETS = (
     "tests/test_day_replan_service.py",
     "tests/test_travel_m2_012_013.py",
     "tests/test_travel_sse_envelope.py",
+    "tests/test_conversation_runtime.py",
+    "tests/test_conversation_runtime_integration.py",
+    "tests/test_multi_turn_conversation_eval.py",
     "tests/test_observability_summary.py",
     "tests/test_milestone_runner.py",
 )
@@ -78,6 +81,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "type": "destination_readiness_eval",
             "name": "destination_readiness_eval",
             "cases": "evaluation/destination_readiness_cases.json",
+        },
+        {
+            "type": "multi_turn_conversation_eval",
+            "name": "multi_turn_conversation_eval",
+            "cases": "evaluation/multi_turn_conversation_cases.json",
         },
         {"type": "pytest", "name": "backend_core_integration_tests", "targets": list(DEFAULT_PYTEST_TARGETS)},
         {
@@ -428,6 +436,37 @@ def run_planner_eval_gate(gate: dict[str, Any]) -> GateResult:
     )
 
 
+def run_multi_turn_conversation_eval_gate(
+    gate: dict[str, Any],
+) -> GateResult:
+    from scripts.multi_turn_conversation_eval import (
+        DEFAULT_CASES_PATH as DEFAULT_MULTI_TURN_CASES_PATH,
+        evaluate_cases,
+        is_passing,
+        load_cases,
+    )
+
+    start = time.perf_counter()
+    cases_path = Path(gate.get("cases") or DEFAULT_MULTI_TURN_CASES_PATH)
+    report = evaluate_cases(load_cases(cases_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    return GateResult(
+        name=str(gate.get("name") or "multi_turn_conversation_eval"),
+        type="multi_turn_conversation_eval",
+        status="passed" if is_passing(report) else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "case_count": report.get("case_count"),
+            "passed_cases": report.get("passed_cases"),
+            "failed_cases": report.get("failed_cases"),
+            "turn_count": report.get("turn_count"),
+            "failed_turns": report.get("failed_turns"),
+            "categories": report.get("category_summary") or {},
+        },
+        failures=list(report.get("failures") or []),
+    )
+
+
 def run_pytest_gate(gate: dict[str, Any]) -> GateResult:
     start = time.perf_counter()
     targets = [str(item) for item in gate.get("targets") or []]
@@ -578,6 +617,8 @@ def run_gate(gate: dict[str, Any]) -> GateResult:
         return run_destination_readiness_eval_gate(gate)
     if gate_type == "planner_eval":
         return run_planner_eval_gate(gate)
+    if gate_type == "multi_turn_conversation_eval":
+        return run_multi_turn_conversation_eval_gate(gate)
     if gate_type == "pytest":
         return run_pytest_gate(gate)
     if gate_type == "command":
@@ -673,6 +714,12 @@ def render_summary(status: dict[str, Any]) -> str:
                 f"- {gate['name']}: {gate['status']} "
                 f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
                 f"p95={summary.get('planner_p95_ms')}ms)"
+            )
+        elif gate.get("type") == "multi_turn_conversation_eval":
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
+                f"failed_turns={summary.get('failed_turns')})"
             )
         else:
             lines.append(f"- {gate['name']}: {gate['status']} ({round(gate.get('elapsed_ms', 0))} ms)")

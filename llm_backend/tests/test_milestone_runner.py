@@ -1,4 +1,5 @@
 import sys
+import json
 
 from scripts.milestone_runner import (
     DEFAULT_CONFIG,
@@ -7,6 +8,7 @@ from scripts.milestone_runner import (
     run_command_gate,
     run_golden_demo_eval_gate,
     run_hybrid_qp_eval_gate,
+    run_multi_turn_conversation_eval_gate,
     run_explicit_poi_edit_eval_gate,
     run_structured_edit_replan_eval_gate,
     run_qp_eval_gate,
@@ -143,6 +145,43 @@ def test_planner_eval_gate_passes_default_cases():
     assert result.failures == []
 
 
+def test_multi_turn_conversation_eval_gate_passes_24_transcripts():
+    result = run_multi_turn_conversation_eval_gate(
+        {
+            "type": "multi_turn_conversation_eval",
+            "name": "multi_turn_conversation_eval",
+        }
+    )
+
+    assert result.status == "passed"
+    assert result.summary["case_count"] == 24
+    assert result.summary["passed_cases"] == 24
+    assert result.summary["failed_turns"] == 0
+    assert result.failures == []
+
+
+def test_multi_turn_conversation_eval_gate_fails_on_turn_regression(tmp_path):
+    from scripts.multi_turn_conversation_eval import load_cases
+
+    cases = load_cases()
+    cases[0]["turns"][0]["expected"]["intent"] = "edit"
+    cases_path = tmp_path / "multi-turn-regression.json"
+    cases_path.write_text(json.dumps(cases, ensure_ascii=False), encoding="utf-8")
+
+    result = run_multi_turn_conversation_eval_gate(
+        {
+            "type": "multi_turn_conversation_eval",
+            "name": "multi_turn_conversation_eval",
+            "cases": str(cases_path),
+        }
+    )
+
+    assert result.status == "failed"
+    assert result.summary["failed_cases"] == 1
+    assert result.summary["failed_turns"] == 1
+    assert result.failures[0]["case_id"] == cases[0]["case_id"]
+
+
 def test_default_config_covers_core_integration_gates():
     gate_names = {gate["name"] for gate in DEFAULT_CONFIG["gates"]}
 
@@ -157,6 +196,7 @@ def test_default_config_covers_core_integration_gates():
         "planner_eval",
         "unseen_destination_eval",
         "destination_readiness_eval",
+        "multi_turn_conversation_eval",
         "backend_core_integration_tests",
         "frontend_chat_component_tests",
         "frontend_type_check",
@@ -181,6 +221,9 @@ def test_default_config_covers_core_integration_gates():
     assert "tests/test_day_replan_service.py" in backend_gate["targets"]
     assert "tests/test_travel_m2_012_013.py" in backend_gate["targets"]
     assert "tests/test_observability_summary.py" in backend_gate["targets"]
+    assert "tests/test_conversation_runtime.py" in backend_gate["targets"]
+    assert "tests/test_conversation_runtime_integration.py" in backend_gate["targets"]
+    assert "tests/test_multi_turn_conversation_eval.py" in backend_gate["targets"]
 
 
 def test_command_gate_passes_and_captures_output():
