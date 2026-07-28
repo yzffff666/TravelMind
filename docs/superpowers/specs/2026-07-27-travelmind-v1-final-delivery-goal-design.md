@@ -15,6 +15,9 @@ planning agent.
 
 The system must:
 
+- provide an English-first interface with a persistent English/Chinese switch,
+  while keeping Agent responses and itinerary content consistent with the
+  conversation language;
 - preserve the user's active travel goal across multi-turn conversation;
 - distinguish creation, itinerary QA, local edit, destination change, casual chat,
   clarification, and reset without unintended itinerary mutation;
@@ -31,6 +34,7 @@ In one line:
 
 ```text
 TravelMind v1 = reliable multi-turn state control
+              + bilingual interaction consistency
               + open-world POI retrieval
               + safe hybrid candidate ranking
               + constraint-aware planning
@@ -60,6 +64,7 @@ after the agent can preserve and intentionally transition its goal state.
 
 ```text
 user turn
+  -> UI locale and conversation response-language resolution
   -> conversation decision
        intent
        confidence
@@ -394,20 +399,56 @@ SSE envelopes with all nine safety counters at zero. Live Provider/browser
 evidence and the final README/report remain outstanding and are not implied by
 this deterministic result.
 
+### 6.5 Bilingual Experience Gate
+
+TravelMind is English-first for the overseas university demonstration and
+supports an explicit English/Chinese UI switch. UI locale and Agent response
+language are separate state:
+
+```text
+ui_locale         -> navigation, controls, labels, formatting
+response_language -> clarification, QA, edits, itinerary, fallback, errors
+```
+
+Chinese substantive input produces Chinese responses and itinerary content;
+English substantive input produces English output. Short acknowledgements such
+as `ok`, `好的`, and `都可以` preserve the active conversation language instead
+of causing language drift.
+
+Pass criteria:
+
+```text
+default UI locale                              = en
+UI locale switch and refresh persistence       pass
+Chinese multi-turn journeys                    >= 10
+English multi-turn journeys                    >= 10
+short-reply language drift                     = 0
+wrong-language itinerary publication           = 0
+wrong-language clarification/fallback           = 0
+frontend visible-string inventory              100% localized
+```
+
+This P0 gate is completed before the final live Provider/browser demonstration.
+The detailed contract is defined in
+`2026-07-28-bilingual-experience-contract-design.md`.
+
 ## 7. Deliverables
 
 The final project contains:
 
-1. a runnable Vue/FastAPI/SSE application;
-2. an explicit conversation decision and state-transition layer;
-3. multi-turn transcript evaluation and replay tooling;
-4. open-world destination resolution and provider routing;
-5. a deterministic candidate safety gate;
-6. a small ranking dataset and dataset manifest;
-7. a reproducible lightweight ranker training pipeline and model artifact;
-8. constraint-aware planning and revision-safe local replanning;
-9. automated acceptance reports; and
-10. a final project report covering architecture, difficult cases, implementation,
+1. an English-first Vue/FastAPI/SSE application with a persistent
+   English/Chinese UI switch;
+2. a conversation-level response-language policy covering generation,
+   clarification, QA, edits, fallback, and errors;
+3. an explicit conversation decision and state-transition layer;
+4. multi-turn transcript evaluation and replay tooling;
+5. open-world destination resolution and provider routing;
+6. a deterministic candidate safety gate;
+7. a small ranking dataset and dataset manifest;
+8. a reproducible lightweight ranker training pipeline and model artifact;
+9. constraint-aware planning and revision-safe local replanning;
+10. automated acceptance reports; and
+11. a final project report covering architecture, difficult cases, implementation,
     limitations, and demonstration instructions.
 
 ## 8. Scope Boundaries
@@ -420,7 +461,7 @@ The final project does not require:
 - support for every city in the world;
 - publication-quality algorithmic novelty;
 - a broad GraphRAG or multi-agent expansion;
-- a complete frontend redesign; or
+- a complete frontend redesign beyond the bilingual experience contract; or
 - unrelated refactoring of every large backend module.
 
 New functionality is accepted only when it advances the final end-to-end goal or
@@ -428,7 +469,8 @@ removes a blocker to its acceptance gates.
 
 The implementation is scoped for approximately two to three focused weeks. If
 scope pressure appears, reduce model complexity and presentation polish before
-weakening conversation correctness, destination safety, or replayability.
+weakening conversation correctness, bilingual consistency, destination safety,
+or replayability.
 
 ## 9. Stop Condition
 
