@@ -6,6 +6,7 @@ from scripts.milestone_runner import (
     build_status,
     render_summary,
     run_command_gate,
+    run_demo_journey_eval_gate,
     run_golden_demo_eval_gate,
     run_hybrid_qp_eval_gate,
     run_learned_ranking_eval_gate,
@@ -267,6 +268,26 @@ def test_multi_turn_conversation_eval_gate_fails_on_turn_regression(tmp_path):
     assert result.failures[0]["case_id"] == cases[0]["case_id"]
 
 
+def test_demo_journey_eval_gate_passes_two_run_safety_contract():
+    result = run_demo_journey_eval_gate(
+        {
+            "type": "demo_journey_eval",
+            "name": "demo_journey_eval",
+        }
+    )
+
+    assert result.status == "passed"
+    assert result.summary["scenario_count"] == 4
+    assert result.summary["repetitions"] == 2
+    assert result.summary["journey_runs"] == 8
+    assert result.summary["passed_journey_runs"] == 8
+    assert result.summary["turn_count"] >= 24
+    assert all(
+        value == 0 for value in result.summary["safety_metrics"].values()
+    )
+    assert result.failures == []
+
+
 def test_default_config_covers_core_integration_gates():
     gate_names = {gate["name"] for gate in DEFAULT_CONFIG["gates"]}
 
@@ -284,6 +305,7 @@ def test_default_config_covers_core_integration_gates():
         "destination_readiness_eval",
         "overseas_candidate_supply_eval",
         "multi_turn_conversation_eval",
+        "demo_journey_eval",
         "backend_core_integration_tests",
         "frontend_chat_component_tests",
         "frontend_type_check",
@@ -315,6 +337,7 @@ def test_default_config_covers_core_integration_gates():
     assert "tests/test_conversation_runtime.py" in backend_gate["targets"]
     assert "tests/test_conversation_runtime_integration.py" in backend_gate["targets"]
     assert "tests/test_multi_turn_conversation_eval.py" in backend_gate["targets"]
+    assert "tests/test_demo_journey_eval.py" in backend_gate["targets"]
 
 
 def test_command_gate_passes_and_captures_output():

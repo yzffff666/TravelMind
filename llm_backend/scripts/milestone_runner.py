@@ -51,6 +51,7 @@ DEFAULT_PYTEST_TARGETS = (
     "tests/test_conversation_runtime.py",
     "tests/test_conversation_runtime_integration.py",
     "tests/test_multi_turn_conversation_eval.py",
+    "tests/test_demo_journey_eval.py",
     "tests/test_observability_summary.py",
     "tests/test_milestone_runner.py",
 )
@@ -96,6 +97,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "type": "multi_turn_conversation_eval",
             "name": "multi_turn_conversation_eval",
             "cases": "evaluation/multi_turn_conversation_cases.json",
+        },
+        {
+            "type": "demo_journey_eval",
+            "name": "demo_journey_eval",
+            "cases": "evaluation/demo_journey_cases.json",
+            "repetitions": 2,
         },
         {"type": "pytest", "name": "backend_core_integration_tests", "targets": list(DEFAULT_PYTEST_TARGETS)},
         {
@@ -588,6 +595,47 @@ def run_multi_turn_conversation_eval_gate(
     )
 
 
+def run_demo_journey_eval_gate(gate: dict[str, Any]) -> GateResult:
+    from scripts.demo_journey_eval import (
+        DEFAULT_CASES_PATH as DEFAULT_DEMO_JOURNEY_CASES_PATH,
+        evaluate_cases,
+        is_passing,
+        load_cases,
+    )
+
+    start = time.perf_counter()
+    cases_path = Path(gate.get("cases") or DEFAULT_DEMO_JOURNEY_CASES_PATH)
+    repetitions = int(gate.get("repetitions") or 2)
+    report = evaluate_cases(load_cases(cases_path), repetitions=repetitions)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    failures = list(report.get("failures") or [])
+    if not is_passing(report) and not failures:
+        failures.append(
+            {
+                "type": "demo_journey_safety_guardrail",
+                "contract_errors": list(report.get("contract_errors") or []),
+                "safety_metrics": dict(report.get("safety_metrics") or {}),
+            }
+        )
+    return GateResult(
+        name=str(gate.get("name") or "demo_journey_eval"),
+        type="demo_journey_eval",
+        status="passed" if is_passing(report) else "failed",
+        elapsed_ms=elapsed_ms,
+        summary={
+            "scenario_count": report.get("scenario_count"),
+            "repetitions": report.get("repetitions"),
+            "journey_runs": report.get("journey_runs"),
+            "passed_journey_runs": report.get("passed_journey_runs"),
+            "failed_journey_runs": report.get("failed_journey_runs"),
+            "turn_count": report.get("turn_count"),
+            "contract_errors": report.get("contract_errors") or [],
+            "safety_metrics": report.get("safety_metrics") or {},
+        },
+        failures=failures,
+    )
+
+
 def run_pytest_gate(gate: dict[str, Any]) -> GateResult:
     start = time.perf_counter()
     targets = [str(item) for item in gate.get("targets") or []]
@@ -744,6 +792,8 @@ def run_gate(gate: dict[str, Any]) -> GateResult:
         return run_planner_eval_gate(gate)
     if gate_type == "multi_turn_conversation_eval":
         return run_multi_turn_conversation_eval_gate(gate)
+    if gate_type == "demo_journey_eval":
+        return run_demo_journey_eval_gate(gate)
     if gate_type == "pytest":
         return run_pytest_gate(gate)
     if gate_type == "command":
@@ -868,6 +918,18 @@ def render_summary(status: dict[str, Any]) -> str:
                 f"unsafe_mutations={summary.get('qa_chat_unintended_mutations')}, "
                 f"false_switches={summary.get('false_destination_switches')}, "
                 f"clarification_loops={summary.get('repeated_clarification_loops')})"
+            )
+        elif gate.get("type") == "demo_journey_eval":
+            safety = summary.get("safety_metrics") or {}
+            lines.append(
+                f"- {gate['name']}: {gate['status']} "
+                f"({summary.get('passed_journey_runs')}/"
+                f"{summary.get('journey_runs')} runs, "
+                f"turns={summary.get('turn_count')}, "
+                f"wrong_edits={safety.get('wrong_edit_targets')}, "
+                f"stale={safety.get('stale_destination_candidates')}, "
+                f"unsafe_degrade={safety.get('unsafe_final_itinerary_on_degrade')}, "
+                f"lineage={safety.get('revision_lineage_failures')})"
             )
         else:
             lines.append(f"- {gate['name']}: {gate['status']} ({round(gate.get('elapsed_ms', 0))} ms)")

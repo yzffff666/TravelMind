@@ -19,11 +19,12 @@ acceptance requires `8/8` journey runs to pass.
 
 ## 2. Why This Is The Next Milestone
 
-The current 16-gate milestone already verifies:
+Before this milestone, the 16-gate suite already verified:
 
 - 48 multi-turn transcripts and 144 turns;
 - destination grounding and cross-city rejection;
-- rule and learned candidate ranking;
+- production candidate ranking selection, with learned ranking kept in its
+  rollout-safe default-off mode;
 - constraint-aware planning;
 - structured and explicit-POI local edits;
 - SSE component contracts; and
@@ -45,7 +46,8 @@ The automated journey runner uses production:
 - `TravelQueryProcessor`;
 - `ConversationDecisionService` and `apply_transition`;
 - destination profiles and publishability checks;
-- `RankingScorer`, `POIRankingPolicy`, and learned-ranking fallback selection;
+- `RankingScorer`, `POIRankingPolicy`, and the learned-ranking rollout/fallback
+  selector in default-off mode;
 - `ConstraintAwareItineraryPlanner`;
 - revision lineage rules; and
 - SSE envelope builders.
@@ -196,7 +198,7 @@ fixture
 -> real QP
 -> conversation decision and transition
 -> candidate publishability
--> rule/learned rank selection
+-> production rank selection (learned mode off)
 -> constraint planner
 -> itinerary/revision update
 -> real SSE envelope construction
@@ -300,4 +302,3 @@ Stop implementation when:
 - the backend test suite remains green;
 - the frontend test/type/build gates remain green; and
 - documentation clearly separates deterministic, frontend, and live evidence.
-

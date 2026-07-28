@@ -57,6 +57,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 | `destination_readiness_eval` | 12 个中外混合城市矩阵，验证静态/动态 Profile、坐标必填发布门槛、东京/京都等跨城干扰拒绝，以及证据/图片覆盖质量信号 |
 | `overseas_candidate_supply_eval` | 4 个 Geoapify 脱敏快照回放，真实执行目的地消歧与 Places 候选发布，验证 Tromso/Hobart/Valletta 可发布、Oaxaca 候选不足安全降级，以及远距离/近距离邻城与 Mock 零发布 |
 | `multi_turn_conversation_eval` | 48 组、144 turn 的自然语言确定性回放；真实经过规则 QP、会话决策、澄清和状态迁移，覆盖目的地切换/提及只读、QA 不误改、灵活回答、闲聊目标保持、连续编辑、reset 恢复与歧义输入 |
+| `demo_journey_eval` | 四场景旅程级组合验收连续运行两轮，串联真实 QP、会话决策、目的地发布门禁、线上候选排序选择（学习排序保持默认关闭）、约束规划、revision 与 SSE envelope；要求 8/8 通过且九项安全计数为零 |
 | `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、候选人工审核、目的地 grounding 契约、runner 自测 |
 | `frontend_chat_component_tests` | DiffCard 与 PhaseIndicator，防止编辑结果重复展示、QA 状态误导 |
 | `frontend_type_check` | Vue/TypeScript 类型契约 |
@@ -67,7 +68,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=16/16 passed
+gates=17/17 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -126,6 +127,33 @@ malformed_ambiguous
 
 六项硬安全指标为：QA/chat 零误修改、零误切城市、明确换城市零漏判、
 换城市后零旧行程残留、连续编辑零目标偏移、灵活回答后零重复澄清。
+
+## 单独运行四场景旅程验收
+
+```bash
+cd llm_backend
+./.venv/bin/python -m scripts.demo_journey_eval \
+  --repetitions 2 \
+  --output-dir reports/demo-journey-eval/latest
+```
+
+四个场景分别是：
+
+```text
+景德镇：创建 → QA → 整天局部重规划
+Tromso：创建 → QA → 英文单时段局部重规划
+深圳切香港：创建 → QA → 换目的地 → 连续两次编辑
+Oaxaca：候选不足 → 明确降级且不发布行程
+```
+
+通过标准是 `8/8 journey runs`、不少于 `24 turns`，并且 QA revision
+污染、错误编辑目标、非目标修改、旧城市候选残留、跨城发布、Mock 发布、
+降级时错误发布、缺少终态 SSE、revision 链错误九项计数全部为零。
+
+该 Gate 使用脱敏候选快照和内存状态，但真实调用生产 QP、会话状态迁移、
+候选发布门禁、排序策略、约束规划器和 SSE envelope。它是稳定的
+journey-level 组合回归，不等价于浏览器自动化、MySQL 集成或 live Provider
+基准；这些仍需最终演示探针补充。
 
 ## 单独运行排序评估
 

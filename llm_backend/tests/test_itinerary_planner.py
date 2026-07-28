@@ -102,6 +102,41 @@ def test_planner_filters_generic_and_locked_candidates_for_local_replan():
     assert result.skeleton.days[0].day_index == 2
 
 
+def test_planner_accepts_english_indoor_candidate_terms():
+    candidates = [
+        _candidate(
+            "Science Centre",
+            score=0.95,
+            lat=69.681,
+            lng=18.973,
+            tags=["indoor", "museum", "culture"],
+            snippet="Indoor science museum",
+        ),
+        _candidate(
+            "Perspektivet Museum",
+            score=0.93,
+            lat=69.651,
+            lng=18.958,
+            tags=["indoor", "museum", "culture"],
+            snippet="Indoor cultural museum",
+        ),
+    ]
+
+    result = ConstraintAwareItineraryPlanner().plan(
+        candidates,
+        destination="Tromso",
+        days=1,
+        total_budget=1000,
+        constraints=["indoor"],
+        day_indexes=[2],
+        slots_per_day=1,
+    )
+
+    assert result.feasible is True
+    assert result.skeleton is not None
+    assert len(result.skeleton.selections) == 1
+
+
 def test_planner_returns_explicit_infeasible_result_when_unique_candidates_are_short():
     result = ConstraintAwareItineraryPlanner().plan(
         _two_cluster_candidates()[:2],

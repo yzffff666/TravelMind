@@ -374,7 +374,7 @@ training fingerprint to prevent stale artifacts or train/test leakage.
 
 ### 6.4 Existing Regression And Demo Gate
 
-- The current 16-gate core integration milestone remains green.
+- The current 17-gate core integration milestone remains green.
 - Training, model loading, fallback, state transition, and replay have focused
   automated tests.
 - Four end-to-end demonstrations run without manual database repair:
@@ -384,6 +384,15 @@ training fingerprint to prevent stale artifacts or train/test leakage.
   - insufficient candidates with safe degradation and trace inspection.
 - No API key or secret is present in Git history added by this work.
 - README documents setup, training, evaluation, and demo commands.
+
+Implementation status (2026-07-28): the deterministic four-scenario journey
+gate is complete. Jingdezhen, Tromso, Shenzhen-to-Hong-Kong with consecutive
+edits, and Oaxaca safe degradation run twice for `8/8` passing journey runs and
+24 turns. The gate composes production QP, conversation transitions, candidate
+publishability, ranking selection, constraint planning, revision lineage, and
+SSE envelopes with all nine safety counters at zero. Live Provider/browser
+evidence and the final README/report remain outstanding and are not implied by
+this deterministic result.
 
 ## 7. Deliverables
 

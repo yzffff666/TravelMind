@@ -56,6 +56,16 @@ _INDOOR_TERMS = (
     "影院",
     "图书馆",
     "书店",
+    "indoor",
+    "museum",
+    "art gallery",
+    "exhibition",
+    "library",
+    "theatre",
+    "theater",
+    "cinema",
+    "shopping centre",
+    "shopping center",
 )
 
 
@@ -595,7 +605,9 @@ def _is_generic_title(title: str, destination: str) -> bool:
 
 def _is_indoor(scored: ScoredCandidate) -> bool:
     candidate = scored.candidate
-    haystack = " ".join([candidate.title or "", candidate.snippet or "", " ".join(candidate.tags or [])])
+    haystack = " ".join(
+        [candidate.title or "", candidate.snippet or "", " ".join(candidate.tags or [])]
+    ).lower()
     return any(term in haystack for term in _INDOOR_TERMS)
 
 

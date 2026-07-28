@@ -1,0 +1,123 @@
+[
+  {
+    "case_id": "domestic_long_tail_jingdezhen",
+    "category": "domestic_long_tail",
+    "destination": "景德镇",
+    "country": "中国",
+    "center": [29.2687, 117.1784],
+    "days": 3,
+    "budget": 6000,
+    "preferences": ["陶瓷", "文化"],
+    "turns": [
+      {"role": "create", "query": "帮我规划景德镇3天，预算6000，喜欢陶瓷和文化"},
+      {"role": "qa", "query": "第二天安排是什么？", "expected_target_day": 2},
+      {"role": "edit", "query": "把第二天改成室内文化活动", "expected_target_day": 2}
+    ],
+    "candidates": [
+      {"candidate_id": "jdz-taoxichuan", "title": "陶溪川文创街区", "source": "fixture_map", "role": "local", "city": "景德镇市", "lat": 29.275, "lng": 117.191, "tags": ["陶瓷", "文化", "街区"], "rating": 4.7, "cost": 40, "evidence": true, "image": true},
+      {"candidate_id": "jdz-ceramic-museum", "title": "中国陶瓷博物馆", "source": "fixture_map", "role": "local", "city": "景德镇市", "lat": 29.292, "lng": 117.191, "tags": ["陶瓷", "文化", "博物馆", "室内"], "rating": 4.8, "cost": 30, "evidence": true, "image": true},
+      {"candidate_id": "jdz-ancient-kiln", "title": "古窑民俗博览区", "source": "fixture_map", "role": "local", "city": "景德镇市", "lat": 29.247, "lng": 117.179, "tags": ["陶瓷", "文化", "历史"], "rating": 4.6, "cost": 95, "evidence": true, "image": true},
+      {"candidate_id": "jdz-imperial-kiln", "title": "御窑博物馆", "source": "fixture_map", "role": "local", "city": "景德镇市", "lat": 29.2925, "lng": 117.204, "tags": ["陶瓷", "文化", "博物馆", "室内"], "rating": 4.8, "cost": 50, "evidence": true, "image": true},
+      {"candidate_id": "jdz-sanbao", "title": "三宝国际陶艺村", "source": "fixture_map", "role": "local", "city": "景德镇市", "lat": 29.227, "lng": 117.236, "tags": ["陶瓷", "艺术", "村落"], "rating": 4.5, "cost": 60, "evidence": true, "image": true},
+      {"candidate_id": "jdz-taoyangli", "title": "陶阳里历史文化旅游区", "source": "fixture_map", "role": "local", "city": "景德镇市", "lat": 29.294, "lng": 117.203, "tags": ["陶瓷", "文化", "历史"], "rating": 4.6, "cost": 55, "evidence": true, "image": true},
+      {"candidate_id": "jdz-decoy-bund", "title": "外滩", "source": "fixture_map", "role": "cross_city", "city": "上海市", "lat": 31.24, "lng": 121.49, "tags": ["夜景"], "rating": 4.9, "cost": 20, "evidence": true, "image": true},
+      {"candidate_id": "jdz-decoy-mock", "title": "景德镇热门景点", "source": "mock_map", "role": "mock", "city": "景德镇市", "lat": 29.269, "lng": 117.179, "tags": ["文化"], "rating": 5.0, "cost": 0, "evidence": false, "image": false}
+    ],
+    "edit_candidates": [
+      {"candidate_id": "jdz-edit-art-museum", "title": "景德镇美术馆", "source": "fixture_map", "role": "local", "city": "景德镇市", "lat": 29.286, "lng": 117.196, "tags": ["室内", "艺术", "文化"], "rating": 4.6, "cost": 20, "evidence": true, "image": true},
+      {"candidate_id": "jdz-edit-memory", "title": "景德镇记忆展馆", "source": "fixture_map", "role": "local", "city": "景德镇市", "lat": 29.28, "lng": 117.186, "tags": ["室内", "展馆", "文化"], "rating": 4.5, "cost": 25, "evidence": true, "image": true},
+      {"candidate_id": "jdz-edit-library", "title": "景德镇市图书馆", "source": "fixture_map", "role": "local", "city": "景德镇市", "lat": 29.274, "lng": 117.194, "tags": ["室内", "图书馆", "文化"], "rating": 4.4, "cost": 0, "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "overseas_unseen_tromso",
+    "category": "overseas_unseen",
+    "destination": "Tromso",
+    "country": "Norway",
+    "center": [69.6516, 18.9559],
+    "days": 2,
+    "budget": 8000,
+    "preferences": ["culture", "museum"],
+    "turns": [
+      {"role": "create", "query": "Plan a 2 day trip to Tromso with budget 8000 CNY, culture and museums"},
+      {"role": "qa", "query": "What is on day two?", "expected_target_day": 2},
+      {"role": "edit", "query": "Change the second afternoon to an indoor cultural activity", "expected_target_day": 2, "expected_target_slot": "下午"}
+    ],
+    "candidates": [
+      {"candidate_id": "tromso-arctic-cathedral", "title": "Arctic Cathedral", "source": "geoapify_snapshot", "role": "local", "city": "Tromso", "lat": 69.6487, "lng": 18.9875, "tags": ["culture", "architecture"], "rating": 4.6, "cost": 70, "evidence": true, "image": true},
+      {"candidate_id": "tromso-polaria", "title": "Polaria", "source": "geoapify_snapshot", "role": "local", "city": "Tromso", "lat": 69.6408, "lng": 18.9484, "tags": ["museum", "indoor"], "rating": 4.5, "cost": 180, "evidence": true, "image": true},
+      {"candidate_id": "tromso-fjellheisen", "title": "Fjellheisen Cable Car", "source": "geoapify_snapshot", "role": "local", "city": "Tromso", "lat": 69.656, "lng": 18.993, "tags": ["view", "culture"], "rating": 4.7, "cost": 260, "evidence": true, "image": true},
+      {"candidate_id": "tromso-museum", "title": "The Polar Museum", "source": "geoapify_snapshot", "role": "local", "city": "Tromso", "lat": 69.6521, "lng": 18.9638, "tags": ["museum", "indoor", "culture"], "rating": 4.6, "cost": 120, "evidence": true, "image": true},
+      {"candidate_id": "tromso-library", "title": "Tromso Library", "source": "geoapify_snapshot", "role": "local", "city": "Tromso", "lat": 69.6495, "lng": 18.9568, "tags": ["indoor", "culture", "library"], "rating": 4.4, "cost": 0, "evidence": true, "image": true},
+      {"candidate_id": "tromso-art", "title": "Northern Norway Art Museum", "source": "geoapify_snapshot", "role": "local", "city": "Tromso", "lat": 69.6489, "lng": 18.9601, "tags": ["museum", "art", "indoor"], "rating": 4.5, "cost": 100, "evidence": true, "image": true},
+      {"candidate_id": "tromso-decoy-tokyo", "title": "Tokyo Tower", "source": "geoapify_snapshot", "role": "cross_city", "city": "Tokyo", "lat": 35.6586, "lng": 139.7454, "tags": ["view"], "rating": 4.9, "cost": 160, "evidence": true, "image": true},
+      {"candidate_id": "tromso-decoy-mock", "title": "Tromso City Highlight", "source": "mock_search", "role": "mock", "city": "Tromso", "lat": 69.65, "lng": 18.95, "tags": ["culture"], "rating": 5.0, "cost": 0, "evidence": false, "image": false}
+    ],
+    "edit_candidates": [
+      {"candidate_id": "tromso-edit-science", "title": "Science Centre of Northern Norway", "source": "geoapify_snapshot", "role": "local", "city": "Tromso", "lat": 69.6811, "lng": 18.9732, "tags": ["indoor", "museum", "culture"], "rating": 4.6, "cost": 150, "evidence": true, "image": true},
+      {"candidate_id": "tromso-edit-perspektivet", "title": "Perspektivet Museum", "source": "geoapify_snapshot", "role": "local", "city": "Tromso", "lat": 69.6514, "lng": 18.9585, "tags": ["indoor", "museum", "culture"], "rating": 4.5, "cost": 90, "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "destination_switch_shenzhen_hongkong",
+    "category": "destination_switch_edits",
+    "destination": "深圳",
+    "switch_destination": "香港",
+    "country": "中国",
+    "switch_country": "中国",
+    "center": [22.5431, 114.0579],
+    "switch_center": [22.3193, 114.1694],
+    "days": 2,
+    "budget": 6000,
+    "preferences": ["美食", "文化"],
+    "turns": [
+      {"role": "create", "query": "帮我规划深圳2天，预算6000，喜欢美食和文化"},
+      {"role": "qa", "query": "第一天安排是什么？", "expected_target_day": 1},
+      {"role": "switch", "query": "还是改去香港吧", "expected_destination": "香港"},
+      {"role": "edit", "query": "把第一天改成更轻松的文化路线", "expected_target_day": 1},
+      {"role": "edit", "query": "把第二天下午改成室内活动", "expected_target_day": 2, "expected_target_slot": "下午"}
+    ],
+    "candidates": [
+      {"candidate_id": "sz-museum", "title": "深圳博物馆", "source": "fixture_map", "role": "local", "city": "深圳市", "lat": 22.547, "lng": 114.064, "tags": ["文化", "博物馆", "室内"], "rating": 4.6, "cost": 0, "evidence": true, "image": true},
+      {"candidate_id": "sz-nantou", "title": "南头古城", "source": "fixture_map", "role": "local", "city": "深圳市", "lat": 22.5382, "lng": 113.9177, "tags": ["文化", "历史"], "rating": 4.5, "cost": 20, "evidence": true, "image": true},
+      {"candidate_id": "sz-bay", "title": "深圳湾公园", "source": "fixture_map", "role": "local", "city": "深圳市", "lat": 22.5104, "lng": 113.9402, "tags": ["公园", "轻松"], "rating": 4.6, "cost": 0, "evidence": true, "image": true},
+      {"candidate_id": "sz-oct", "title": "华侨城创意文化园", "source": "fixture_map", "role": "local", "city": "深圳市", "lat": 22.5413, "lng": 113.9682, "tags": ["文化", "艺术"], "rating": 4.5, "cost": 30, "evidence": true, "image": true}
+    ],
+    "switch_candidates": [
+      {"candidate_id": "hk-victoria", "title": "维多利亚港", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.2933, "lng": 114.1694, "tags": ["夜景", "文化"], "rating": 4.8, "cost": 0, "evidence": true, "image": true},
+      {"candidate_id": "hk-peak", "title": "太平山顶", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.2759, "lng": 114.1455, "tags": ["夜景", "地标"], "rating": 4.7, "cost": 100, "evidence": true, "image": true},
+      {"candidate_id": "hk-tai-kwun", "title": "大馆", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.2819, "lng": 114.1546, "tags": ["文化", "历史", "室内"], "rating": 4.6, "cost": 30, "evidence": true, "image": true},
+      {"candidate_id": "hk-star-ferry", "title": "天星小轮", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.2948, "lng": 114.1686, "tags": ["交通", "文化"], "rating": 4.6, "cost": 10, "evidence": true, "image": true},
+      {"candidate_id": "hk-museum", "title": "香港历史博物馆", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.3017, "lng": 114.177, "tags": ["文化", "博物馆", "室内"], "rating": 4.6, "cost": 20, "evidence": true, "image": true},
+      {"candidate_id": "hk-pmq", "title": "元创方 PMQ", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.2832, "lng": 114.1519, "tags": ["文化", "艺术", "室内"], "rating": 4.4, "cost": 20, "evidence": true, "image": true},
+      {"candidate_id": "hk-decoy-shenzhen", "title": "深圳湾公园", "source": "fixture_map", "role": "cross_city", "city": "深圳市", "lat": 22.5104, "lng": 113.9402, "tags": ["公园"], "rating": 4.9, "cost": 0, "evidence": true, "image": true},
+      {"candidate_id": "hk-decoy-mock", "title": "香港精选活动", "source": "mock_map", "role": "mock", "city": "香港", "lat": 22.32, "lng": 114.17, "tags": ["文化"], "rating": 5.0, "cost": 0, "evidence": false, "image": false}
+    ],
+    "edit_candidates": [
+      {"candidate_id": "hk-edit-tea", "title": "茶具文物馆", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.278, "lng": 114.161, "tags": ["室内", "文化", "博物馆", "轻松"], "rating": 4.5, "cost": 0, "evidence": true, "image": true},
+      {"candidate_id": "hk-edit-heritage", "title": "香港文物探知馆", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.3005, "lng": 114.1707, "tags": ["室内", "文化", "博物馆"], "rating": 4.5, "cost": 0, "evidence": true, "image": true},
+      {"candidate_id": "hk-edit-art", "title": "香港艺术馆", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.293, "lng": 114.172, "tags": ["室内", "文化", "艺术"], "rating": 4.6, "cost": 20, "evidence": true, "image": true},
+      {"candidate_id": "hk-edit-palace", "title": "香港故宫文化博物馆", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.302, "lng": 114.155, "tags": ["室内", "文化", "博物馆"], "rating": 4.7, "cost": 120, "evidence": true, "image": true},
+      {"candidate_id": "hk-edit-mplus", "title": "M+博物馆", "source": "fixture_map", "role": "local", "city": "香港", "lat": 22.301, "lng": 114.159, "tags": ["室内", "文化", "艺术"], "rating": 4.7, "cost": 140, "evidence": true, "image": true}
+    ]
+  },
+  {
+    "case_id": "insufficient_candidates_oaxaca",
+    "category": "insufficient_candidates",
+    "destination": "Oaxaca",
+    "country": "Mexico",
+    "center": [17.0732, -96.7266],
+    "days": 3,
+    "budget": 6000,
+    "preferences": ["culture", "food"],
+    "turns": [
+      {"role": "degrade", "query": "Plan a 3 day trip to Oaxaca with budget 6000 CNY, culture and food"}
+    ],
+    "candidates": [
+      {"candidate_id": "oaxaca-santo-domingo", "title": "Templo de Santo Domingo", "source": "geoapify_snapshot", "role": "local", "city": "Oaxaca de Juarez", "lat": 17.0659, "lng": -96.7237, "tags": ["culture", "history"], "rating": 4.8, "cost": 40, "evidence": true, "image": true},
+      {"candidate_id": "oaxaca-zocalo", "title": "Zocalo de Oaxaca", "source": "geoapify_snapshot", "role": "local", "city": "Oaxaca de Juarez", "lat": 17.06, "lng": -96.7253, "tags": ["culture", "food"], "rating": 4.6, "cost": 20, "evidence": true, "image": true},
+      {"candidate_id": "oaxaca-decoy-paris", "title": "Eiffel Tower", "source": "geoapify_snapshot", "role": "cross_city", "city": "Paris", "lat": 48.8584, "lng": 2.2945, "tags": ["culture"], "rating": 5.0, "cost": 180, "evidence": true, "image": true},
+      {"candidate_id": "oaxaca-decoy-mock", "title": "Oaxaca Popular Place", "source": "mock_search", "role": "mock", "city": "Oaxaca", "lat": 17.073, "lng": -96.727, "tags": ["culture"], "rating": 5.0, "cost": 0, "evidence": false, "image": false}
+    ]
+  }
+]
