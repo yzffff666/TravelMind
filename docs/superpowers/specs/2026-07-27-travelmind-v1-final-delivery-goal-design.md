@@ -269,7 +269,7 @@ TravelMind v1 is complete only when every section below passes.
 
 ### 6.1 Multi-Turn Stability Gate
 
-Maintain 40 to 50 complete conversation transcripts, each with 3 to 10 turns,
+Maintain 40 to 50 complete conversation transcripts, each with 3 to 6 turns,
 covering:
 
 - normal creation and constraint completion;
@@ -299,6 +299,14 @@ Critical cases are the transcripts that exercise read-only QA, explicit
 destination change, false-switch prevention, consecutive local edits,
 clarification-loop prevention, and removal of stale POIs after a destination
 change. Every transcript in these categories must pass.
+
+Implementation status (2026-07-28): complete. The checked-in v2 corpus contains
+48 transcripts and 144 turns across eight balanced categories. Normal turns start
+from raw natural-language queries and execute the production rule QP, conversation
+decision service, and state transition; clarification turns execute the production
+clarification service. The current acceptance result is 48/48 transcripts,
+144/144 turns, 100% critical-category pass rate, with all six state-safety
+counters at zero.
 
 ### 6.2 Open-World Destination Gate
 

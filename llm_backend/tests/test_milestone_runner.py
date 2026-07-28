@@ -221,7 +221,7 @@ def test_planner_eval_gate_passes_default_cases():
     assert result.failures == []
 
 
-def test_multi_turn_conversation_eval_gate_passes_24_transcripts():
+def test_multi_turn_conversation_eval_gate_passes_v2_safety_contract():
     result = run_multi_turn_conversation_eval_gate(
         {
             "type": "multi_turn_conversation_eval",
@@ -230,9 +230,18 @@ def test_multi_turn_conversation_eval_gate_passes_24_transcripts():
     )
 
     assert result.status == "passed"
-    assert result.summary["case_count"] == 24
-    assert result.summary["passed_cases"] == 24
+    assert result.summary["case_count"] == 48
+    assert result.summary["passed_cases"] == 48
+    assert result.summary["turn_count"] >= 144
     assert result.summary["failed_turns"] == 0
+    assert result.summary["overall_case_pass_rate"] >= 0.95
+    assert result.summary["critical_case_pass_rate"] == 1.0
+    assert result.summary["qa_chat_unintended_mutations"] == 0
+    assert result.summary["false_destination_switches"] == 0
+    assert result.summary["explicit_destination_switch_failures"] == 0
+    assert result.summary["stale_itinerary_after_switch"] == 0
+    assert result.summary["consecutive_edit_target_failures"] == 0
+    assert result.summary["repeated_clarification_loops"] == 0
     assert result.failures == []
 
 

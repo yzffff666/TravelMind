@@ -1,6 +1,8 @@
 import json
 from typing import Optional, Tuple
 
+import pytest
+
 from app.domain.travel.sse_envelope import (
     build_data_line,
     build_event_envelope,
@@ -184,6 +186,26 @@ def test_flexible_answer_applies_duration_and_budget_defaults_when_destination_k
         "budget_defaulted_from_flexible_answer",
     ]
     assert not service.has_pending("conv_flexible")
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected_budget"),
+    [
+        ("中等就行", 6000.0),
+        ("A medium budget is fine", 6000.0),
+        ("Moderate is fine", 6000.0),
+    ],
+)
+def test_pending_budget_accepts_qualitative_budget_reply(reply, expected_budget):
+    service = TravelClarificationService()
+    first = service.start_new("conv-quality-budget", "帮我规划深圳三天")
+    assert first["missing_hard"] == ["budget"]
+
+    decision = service.continue_pending("conv-quality-budget", reply)
+
+    assert decision["need_clarification"] is False
+    assert f"预算{int(expected_budget)}元" in decision["combined_query"]
+    assert not service.has_pending("conv-quality-budget")
 
 
 def test_flexible_answer_never_invents_missing_destination():

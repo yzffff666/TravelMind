@@ -56,7 +56,7 @@ llm_backend/reports/milestone-runs/<run_id>/
 | `unseen_destination_eval` | 10 个未配置 bbox/alias 的城市，验证动态目的地 Profile、本地候选接受、跨城候选拒绝与候选不足安全降级 |
 | `destination_readiness_eval` | 12 个中外混合城市矩阵，验证静态/动态 Profile、坐标必填发布门槛、东京/京都等跨城干扰拒绝，以及证据/图片覆盖质量信号 |
 | `overseas_candidate_supply_eval` | 4 个 Geoapify 脱敏快照回放，真实执行目的地消歧与 Places 候选发布，验证 Tromso/Hobart/Valletta 可发布、Oaxaca 候选不足安全降级，以及远距离/近距离邻城与 Mock 零发布 |
-| `multi_turn_conversation_eval` | 24 组、49 turn 的确定性回放，覆盖目的地切换/提及只读、QA 不误改、模糊澄清、闲聊目标保持、连续编辑与 reset 恢复 |
+| `multi_turn_conversation_eval` | 48 组、144 turn 的自然语言确定性回放；真实经过规则 QP、会话决策、澄清和状态迁移，覆盖目的地切换/提及只读、QA 不误改、灵活回答、闲聊目标保持、连续编辑、reset 恢复与歧义输入 |
 | `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、候选人工审核、目的地 grounding 契约、runner 自测 |
 | `frontend_chat_component_tests` | DiffCard 与 PhaseIndicator，防止编辑结果重复展示、QA 状态误导 |
 | `frontend_type_check` | Vue/TypeScript 类型契约 |
@@ -103,7 +103,8 @@ cd llm_backend
   --output-dir reports/multi-turn-conversation-eval/latest
 ```
 
-通过标准是 `24/24 cases` 且 `49/49 turns`。评测集按六类平均分布：
+通过标准是 `48/48 cases`、`144/144 turns`、关键类别通过率
+`100%`，并且六项状态安全计数均为零。评测集按八类平均分布：
 
 ```text
 destination_switch
@@ -111,13 +112,20 @@ destination_mention_readonly
 qa_readonly
 flexible_clarification
 chat_goal_retention
-edit_reset_recovery
+consecutive_local_edit
+reset_recovery
+malformed_ambiguous
 ```
 
 失败报告会给出 `case_id`、类别、具体 turn、原始 query、expected/actual
-差异。该 gate 直接复用生产的 `ConversationDecisionService`、状态迁移和
-澄清服务，但不调用真实 LLM、地图或搜索 Provider，因此可以稳定地放进
-本地回归与 CI；外部服务质量仍由 live probe 和浏览器联调验证。
+差异，以及 QP 输出、决策对象、迁移前后状态。普通 turn 不允许在 fixture
+中预填 QP 结果，而是从原始自然语言真实调用 `TravelQueryProcessor`，再
+复用生产的 `ConversationDecisionService`、状态迁移和澄清服务。该 gate
+不调用真实 LLM、地图或搜索 Provider，因此可以稳定地放进本地回归与 CI；
+外部服务质量仍由 live probe 和浏览器联调验证。
+
+六项硬安全指标为：QA/chat 零误修改、零误切城市、明确换城市零漏判、
+换城市后零旧行程残留、连续编辑零目标偏移、灵活回答后零重复澄清。
 
 ## 单独运行排序评估
 

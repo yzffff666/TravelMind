@@ -1,419 +1,57 @@
 [
-  {
-    "case_id": "switch_shenzhen_to_hangzhou",
-    "category": "destination_switch",
-    "initial_state": {"active_destination": "深圳", "current_revision_id": "rev-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "深圳到香港怎么走？",
-        "qp": {"intent": "create", "constraints": {"destination_city": "香港"}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "深圳", "revision_after": "rev-1"}
-      },
-      {
-        "query": "还是改去杭州吧",
-        "qp": {"intent": "create", "constraints": {"destination_city": "杭州"}},
-        "expected": {"intent": "change_destination", "mutation_scope": "whole_trip", "active_destination": "杭州", "revision_before": "rev-1", "revision_after": null, "revision_changed": true}
-      }
-    ]
-  },
-  {
-    "case_id": "switch_macau_to_xiamen",
-    "category": "destination_switch",
-    "initial_state": {"active_destination": "澳门", "current_revision_id": "rev-macau-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "先保留现在的澳门行程",
-        "qp": {"intent": "chat", "constraints": {}},
-        "expected": {"intent": "chat", "mutation_scope": "none", "active_destination": "澳门", "revision_after": "rev-macau-1"}
-      },
-      {
-        "query": "不去澳门了，换成厦门",
-        "qp": {"intent": "create", "constraints": {"destination_city": "厦门"}},
-        "expected": {"intent": "change_destination", "mutation_scope": "whole_trip", "active_destination": "厦门", "revision_after": null, "revision_changed": true}
-      }
-    ]
-  },
-  {
-    "case_id": "switch_tokyo_to_kyoto_english",
-    "category": "destination_switch",
-    "initial_state": {"active_destination": "Tokyo", "current_revision_id": "rev-tokyo-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "How do I travel from Tokyo to Kyoto?",
-        "qp": {"intent": "create", "constraints": {"destination_city": "Kyoto"}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "Tokyo", "revision_after": "rev-tokyo-1"}
-      },
-      {
-        "query": "Change the destination to Kyoto",
-        "qp": {"intent": "create", "confidence": 0.94, "constraints": {"destination_city": "Kyoto"}},
-        "expected": {"intent": "change_destination", "mutation_scope": "whole_trip", "active_destination": "Kyoto", "revision_after": null}
-      }
-    ]
-  },
-  {
-    "case_id": "switch_hongkong_to_macau",
-    "category": "destination_switch",
-    "initial_state": {"active_destination": "香港", "current_revision_id": "rev-hk-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "香港和澳门哪个更适合三天？",
-        "qp": {"intent": "create", "constraints": {"destination_city": "澳门"}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "香港", "revision_after": "rev-hk-1"}
-      },
-      {
-        "query": "那还是去澳门吧",
-        "qp": {"intent": "create", "constraints": {"destination_city": "澳门"}},
-        "expected": {"intent": "change_destination", "mutation_scope": "whole_trip", "active_destination": "澳门", "revision_after": null}
-      }
-    ]
-  },
-  {
-    "case_id": "mention_suzhou_from_shanghai",
-    "category": "destination_mention_readonly",
-    "initial_state": {"active_destination": "上海", "current_revision_id": "rev-sh-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "上海到苏州当天往返怎么走？",
-        "qp": {"intent": "create", "constraints": {"destination_city": "苏州"}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "上海", "revision_after": "rev-sh-1"}
-      },
-      {
-        "query": "现在的上海行程第二天是什么？",
-        "qp": {"intent": "qa", "target_day": 2, "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "上海", "revision_after": "rev-sh-1"}
-      }
-    ]
-  },
-  {
-    "case_id": "mention_chongqing_from_chengdu",
-    "category": "destination_mention_readonly",
-    "initial_state": {"active_destination": "成都", "current_revision_id": "rev-cd-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "成都和重庆哪个更适合吃火锅？",
-        "qp": {"intent": "create", "constraints": {"destination_city": "重庆"}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "成都", "revision_after": "rev-cd-1"}
-      },
-      {
-        "query": "不用改行程，我只是问问",
-        "qp": {"intent": "chat", "constraints": {}},
-        "expected": {"intent": "chat", "mutation_scope": "none", "active_destination": "成都", "revision_after": "rev-cd-1"}
-      }
-    ]
-  },
-  {
-    "case_id": "mention_osaka_from_kyoto_english",
-    "category": "destination_mention_readonly",
-    "initial_state": {"active_destination": "Kyoto", "current_revision_id": "rev-kyoto-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "Is Osaka better than Kyoto for food?",
-        "qp": {"intent": "create", "constraints": {"destination_city": "Osaka"}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "Kyoto", "revision_after": "rev-kyoto-1"}
-      },
-      {
-        "query": "What is planned for day two?",
-        "qp": {"intent": "qa", "target_day": 2, "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "Kyoto", "revision_after": "rev-kyoto-1"}
-      }
-    ]
-  },
-  {
-    "case_id": "mention_zhuhai_from_macau",
-    "category": "destination_mention_readonly",
-    "initial_state": {"active_destination": "澳门", "current_revision_id": "rev-mo-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "从澳门去珠海方便吗？",
-        "qp": {"intent": "create", "constraints": {"destination_city": "珠海"}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "澳门", "revision_after": "rev-mo-1"}
-      },
-      {
-        "query": "先不要调整目的地",
-        "qp": {"intent": "chat", "constraints": {}},
-        "expected": {"intent": "chat", "mutation_scope": "none", "active_destination": "澳门", "revision_after": "rev-mo-1"}
-      }
-    ]
-  },
-  {
-    "case_id": "qa_macau_day_three",
-    "category": "qa_readonly",
-    "initial_state": {"active_destination": "澳门", "current_revision_id": "rev-qa-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "第三天下午去哪里？",
-        "qp": {"intent": "qa", "target_day": 3, "target_slot": "下午", "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "target_day": 3, "target_slot": "下午", "revision_after": "rev-qa-1"}
-      },
-      {
-        "query": "为什么选这个地方？",
-        "qp": {"intent": "qa", "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "澳门", "revision_after": "rev-qa-1"}
-      }
-    ]
-  },
-  {
-    "case_id": "qa_hongkong_budget",
-    "category": "qa_readonly",
-    "initial_state": {"active_destination": "香港", "current_revision_id": "rev-qa-2", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "现在的总预算是多少？",
-        "qp": {"intent": "qa", "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "revision_after": "rev-qa-2"}
-      },
-      {
-        "query": "第二天晚上安排了什么？",
-        "qp": {"intent": "qa", "target_day": 2, "target_slot": "晚上", "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "target_day": 2, "target_slot": "晚上", "revision_after": "rev-qa-2"}
-      }
-    ]
-  },
-  {
-    "case_id": "qa_shenzhen_transport",
-    "category": "qa_readonly",
-    "initial_state": {"active_destination": "深圳", "current_revision_id": "rev-qa-3", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "第一天景点之间怎么坐车？",
-        "qp": {"intent": "qa", "target_day": 1, "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "revision_after": "rev-qa-3"}
-      },
-      {
-        "query": "这个安排会不会太累？",
-        "qp": {"intent": "qa", "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "深圳", "revision_after": "rev-qa-3"}
-      }
-    ]
-  },
-  {
-    "case_id": "qa_tokyo_english",
-    "category": "qa_readonly",
-    "initial_state": {"active_destination": "Tokyo", "current_revision_id": "rev-qa-4", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "Where do I go on the third afternoon?",
-        "qp": {"intent": "qa", "target_day": 3, "target_slot": "下午", "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "target_day": 3, "revision_after": "rev-qa-4"}
-      },
-      {
-        "query": "How much does the current plan cost?",
-        "qp": {"intent": "qa", "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "Tokyo", "revision_after": "rev-qa-4"}
-      }
-    ]
-  },
-  {
-    "case_id": "clarify_hongkong_flexible",
-    "category": "flexible_clarification",
-    "initial_state": {"has_itinerary": false},
-    "turns": [
-      {
-        "query": "我想去香港",
-        "clarification_action": "start",
-        "expected": {"intent": "clarify", "mutation_scope": "constraints_only", "pending": true, "missing_hard": ["duration", "budget"]}
-      },
-      {
-        "query": "都可以",
-        "clarification_action": "continue",
-        "expected": {"intent": "create", "mutation_scope": "whole_trip", "pending": false, "combined_query_contains": "玩3天，预算6000元"}
-      }
-    ]
-  },
-  {
-    "case_id": "clarify_paris_flexible",
-    "category": "flexible_clarification",
-    "initial_state": {"has_itinerary": false},
-    "turns": [
-      {
-        "query": "我想去巴黎，预算8000",
-        "clarification_action": "start",
-        "expected": {"intent": "clarify", "pending": true, "missing_hard": ["duration"]}
-      },
-      {
-        "query": "你安排就好",
-        "clarification_action": "continue",
-        "expected": {"intent": "create", "pending": false, "combined_query_contains": "玩3天，预算8000元"}
-      }
-    ]
-  },
-  {
-    "case_id": "clarify_never_invents_destination",
-    "category": "flexible_clarification",
-    "initial_state": {"has_itinerary": false},
-    "turns": [
-      {
-        "query": "预算5000",
-        "clarification_action": "start",
-        "expected": {"intent": "clarify", "pending": true, "missing_hard": ["destination", "duration"]}
-      },
-      {
-        "query": "随便",
-        "clarification_action": "continue",
-        "expected": {"intent": "clarify", "pending": true, "missing_hard": ["destination"]}
-      },
-      {
-        "query": "去厦门",
-        "clarification_action": "continue",
-        "expected": {"intent": "create", "pending": false, "combined_query_contains": "去厦门，玩3天，预算5000元"}
-      }
-    ]
-  },
-  {
-    "case_id": "clarify_chengdu_budget_default",
-    "category": "flexible_clarification",
-    "initial_state": {"has_itinerary": false},
-    "turns": [
-      {
-        "query": "去成都玩4天",
-        "clarification_action": "start",
-        "expected": {"intent": "clarify", "pending": true, "missing_hard": ["budget"]}
-      },
-      {
-        "query": "均可",
-        "clarification_action": "continue",
-        "expected": {"intent": "create", "pending": false, "combined_query_contains": "玩4天，预算8000元"}
-      }
-    ]
-  },
-  {
-    "case_id": "chat_weather_then_qa",
-    "category": "chat_goal_retention",
-    "initial_state": {"active_destination": "深圳", "current_revision_id": "rev-chat-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "今天天气真不错",
-        "qp": {"intent": "chat", "constraints": {}},
-        "expected": {"intent": "chat", "mutation_scope": "none", "active_destination": "深圳", "revision_after": "rev-chat-1"}
-      },
-      {
-        "query": "继续说第二天的安排",
-        "qp": {"intent": "qa", "target_day": 2, "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "深圳", "revision_after": "rev-chat-1"}
-      }
-    ]
-  },
-  {
-    "case_id": "chat_greeting_then_qa",
-    "category": "chat_goal_retention",
-    "initial_state": {"active_destination": "香港", "current_revision_id": "rev-chat-2", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "你好呀",
-        "qp": {"intent": "chat", "constraints": {}},
-        "expected": {"intent": "chat", "mutation_scope": "none", "active_destination": "香港", "revision_after": "rev-chat-2"}
-      },
-      {
-        "query": "刚才行程的预算是多少？",
-        "qp": {"intent": "qa", "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "香港", "revision_after": "rev-chat-2"}
-      }
-    ]
-  },
-  {
-    "case_id": "chat_food_then_edit",
-    "category": "chat_goal_retention",
-    "initial_state": {"active_destination": "成都", "current_revision_id": "rev-chat-3", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "我今天吃了火锅",
-        "qp": {"intent": "chat", "constraints": {}},
-        "expected": {"intent": "chat", "mutation_scope": "none", "active_destination": "成都", "revision_after": "rev-chat-3"}
-      },
-      {
-        "query": "把第二天改轻松一点",
-        "qp": {"intent": "edit", "target_day": 2, "constraints": {}},
-        "commit_revision_id": "rev-chat-4",
-        "expected": {"intent": "edit", "mutation_scope": "single_day", "active_destination": "成都", "revision_before": "rev-chat-3", "revision_after": "rev-chat-4"}
-      }
-    ]
-  },
-  {
-    "case_id": "chat_english_then_qa",
-    "category": "chat_goal_retention",
-    "initial_state": {"active_destination": "Hobart", "current_revision_id": "rev-chat-5", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "Tell me a joke",
-        "qp": {"intent": "chat", "constraints": {}},
-        "expected": {"intent": "chat", "mutation_scope": "none", "active_destination": "Hobart", "revision_after": "rev-chat-5"}
-      },
-      {
-        "query": "Now show me day one again",
-        "qp": {"intent": "qa", "target_day": 1, "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "active_destination": "Hobart", "revision_after": "rev-chat-5"}
-      }
-    ]
-  },
-  {
-    "case_id": "consecutive_day_edits",
-    "category": "edit_reset_recovery",
-    "initial_state": {"active_destination": "澳门", "current_revision_id": "rev-edit-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "把第二天改轻松一点",
-        "qp": {"intent": "edit", "target_day": 2, "constraints": {}},
-        "commit_revision_id": "rev-edit-2",
-        "expected": {"intent": "edit", "mutation_scope": "single_day", "revision_before": "rev-edit-1", "revision_after": "rev-edit-2", "revision_changed": true}
-      },
-      {
-        "query": "再把第三天改成室内",
-        "qp": {"intent": "edit", "target_day": 3, "constraints": {}},
-        "commit_revision_id": "rev-edit-3",
-        "expected": {"intent": "edit", "mutation_scope": "single_day", "revision_before": "rev-edit-2", "revision_after": "rev-edit-3", "revision_changed": true}
-      }
-    ]
-  },
-  {
-    "case_id": "slot_edit_then_readonly_qa",
-    "category": "edit_reset_recovery",
-    "initial_state": {"active_destination": "香港", "current_revision_id": "rev-slot-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "把第二天下午改成室内",
-        "qp": {"intent": "edit", "target_day": 2, "target_slot": "下午", "constraints": {}},
-        "commit_revision_id": "rev-slot-2",
-        "expected": {"intent": "edit", "mutation_scope": "single_slot", "revision_before": "rev-slot-1", "revision_after": "rev-slot-2"}
-      },
-      {
-        "query": "第二天下午现在是什么？",
-        "qp": {"intent": "qa", "target_day": 2, "target_slot": "下午", "constraints": {}},
-        "expected": {"intent": "qa", "mutation_scope": "none", "revision_before": "rev-slot-2", "revision_after": "rev-slot-2", "revision_changed": false}
-      }
-    ]
-  },
-  {
-    "case_id": "chat_then_reset",
-    "category": "edit_reset_recovery",
-    "initial_state": {"active_destination": "上海", "current_revision_id": "rev-reset-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "先聊点别的",
-        "qp": {"intent": "chat", "constraints": {}},
-        "expected": {"intent": "chat", "mutation_scope": "none", "active_destination": "上海", "revision_after": "rev-reset-1"}
-      },
-      {
-        "query": "重新开始",
-        "qp": {"intent": "reset", "constraints": {}},
-        "expected": {"intent": "reset", "mutation_scope": "reset_all", "active_destination": null, "revision_before": "rev-reset-1", "revision_after": null, "revision_changed": true}
-      }
-    ]
-  },
-  {
-    "case_id": "failed_edit_preview_then_reset",
-    "category": "edit_reset_recovery",
-    "initial_state": {"active_destination": "东京", "current_revision_id": "rev-fail-1", "has_itinerary": true},
-    "turns": [
-      {
-        "query": "把第九天改成室内",
-        "qp": {"intent": "edit", "target_day": 9, "constraints": {}},
-        "expected": {"intent": "edit", "mutation_scope": "single_day", "revision_before": "rev-fail-1", "revision_after": "rev-fail-1", "revision_changed": false}
-      },
-      {
-        "query": "清空当前行程",
-        "qp": {"intent": "reset", "constraints": {}},
-        "expected": {"intent": "reset", "mutation_scope": "reset_all", "active_destination": null, "revision_after": null, "revision_changed": true}
-      }
-    ]
-  }
+  {"case_id":"switch_shenzhen_hangzhou","category":"destination_switch","initial_state":{"active_destination":"深圳","current_revision_id":"rev-1","has_itinerary":true},"turns":[{"query":"现在深圳行程第二天是什么？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-1"}},{"query":"还是改去杭州吧","expected":{"intent":"change_destination","mutation_scope":"whole_trip","active_destination":"杭州","revision_after":null,"revision_changed":true}},{"query":"先这样，别再改了","expected":{"intent":"chat","mutation_scope":"none","active_destination":"杭州","revision_after":null}}]},
+  {"case_id":"switch_macau_xiamen","category":"destination_switch","initial_state":{"active_destination":"澳门","current_revision_id":"rev-2","has_itinerary":true},"turns":[{"query":"澳门第三天安排了什么？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-2"}},{"query":"不去澳门了，换成厦门","expected":{"intent":"change_destination","mutation_scope":"whole_trip","active_destination":"厦门","revision_after":null,"revision_changed":true}},{"query":"好的，先按厦门来","expected":{"intent":"chat","mutation_scope":"none","active_destination":"厦门","revision_after":null}}]},
+  {"case_id":"switch_tokyo_kyoto_en","category":"destination_switch","initial_state":{"active_destination":"Tokyo","current_revision_id":"rev-3","has_itinerary":true},"turns":[{"query":"What is planned for day two?","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-3"}},{"query":"Change the destination to Kyoto","expected":{"intent":"change_destination","mutation_scope":"whole_trip","active_destination":"Kyoto","revision_after":null,"revision_changed":true}},{"query":"Keep that choice for now","expected":{"intent":"chat","mutation_scope":"none","active_destination":"Kyoto","revision_after":null}}]},
+  {"case_id":"switch_hongkong_chengdu","category":"destination_switch","initial_state":{"active_destination":"香港","current_revision_id":"rev-4","has_itinerary":true},"turns":[{"query":"现在预算是多少？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-4"}},{"query":"把目的地改成成都","expected":{"intent":"change_destination","mutation_scope":"whole_trip","active_destination":"成都","revision_after":null,"revision_changed":true}},{"query":"先这样","expected":{"intent":"chat","mutation_scope":"none","active_destination":"成都","revision_after":null}}]},
+  {"case_id":"switch_berlin_paris_en","category":"destination_switch","initial_state":{"active_destination":"Berlin","current_revision_id":"rev-5","has_itinerary":true},"turns":[{"query":"How much does the Berlin plan cost?","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-5"}},{"query":"Let's go to Paris instead","expected":{"intent":"change_destination","mutation_scope":"whole_trip","active_destination":"Paris","revision_after":null,"revision_changed":true}},{"query":"Sounds good","expected":{"intent":"chat","mutation_scope":"none","active_destination":"Paris","revision_after":null}}]},
+  {"case_id":"switch_qingdao_jingdezhen","category":"destination_switch","initial_state":{"active_destination":"青岛","current_revision_id":"rev-6","has_itinerary":true},"turns":[{"query":"青岛第一天会不会太累？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-6"}},{"query":"我改主意了，改去景德镇吧","expected":{"intent":"change_destination","mutation_scope":"whole_trip","active_destination":"景德镇","revision_after":null,"revision_changed":true}},{"query":"暂时按这个目的地","expected":{"intent":"chat","mutation_scope":"none","active_destination":"景德镇","revision_after":null}}]},
+
+  {"case_id":"mention_shenzhen_hongkong_transit","category":"destination_mention_readonly","initial_state":{"active_destination":"深圳","current_revision_id":"rev-m1","has_itinerary":true},"turns":[{"query":"深圳到香港怎么走？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"深圳","revision_after":"rev-m1"}},{"query":"我只是问交通，不要换目的地","expected":{"intent":"qa","mutation_scope":"none","active_destination":"深圳","revision_after":"rev-m1"}},{"query":"那深圳第二天是什么安排？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"深圳","revision_after":"rev-m1"}}]},
+  {"case_id":"mention_shanghai_suzhou_compare","category":"destination_mention_readonly","initial_state":{"active_destination":"上海","current_revision_id":"rev-m2","has_itinerary":true},"turns":[{"query":"上海和苏州哪个更适合周末？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"上海","revision_after":"rev-m2"}},{"query":"先保留上海行程","expected":{"intent":"chat","mutation_scope":"none","active_destination":"上海","revision_after":"rev-m2"}},{"query":"上海第三天晚上做什么？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"上海","revision_after":"rev-m2"}}]},
+  {"case_id":"mention_kyoto_osaka_en","category":"destination_mention_readonly","initial_state":{"active_destination":"Kyoto","current_revision_id":"rev-m3","has_itinerary":true},"turns":[{"query":"Is Osaka better than Kyoto for food?","expected":{"intent":"qa","mutation_scope":"none","active_destination":"Kyoto","revision_after":"rev-m3"}},{"query":"Do not change my current trip","expected":{"intent":"chat","mutation_scope":"none","active_destination":"Kyoto","revision_after":"rev-m3"}},{"query":"What is planned for day one?","expected":{"intent":"qa","mutation_scope":"none","active_destination":"Kyoto","revision_after":"rev-m3"}}]},
+  {"case_id":"mention_macau_zhuhai","category":"destination_mention_readonly","initial_state":{"active_destination":"澳门","current_revision_id":"rev-m4","has_itinerary":true},"turns":[{"query":"从澳门去珠海方便吗？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"澳门","revision_after":"rev-m4"}},{"query":"不用改，我只是了解一下","expected":{"intent":"chat","mutation_scope":"none","active_destination":"澳门","revision_after":"rev-m4"}},{"query":"澳门现在的总预算呢？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"澳门","revision_after":"rev-m4"}}]},
+  {"case_id":"mention_chengdu_chongqing","category":"destination_mention_readonly","initial_state":{"active_destination":"成都","current_revision_id":"rev-m5","has_itinerary":true},"turns":[{"query":"成都和重庆哪个更适合吃火锅？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"成都","revision_after":"rev-m5"}},{"query":"目的地还是成都","expected":{"intent":"chat","mutation_scope":"none","active_destination":"成都","revision_after":"rev-m5"}},{"query":"成都第二天会不会很赶？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"成都","revision_after":"rev-m5"}}]},
+  {"case_id":"mention_paris_london_en","category":"destination_mention_readonly","initial_state":{"active_destination":"Paris","current_revision_id":"rev-m6","has_itinerary":true},"turns":[{"query":"How do I get from Paris to London?","expected":{"intent":"qa","mutation_scope":"none","active_destination":"Paris","revision_after":"rev-m6"}},{"query":"This is only a transport question","expected":{"intent":"chat","mutation_scope":"none","active_destination":"Paris","revision_after":"rev-m6"}},{"query":"What is my Paris budget?","expected":{"intent":"qa","mutation_scope":"none","active_destination":"Paris","revision_after":"rev-m6"}}]},
+
+  {"case_id":"qa_macau_day_slot","category":"qa_readonly","initial_state":{"active_destination":"澳门","current_revision_id":"rev-q1","has_itinerary":true},"turns":[{"query":"第三天下午去哪里？","expected":{"intent":"qa","mutation_scope":"none","target_day":3,"target_slot":"下午","revision_after":"rev-q1"}},{"query":"为什么选这个地方？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q1"}},{"query":"这个安排有证据吗？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q1"}}]},
+  {"case_id":"qa_hongkong_budget_evening","category":"qa_readonly","initial_state":{"active_destination":"香港","current_revision_id":"rev-q2","has_itinerary":true},"turns":[{"query":"现在的总预算是多少？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q2"}},{"query":"第二天晚上安排了什么？","expected":{"intent":"qa","mutation_scope":"none","target_day":2,"target_slot":"晚上","revision_after":"rev-q2"}},{"query":"门票花费高吗？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q2"}}]},
+  {"case_id":"qa_shenzhen_transport_pace","category":"qa_readonly","initial_state":{"active_destination":"深圳","current_revision_id":"rev-q3","has_itinerary":true},"turns":[{"query":"第一天景点之间怎么坐车？","expected":{"intent":"qa","mutation_scope":"none","target_day":1,"revision_after":"rev-q3"}},{"query":"这个安排会不会太累？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q3"}},{"query":"第二天上午几点出发？","expected":{"intent":"qa","mutation_scope":"none","target_day":2,"target_slot":"上午","revision_after":"rev-q3"}}]},
+  {"case_id":"qa_tokyo_en","category":"qa_readonly","initial_state":{"active_destination":"Tokyo","current_revision_id":"rev-q4","has_itinerary":true},"turns":[{"query":"Where do I go on the third afternoon?","expected":{"intent":"qa","mutation_scope":"none","target_day":3,"target_slot":"下午","revision_after":"rev-q4"}},{"query":"How much does the current plan cost?","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q4"}},{"query":"Why did you choose that place?","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q4"}}]},
+  {"case_id":"qa_chengdu_evidence","category":"qa_readonly","initial_state":{"active_destination":"成都","current_revision_id":"rev-q5","has_itinerary":true},"turns":[{"query":"第二天的景点有来源吗？","expected":{"intent":"qa","mutation_scope":"none","target_day":2,"revision_after":"rev-q5"}},{"query":"地址在哪里？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q5"}},{"query":"预算还剩多少？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q5"}}]},
+  {"case_id":"qa_hobart_en","category":"qa_readonly","initial_state":{"active_destination":"Hobart","current_revision_id":"rev-q6","has_itinerary":true},"turns":[{"query":"What happens on day two?","expected":{"intent":"qa","mutation_scope":"none","target_day":2,"revision_after":"rev-q6"}},{"query":"Is the itinerary too busy?","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q6"}},{"query":"Show me the source for this recommendation","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-q6"}}]},
+
+  {"case_id":"clarify_hongkong_flexible","category":"flexible_clarification","initial_state":{"has_itinerary":false},"turns":[{"query":"我想去香港","clarification_action":"start","expected":{"intent":"clarify","mutation_scope":"constraints_only","pending":true,"missing_hard":["duration","budget"]}},{"query":"都可以","clarification_action":"continue","expected":{"intent":"create","mutation_scope":"whole_trip","pending":false,"combined_query_contains":"玩3天，预算6000元"}},{"query":"谢谢，按你安排","expected":{"intent":"chat","mutation_scope":"none","revision_after":null}}]},
+  {"case_id":"clarify_paris_duration","category":"flexible_clarification","initial_state":{"has_itinerary":false},"turns":[{"query":"我想去巴黎，预算8000","clarification_action":"start","expected":{"intent":"clarify","pending":true,"missing_hard":["duration"]}},{"query":"你安排就好","clarification_action":"continue","expected":{"intent":"create","pending":false,"combined_query_contains":"玩3天，预算8000元"}},{"query":"好的","expected":{"intent":"chat","mutation_scope":"none","revision_after":null}}]},
+  {"case_id":"clarify_never_invent_destination","category":"flexible_clarification","initial_state":{"has_itinerary":false},"turns":[{"query":"预算5000","clarification_action":"start","expected":{"intent":"clarify","pending":true,"missing_hard":["destination","duration"]}},{"query":"随便","clarification_action":"continue","expected":{"intent":"clarify","pending":true,"missing_hard":["destination"]}},{"query":"去厦门","clarification_action":"continue","expected":{"intent":"create","pending":false,"combined_query_contains":"去厦门，玩3天，预算5000元"}}]},
+  {"case_id":"clarify_shenzhen_short_answers","category":"flexible_clarification","initial_state":{"has_itinerary":false},"turns":[{"query":"帮我规划深圳","clarification_action":"start","expected":{"intent":"clarify","pending":true,"missing_hard":["duration","budget"]}},{"query":"三天","clarification_action":"continue","expected":{"intent":"clarify","pending":true,"missing_hard":["budget"]}},{"query":"中等就行","clarification_action":"continue","expected":{"intent":"create","pending":false}}]},
+  {"case_id":"clarify_tokyo_en","category":"flexible_clarification","initial_state":{"has_itinerary":false},"turns":[{"query":"Plan a trip to Tokyo","clarification_action":"start","expected":{"intent":"clarify","pending":true}},{"query":"Three days","clarification_action":"continue","expected":{"intent":"clarify","pending":true}},{"query":"A medium budget is fine","clarification_action":"continue","expected":{"intent":"create","pending":false}}]},
+  {"case_id":"clarify_macau_budget_scope","category":"flexible_clarification","initial_state":{"has_itinerary":false},"turns":[{"query":"澳门玩五天","clarification_action":"start","expected":{"intent":"clarify","pending":true,"missing_hard":["budget"]}},{"query":"人均5000，不含住宿","clarification_action":"continue","expected":{"intent":"create","pending":false}},{"query":"其他都可以","expected":{"intent":"chat","mutation_scope":"none","revision_after":null}}]},
+
+  {"case_id":"chat_shenzhen_weather","category":"chat_goal_retention","initial_state":{"active_destination":"深圳","current_revision_id":"rev-c1","has_itinerary":true},"turns":[{"query":"你好呀","expected":{"intent":"chat","mutation_scope":"none","active_destination":"深圳","revision_after":"rev-c1"}},{"query":"今天天气不错","expected":{"intent":"chat","mutation_scope":"none","active_destination":"深圳","revision_after":"rev-c1"}},{"query":"第二天安排是什么？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"深圳","revision_after":"rev-c1"}}]},
+  {"case_id":"chat_hongkong_thanks","category":"chat_goal_retention","initial_state":{"active_destination":"香港","current_revision_id":"rev-c2","has_itinerary":true},"turns":[{"query":"辛苦了","expected":{"intent":"chat","mutation_scope":"none","active_destination":"香港","revision_after":"rev-c2"}},{"query":"这个项目挺有意思","expected":{"intent":"chat","mutation_scope":"none","active_destination":"香港","revision_after":"rev-c2"}},{"query":"香港第三天去哪里？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"香港","revision_after":"rev-c2"}}]},
+  {"case_id":"chat_tokyo_en","category":"chat_goal_retention","initial_state":{"active_destination":"Tokyo","current_revision_id":"rev-c3","has_itinerary":true},"turns":[{"query":"Hello there","expected":{"intent":"chat","mutation_scope":"none","active_destination":"Tokyo","revision_after":"rev-c3"}},{"query":"Thanks for helping","expected":{"intent":"chat","mutation_scope":"none","active_destination":"Tokyo","revision_after":"rev-c3"}},{"query":"What is planned for day three?","expected":{"intent":"qa","mutation_scope":"none","active_destination":"Tokyo","revision_after":"rev-c3"}}]},
+  {"case_id":"chat_chengdu_unrelated","category":"chat_goal_retention","initial_state":{"active_destination":"成都","current_revision_id":"rev-c4","has_itinerary":true},"turns":[{"query":"我最近有点忙","expected":{"intent":"chat","mutation_scope":"none","active_destination":"成都","revision_after":"rev-c4"}},{"query":"先聊点别的","expected":{"intent":"chat","mutation_scope":"none","active_destination":"成都","revision_after":"rev-c4"}},{"query":"回到行程，第一天做什么？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"成都","revision_after":"rev-c4"}}]},
+  {"case_id":"chat_macau_keep","category":"chat_goal_retention","initial_state":{"active_destination":"澳门","current_revision_id":"rev-c5","has_itinerary":true},"turns":[{"query":"先保持现在的安排","expected":{"intent":"chat","mutation_scope":"none","active_destination":"澳门","revision_after":"rev-c5"}},{"query":"我只是看看","expected":{"intent":"chat","mutation_scope":"none","active_destination":"澳门","revision_after":"rev-c5"}},{"query":"预算一共多少？","expected":{"intent":"qa","mutation_scope":"none","active_destination":"澳门","revision_after":"rev-c5"}}]},
+  {"case_id":"chat_hobart_en","category":"chat_goal_retention","initial_state":{"active_destination":"Hobart","current_revision_id":"rev-c6","has_itinerary":true},"turns":[{"query":"Nice work","expected":{"intent":"chat","mutation_scope":"none","active_destination":"Hobart","revision_after":"rev-c6"}},{"query":"Let us pause for a moment","expected":{"intent":"chat","mutation_scope":"none","active_destination":"Hobart","revision_after":"rev-c6"}},{"query":"How busy is day two?","expected":{"intent":"qa","mutation_scope":"none","active_destination":"Hobart","revision_after":"rev-c6"}}]},
+
+  {"case_id":"edit_macau_two_days","category":"consecutive_local_edit","initial_state":{"active_destination":"澳门","current_revision_id":"rev-e1","has_itinerary":true},"turns":[{"query":"把第二天下午改成室内活动","commit_revision_id":"rev-e2","expected":{"intent":"edit","mutation_scope":"single_slot","target_day":2,"target_slot":"下午","revision_before":"rev-e1","revision_after":"rev-e2"}},{"query":"再把第三天改得轻松一点","commit_revision_id":"rev-e3","expected":{"intent":"edit","mutation_scope":"single_day","target_day":3,"revision_before":"rev-e2","revision_after":"rev-e3"}},{"query":"第二天下午现在是什么？","expected":{"intent":"qa","mutation_scope":"none","target_day":2,"target_slot":"下午","revision_after":"rev-e3"}}]},
+  {"case_id":"edit_hongkong_two_slots","category":"consecutive_local_edit","initial_state":{"active_destination":"香港","current_revision_id":"rev-f1","has_itinerary":true},"turns":[{"query":"把第一天晚上换成美食活动","commit_revision_id":"rev-f2","expected":{"intent":"edit","mutation_scope":"single_slot","target_day":1,"target_slot":"晚上","revision_before":"rev-f1","revision_after":"rev-f2"}},{"query":"然后把第二天上午改成文化景点","commit_revision_id":"rev-f3","expected":{"intent":"edit","mutation_scope":"single_slot","target_day":2,"target_slot":"上午","revision_before":"rev-f2","revision_after":"rev-f3"}},{"query":"刚才两次修改都保留","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-f3"}}]},
+  {"case_id":"edit_shenzhen_relaxed","category":"consecutive_local_edit","initial_state":{"active_destination":"深圳","current_revision_id":"rev-g1","has_itinerary":true},"turns":[{"query":"第三天改得轻松一点","commit_revision_id":"rev-g2","expected":{"intent":"edit","mutation_scope":"single_day","target_day":3,"revision_before":"rev-g1","revision_after":"rev-g2"}},{"query":"第一天下午换成室内","commit_revision_id":"rev-g3","expected":{"intent":"edit","mutation_scope":"single_slot","target_day":1,"target_slot":"下午","revision_before":"rev-g2","revision_after":"rev-g3"}},{"query":"现在第三天会不会太累？","expected":{"intent":"qa","mutation_scope":"none","target_day":3,"revision_after":"rev-g3"}}]},
+  {"case_id":"edit_tokyo_en","category":"consecutive_local_edit","initial_state":{"active_destination":"Tokyo","current_revision_id":"rev-h1","has_itinerary":true},"turns":[{"query":"Make day two more relaxed","commit_revision_id":"rev-h2","expected":{"intent":"edit","mutation_scope":"single_day","target_day":2,"revision_before":"rev-h1","revision_after":"rev-h2"}},{"query":"Change the third afternoon to an indoor activity","commit_revision_id":"rev-h3","expected":{"intent":"edit","mutation_scope":"single_slot","target_day":3,"target_slot":"下午","revision_before":"rev-h2","revision_after":"rev-h3"}},{"query":"What is on the third afternoon now?","expected":{"intent":"qa","mutation_scope":"none","target_day":3,"target_slot":"下午","revision_after":"rev-h3"}}]},
+  {"case_id":"edit_chengdu_food_culture","category":"consecutive_local_edit","initial_state":{"active_destination":"成都","current_revision_id":"rev-i1","has_itinerary":true},"turns":[{"query":"第二天晚上改成美食","commit_revision_id":"rev-i2","expected":{"intent":"edit","mutation_scope":"single_slot","target_day":2,"target_slot":"晚上","revision_before":"rev-i1","revision_after":"rev-i2"}},{"query":"第四天上午换成博物馆","commit_revision_id":"rev-i3","expected":{"intent":"edit","mutation_scope":"single_slot","target_day":4,"target_slot":"上午","revision_before":"rev-i2","revision_after":"rev-i3"}},{"query":"第四天上午安排确认了吗？","expected":{"intent":"qa","mutation_scope":"none","target_day":4,"target_slot":"上午","revision_after":"rev-i3"}}]},
+  {"case_id":"edit_paris_en","category":"consecutive_local_edit","initial_state":{"active_destination":"Paris","current_revision_id":"rev-j1","has_itinerary":true},"turns":[{"query":"Change day one to a slower pace","commit_revision_id":"rev-j2","expected":{"intent":"edit","mutation_scope":"single_day","target_day":1,"revision_before":"rev-j1","revision_after":"rev-j2"}},{"query":"Replace the second evening with food","commit_revision_id":"rev-j3","expected":{"intent":"edit","mutation_scope":"single_slot","target_day":2,"target_slot":"晚上","revision_before":"rev-j2","revision_after":"rev-j3"}},{"query":"How much does day two cost now?","expected":{"intent":"qa","mutation_scope":"none","target_day":2,"revision_after":"rev-j3"}}]},
+
+  {"case_id":"reset_shanghai_new_xiamen","category":"reset_recovery","initial_state":{"active_destination":"上海","current_revision_id":"rev-r1","has_itinerary":true},"turns":[{"query":"上海第二天是什么？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-r1"}},{"query":"重新开始","expected":{"intent":"reset","mutation_scope":"reset_all","active_destination":null,"revision_after":null,"revision_changed":true}},{"query":"帮我规划厦门3天，预算5000","commit_revision_id":"rev-r2","expected":{"intent":"create","mutation_scope":"whole_trip","revision_after":"rev-r2"}}]},
+  {"case_id":"reset_tokyo_clear","category":"reset_recovery","initial_state":{"active_destination":"东京","current_revision_id":"rev-r3","has_itinerary":true},"turns":[{"query":"先看看当前预算","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-r3"}},{"query":"清空行程","expected":{"intent":"reset","mutation_scope":"reset_all","active_destination":null,"revision_after":null}},{"query":"我想去大阪玩4天，预算7000","commit_revision_id":"rev-r4","expected":{"intent":"create","mutation_scope":"whole_trip","revision_after":"rev-r4"}}]},
+  {"case_id":"reset_hongkong_en","category":"reset_recovery","initial_state":{"active_destination":"Hong Kong","current_revision_id":"rev-r5","has_itinerary":true},"turns":[{"query":"What is planned for day one?","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-r5"}},{"query":"Start over","expected":{"intent":"reset","mutation_scope":"reset_all","active_destination":null,"revision_after":null}},{"query":"Plan a 3 day trip to Singapore with a budget of 6000","commit_revision_id":"rev-r6","expected":{"intent":"create","mutation_scope":"whole_trip","revision_after":"rev-r6"}}]},
+  {"case_id":"reset_macau_then_clarify","category":"reset_recovery","initial_state":{"active_destination":"澳门","current_revision_id":"rev-r7","has_itinerary":true},"turns":[{"query":"第三天安排是什么？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-r7"}},{"query":"全部重置","expected":{"intent":"reset","mutation_scope":"reset_all","active_destination":null,"revision_after":null}},{"query":"预算5000","expected":{"intent":"create","mutation_scope":"whole_trip","revision_after":null}}]},
+  {"case_id":"reset_chengdu_new_qingdao","category":"reset_recovery","initial_state":{"active_destination":"成都","current_revision_id":"rev-r8","has_itinerary":true},"turns":[{"query":"成都行程先保留吗？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-r8"}},{"query":"不要了，重新规划","expected":{"intent":"reset","mutation_scope":"reset_all","active_destination":null,"revision_after":null}},{"query":"青岛5天，预算8000","commit_revision_id":"rev-r9","expected":{"intent":"create","mutation_scope":"whole_trip","revision_after":"rev-r9"}}]},
+  {"case_id":"reset_paris_en","category":"reset_recovery","initial_state":{"active_destination":"Paris","current_revision_id":"rev-r10","has_itinerary":true},"turns":[{"query":"Keep the current plan for a moment","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-r10"}},{"query":"Clear the itinerary","expected":{"intent":"reset","mutation_scope":"reset_all","active_destination":null,"revision_after":null}},{"query":"Plan Berlin for four days with 9000 yuan","commit_revision_id":"rev-r11","expected":{"intent":"create","mutation_scope":"whole_trip","revision_after":"rev-r11"}}]},
+
+  {"case_id":"ambiguous_punctuation","category":"malformed_ambiguous","initial_state":{"active_destination":"深圳","current_revision_id":"rev-a1","has_itinerary":true},"turns":[{"query":"???","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-a1"}},{"query":"……","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-a1"}},{"query":"第二天呢？","expected":{"intent":"qa","mutation_scope":"none","target_day":2,"revision_after":"rev-a1"}}]},
+  {"case_id":"ambiguous_do_not_change","category":"malformed_ambiguous","initial_state":{"active_destination":"香港","current_revision_id":"rev-a2","has_itinerary":true},"turns":[{"query":"先别改","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-a2"}},{"query":"保持现在的安排","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-a2"}},{"query":"我只是确认第三天","expected":{"intent":"qa","mutation_scope":"none","target_day":3,"revision_after":"rev-a2"}}]},
+  {"case_id":"ambiguous_unknown_reply","category":"malformed_ambiguous","initial_state":{"active_destination":"成都","current_revision_id":"rev-a3","has_itinerary":true},"turns":[{"query":"我不知道","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-a3"}},{"query":"随便看看","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-a3"}},{"query":"预算是不是超了？","expected":{"intent":"qa","mutation_scope":"none","revision_after":"rev-a3"}}]},
+  {"case_id":"ambiguous_polite_question","category":"malformed_ambiguous","initial_state":{"active_destination":"澳门","current_revision_id":"rev-a4","has_itinerary":true},"turns":[{"query":"可以问一下第二天下午能不能安排室内吗？","expected":{"intent":"qa","mutation_scope":"none","target_day":2,"target_slot":"下午","revision_after":"rev-a4"}},{"query":"先不要真的修改","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-a4"}},{"query":"当前第二天下午是什么？","expected":{"intent":"qa","mutation_scope":"none","target_day":2,"target_slot":"下午","revision_after":"rev-a4"}}]},
+  {"case_id":"ambiguous_english_noise","category":"malformed_ambiguous","initial_state":{"active_destination":"Tokyo","current_revision_id":"rev-a5","has_itinerary":true},"turns":[{"query":"uh...","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-a5"}},{"query":"never mind","expected":{"intent":"chat","mutation_scope":"none","revision_after":"rev-a5"}},{"query":"day two?","expected":{"intent":"qa","mutation_scope":"none","target_day":2,"revision_after":"rev-a5"}}]},
+  {"case_id":"ambiguous_conflicting_city","category":"malformed_ambiguous","initial_state":{"active_destination":"上海","current_revision_id":"rev-a6","has_itinerary":true},"turns":[{"query":"北京还是上海哪个好？先别改","expected":{"intent":"qa","mutation_scope":"none","active_destination":"上海","revision_after":"rev-a6"}},{"query":"我还没决定","expected":{"intent":"chat","mutation_scope":"none","active_destination":"上海","revision_after":"rev-a6"}},{"query":"继续看上海第一天","expected":{"intent":"qa","mutation_scope":"none","active_destination":"上海","target_day":1,"revision_after":"rev-a6"}}]}
 ]

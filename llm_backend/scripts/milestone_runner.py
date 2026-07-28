@@ -546,6 +546,29 @@ def run_multi_turn_conversation_eval_gate(
     cases_path = Path(gate.get("cases") or DEFAULT_MULTI_TURN_CASES_PATH)
     report = evaluate_cases(load_cases(cases_path))
     elapsed_ms = (time.perf_counter() - start) * 1000
+    metrics = dict(report.get("metrics") or {})
+    failures = list(report.get("failures") or [])
+    if not is_passing(report) and (
+        report.get("contract_errors")
+        or any(
+            int(metrics.get(name) or 0) > 0
+            for name in (
+                "qa_chat_unintended_mutations",
+                "false_destination_switches",
+                "explicit_destination_switch_failures",
+                "stale_itinerary_after_switch",
+                "consecutive_edit_target_failures",
+                "repeated_clarification_loops",
+            )
+        )
+    ):
+        failures.append(
+            {
+                "type": "multi_turn_safety_guardrail",
+                "contract_errors": list(report.get("contract_errors") or []),
+                "metrics": metrics,
+            }
+        )
     return GateResult(
         name=str(gate.get("name") or "multi_turn_conversation_eval"),
         type="multi_turn_conversation_eval",
@@ -558,8 +581,10 @@ def run_multi_turn_conversation_eval_gate(
             "turn_count": report.get("turn_count"),
             "failed_turns": report.get("failed_turns"),
             "categories": report.get("category_summary") or {},
+            "contract_errors": report.get("contract_errors") or [],
+            **metrics,
         },
-        failures=list(report.get("failures") or []),
+        failures=failures,
     )
 
 
@@ -838,7 +863,11 @@ def render_summary(status: dict[str, Any]) -> str:
             lines.append(
                 f"- {gate['name']}: {gate['status']} "
                 f"({summary.get('passed_cases')}/{summary.get('case_count')} cases, "
-                f"failed_turns={summary.get('failed_turns')})"
+                f"turns={summary.get('turn_count')}, "
+                f"critical={summary.get('critical_case_pass_rate')}, "
+                f"unsafe_mutations={summary.get('qa_chat_unintended_mutations')}, "
+                f"false_switches={summary.get('false_destination_switches')}, "
+                f"clarification_loops={summary.get('repeated_clarification_loops')})"
             )
         else:
             lines.append(f"- {gate['name']}: {gate['status']} ({round(gate.get('elapsed_ms', 0))} ms)")

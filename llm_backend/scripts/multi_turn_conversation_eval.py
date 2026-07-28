@@ -13,12 +13,39 @@ from app.domain.travel.conversation_runtime import (
     ConversationRuntimeSnapshot,
     apply_transition,
 )
+from app.domain.travel.query_processor import TravelQueryProcessor
 from app.services.travel_clarification_service import TravelClarificationService
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CASES_PATH = BACKEND_ROOT / "evaluation/multi_turn_conversation_cases.json"
 DEFAULT_OUTPUT_DIR = Path("reports/multi-turn-conversation-eval/latest")
+EXPECTED_CATEGORY_COUNTS = {
+    "destination_switch": 6,
+    "destination_mention_readonly": 6,
+    "qa_readonly": 6,
+    "flexible_clarification": 6,
+    "chat_goal_retention": 6,
+    "consecutive_local_edit": 6,
+    "reset_recovery": 6,
+    "malformed_ambiguous": 6,
+}
+CRITICAL_CATEGORIES = {
+    "destination_switch",
+    "destination_mention_readonly",
+    "qa_readonly",
+    "flexible_clarification",
+    "consecutive_local_edit",
+    "reset_recovery",
+}
+SAFETY_METRIC_NAMES = (
+    "qa_chat_unintended_mutations",
+    "false_destination_switches",
+    "explicit_destination_switch_failures",
+    "stale_itinerary_after_switch",
+    "consecutive_edit_target_failures",
+    "repeated_clarification_loops",
+)
 
 
 def load_cases(path: Path = DEFAULT_CASES_PATH) -> list[dict[str, Any]]:
@@ -26,6 +53,39 @@ def load_cases(path: Path = DEFAULT_CASES_PATH) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
         raise ValueError("multi-turn conversation cases must be a JSON list")
     return payload
+
+
+def validate_case_contract(cases: list[dict[str, Any]]) -> list[str]:
+    """Reject fixture fields that bypass the natural-language QP boundary."""
+    errors: list[str] = []
+    category_counts = Counter(str(case.get("category") or "") for case in cases)
+    case_ids = [str(case.get("case_id") or "") for case in cases]
+    if len(cases) != 48:
+        errors.append(f"expected 48 transcripts, got {len(cases)}")
+    if category_counts != Counter(EXPECTED_CATEGORY_COUNTS):
+        errors.append(
+            "category counts do not match v2 contract: "
+            f"{dict(sorted(category_counts.items()))}"
+        )
+    if len(set(case_ids)) != len(case_ids) or any(not case_id for case_id in case_ids):
+        errors.append("case_id values must be non-empty and unique")
+    for case in cases:
+        case_id = str(case.get("case_id") or "unknown")
+        turns = list(case.get("turns") or [])
+        if not 3 <= len(turns) <= 6:
+            errors.append(
+                f"{case_id} must contain 3 to 6 turns, got {len(turns)}"
+            )
+        for turn_index, turn in enumerate(turns, start=1):
+            if not turn.get("clarification_action") and "qp" in turn:
+                errors.append(f"{case_id} turn {turn_index} must not provide qp")
+            if not str(turn.get("query") or "").strip():
+                errors.append(f"{case_id} turn {turn_index} query must not be empty")
+            if not isinstance(turn.get("expected"), dict):
+                errors.append(f"{case_id} turn {turn_index} expected must be an object")
+    if sum(len(case.get("turns") or []) for case in cases) < 144:
+        errors.append("v2 corpus must contain at least 144 turns")
+    return errors
 
 
 def _itinerary(destination: str, revision_id: str) -> dict[str, Any]:
@@ -72,25 +132,6 @@ def _snapshot(case_id: str, payload: dict[str, Any]) -> ConversationRuntimeSnaps
         asked_fields=list(payload.get("asked_fields") or []),
         last_user_query=payload.get("last_user_query"),
     )
-
-
-def _normalize_qp(payload: dict[str, Any]) -> dict[str, Any]:
-    intent = str(payload.get("intent") or "chat")
-    return {
-        "intent": intent,
-        "intent_detail": payload.get("intent_detail")
-        or {
-            "create": "first_create",
-            "edit": "edit_day",
-            "qa": "qa_local",
-            "chat": "general_chat",
-            "reset": "reset_all",
-        }.get(intent, "general_chat"),
-        "constraints": dict(payload.get("constraints") or {}),
-        "target_day": payload.get("target_day"),
-        "target_slot": payload.get("target_slot"),
-        "confidence": payload.get("confidence"),
-    }
 
 
 def _evaluate_clarification_turn(
@@ -140,11 +181,14 @@ def _evaluate_decision_turn(
     turn: dict[str, Any],
     snapshot: ConversationRuntimeSnapshot,
     decision_service: ConversationDecisionService,
-) -> tuple[ConversationRuntimeSnapshot, dict[str, Any]]:
+    query_processor: TravelQueryProcessor,
+) -> tuple[ConversationRuntimeSnapshot, dict[str, Any], dict[str, Any]]:
     query = str(turn.get("query") or "")
+    state_before = snapshot.model_dump(mode="json")
+    qp_output = query_processor.process(query)
     decision = decision_service.decide(
         query,
-        _normalize_qp(dict(turn.get("qp") or {})),
+        qp_output,
         snapshot,
     )
     transition = apply_transition(snapshot, decision)
@@ -176,7 +220,13 @@ def _evaluate_decision_turn(
         "target_slot": decision.target_slot,
         "reason": decision.reason,
     }
-    return state_after, actual
+    trace = {
+        "qp_output": qp_output,
+        "decision": decision.model_dump(mode="json"),
+        "state_before": state_before,
+        "state_after": state_after.model_dump(mode="json"),
+    }
+    return state_after, actual, trace
 
 
 def _match_expected(actual: dict[str, Any], expected: dict[str, Any]) -> list[str]:
@@ -198,11 +248,14 @@ def _match_expected(actual: dict[str, Any], expected: dict[str, Any]) -> list[st
 
 def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
     decision_service = ConversationDecisionService()
+    query_processor = TravelQueryProcessor(structured_qp_mode="off")
     case_results: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     category_counts: Counter[str] = Counter()
     category_passed: Counter[str] = Counter()
     turn_count = 0
+    contract_errors = validate_case_contract(cases)
+    safety_counts = {name: 0 for name in SAFETY_METRIC_NAMES}
 
     for case in cases:
         case_id = str(case.get("case_id") or "unknown")
@@ -215,24 +268,80 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
         for turn_index, turn in enumerate(case.get("turns") or [], start=1):
             turn_count += 1
             if turn.get("clarification_action"):
+                state_before = snapshot.model_dump(mode="json")
                 snapshot, actual = _evaluate_clarification_turn(
                     turn=turn,
                     snapshot=snapshot,
                     service=clarification,
                 )
+                trace = {
+                    "qp_output": None,
+                    "decision": {
+                        "intent": actual["intent"],
+                        "mutation_scope": actual["mutation_scope"],
+                    },
+                    "state_before": state_before,
+                    "state_after": snapshot.model_dump(mode="json"),
+                }
             else:
-                snapshot, actual = _evaluate_decision_turn(
+                snapshot, actual, trace = _evaluate_decision_turn(
                     turn=turn,
                     snapshot=snapshot,
                     decision_service=decision_service,
+                    query_processor=query_processor,
                 )
             errors = _match_expected(actual, dict(turn.get("expected") or {}))
+            expected = dict(turn.get("expected") or {})
+            before_state = trace["state_before"]
+            after_state = trace["state_after"]
+            if actual["intent"] in {"qa", "chat"} and (
+                before_state.get("current_revision_id")
+                != after_state.get("current_revision_id")
+                or before_state.get("current_itinerary")
+                != after_state.get("current_itinerary")
+            ):
+                safety_counts["qa_chat_unintended_mutations"] += 1
+            if (
+                expected.get("intent") != "change_destination"
+                and actual["intent"] == "change_destination"
+            ):
+                safety_counts["false_destination_switches"] += 1
+            if (
+                expected.get("intent") == "change_destination"
+                and actual["intent"] != "change_destination"
+            ):
+                safety_counts["explicit_destination_switch_failures"] += 1
+            if actual["intent"] == "change_destination" and (
+                after_state.get("current_itinerary") is not None
+                or after_state.get("current_revision_id") is not None
+            ):
+                safety_counts["stale_itinerary_after_switch"] += 1
+            if category == "consecutive_local_edit" and expected.get("intent") == "edit":
+                expected_scope = (
+                    expected.get("target_day"),
+                    expected.get("target_slot"),
+                    expected.get("revision_after"),
+                )
+                actual_scope = (
+                    actual.get("target_day"),
+                    actual.get("target_slot"),
+                    actual.get("revision_after"),
+                )
+                if actual.get("intent") != "edit" or actual_scope != expected_scope:
+                    safety_counts["consecutive_edit_target_failures"] += 1
+            if (
+                category == "flexible_clarification"
+                and expected.get("pending") is False
+                and actual.get("pending") is True
+            ):
+                safety_counts["repeated_clarification_loops"] += 1
             turn_result = {
                 "turn_index": turn_index,
                 "query": turn.get("query"),
                 "status": "passed" if not errors else "failed",
                 "errors": errors,
                 "actual": actual,
+                **trace,
             }
             turn_results.append(turn_result)
             if errors:
@@ -260,9 +369,26 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
         )
 
     passed_cases = sum(item["status"] == "passed" for item in case_results)
+    critical_total = sum(
+        category_counts[category] for category in CRITICAL_CATEGORIES
+    )
+    critical_passed = sum(
+        category_passed[category] for category in CRITICAL_CATEGORIES
+    )
+    metrics = {
+        "overall_case_pass_rate": round(
+            passed_cases / len(case_results) if case_results else 0.0,
+            6,
+        ),
+        "critical_case_pass_rate": round(
+            critical_passed / critical_total if critical_total else 0.0,
+            6,
+        ),
+        **safety_counts,
+    }
     return {
-        "schema_version": "multi_turn_conversation_eval_v1",
-        "status": "passed" if not failures else "failed",
+        "schema_version": "multi_turn_conversation_eval_v2",
+        "status": "passed" if not failures and not contract_errors else "failed",
         "case_count": len(case_results),
         "passed_cases": passed_cases,
         "failed_cases": len(case_results) - passed_cases,
@@ -276,16 +402,24 @@ def evaluate_cases(cases: list[dict[str, Any]]) -> dict[str, Any]:
             }
             for category in sorted(category_counts)
         },
+        "contract_errors": contract_errors,
+        "metrics": metrics,
         "failures": failures,
         "cases": case_results,
     }
 
 
 def is_passing(report: dict[str, Any]) -> bool:
+    metrics = report.get("metrics") or {}
     return (
         report.get("status") == "passed"
-        and int(report.get("case_count") or 0) == 24
-        and int(report.get("passed_cases") or 0) == 24
+        and report.get("schema_version") == "multi_turn_conversation_eval_v2"
+        and int(report.get("case_count") or 0) == 48
+        and int(report.get("turn_count") or 0) >= 144
+        and float(metrics.get("overall_case_pass_rate") or 0.0) >= 0.95
+        and float(metrics.get("critical_case_pass_rate") or 0.0) == 1.0
+        and all(int(metrics.get(name) or 0) == 0 for name in SAFETY_METRIC_NAMES)
+        and not report.get("contract_errors")
         and int(report.get("failed_turns") or 0) == 0
     )
 
@@ -297,6 +431,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Status: `{report['status']}`",
         f"- Cases: {report['passed_cases']}/{report['case_count']} passed",
         f"- Turns: {report['turn_count'] - report['failed_turns']}/{report['turn_count']} passed",
+        f"- Overall pass rate: {report['metrics']['overall_case_pass_rate']}",
+        f"- Critical pass rate: {report['metrics']['critical_case_pass_rate']}",
+        f"- Unsafe QA/chat mutations: {report['metrics']['qa_chat_unintended_mutations']}",
+        f"- False destination switches: {report['metrics']['false_destination_switches']}",
+        f"- Repeated clarification loops: {report['metrics']['repeated_clarification_loops']}",
         "",
         "| Category | Total | Passed | Failed |",
         "| --- | ---: | ---: | ---: |",

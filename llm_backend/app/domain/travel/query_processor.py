@@ -27,7 +27,7 @@ StructuredQPMode = Literal["off", "shadow", "selective"]
 QPSafetyLevel = Literal["safe", "caution", "blocked"]
 
 _ENGLISH_RESET_HINT_PATTERN = re.compile(
-    r"\b(start over|begin again|clear (?:trip|itinerary)|new trip)\b",
+    r"\b(start over|begin again|clear (?:the\s+)?(?:trip|itinerary)|new trip)\b",
     re.IGNORECASE,
 )
 _ENGLISH_EDIT_HINT_PATTERN = re.compile(
@@ -42,7 +42,8 @@ _TRAVEL_QA_TOPIC_PATTERN = re.compile(
     r"(第\s*(?:\d+|[一二两三四五六七八九十]+)\s*天|day\s*\d+|"
     r"行程|安排|景点|活动|门票|交通|地址|预算|花费|费用|推荐|证据|来源|链接|"
     r"itinerary|plan|activity|ticket|transit|transport|address|budget|cost|"
-    r"recommendation|recommend|ref|reference|source|where|when|how\s+long)",
+    r"recommendation|recommend|ref|reference|source|where|when|why|"
+    r"busy|happens?|choose|chosen|better|how\s+long|how\s+do\s+i\s+get)",
     re.IGNORECASE,
 )
 _DAY_REFERENCE_PATTERN = re.compile(
@@ -73,6 +74,93 @@ _READONLY_MUTATION_QUESTION_PATTERN = re.compile(
 _MUTATION_REQUEST_PREFIX_PATTERN = re.compile(
     r"^(?:请|帮我|麻烦|能不能|可以|请问|please|can\s+you|could\s+you)",
     re.IGNORECASE,
+)
+_NEGATED_OR_PRESERVING_MUTATION_PATTERN = re.compile(
+    r"(?:"
+    r"(?:先|暂时)?(?:别|不要|不用|无需)(?:再|真的)?[^，。,.!?？]{0,10}"
+    r"(?:改|修改|调整|替换|换|删除|新增)|"
+    r"(?:保留|保持)[^，。,.!?？]{0,12}(?:安排|行程|修改|目的地|选择)|"
+    r"(?:修改|调整)[^，。,.!?？]{0,8}(?:保留|保持)|"
+    r"\b(?:do\s+not|don't|dont|never)\s+(?:change|modify|replace|switch)|"
+    r"\bkeep\b[^.!?]{0,20}\b(?:trip|plan|itinerary|choice)\b"
+    r")",
+    re.IGNORECASE,
+)
+_TRAVEL_COMPARISON_OR_TRANSIT_PATTERN = re.compile(
+    r"(?:"
+    r"哪个(?:更)?(?:适合|好)|"
+    r"怎么(?:走|去)|"
+    r"\bbetter\s+than\b|"
+    r"\bhow\s+do\s+i\s+get\s+from\b"
+    r")",
+    re.IGNORECASE,
+)
+_RESET_REPLAN_PATTERN = re.compile(
+    r"(?:不要了|不需要了|算了).{0,8}(?:重新规划|重新来|从头规划)",
+    re.IGNORECASE,
+)
+_READONLY_INFORMATION_REQUEST_PATTERN = re.compile(
+    r"(?:"
+    r"(?:看看|查看|告诉我|说明一下).{0,12}(?:预算|行程|安排|交通|地址|花费)|"
+    r"\b(?:show|tell)\s+me\b.{0,24}\b(?:budget|plan|itinerary|schedule)\b"
+    r")",
+    re.IGNORECASE,
+)
+_CN_TARGET_DAY_PATTERN = re.compile(
+    r"第\s*(\d+|[一二两三四五六七八九十]+)\s*天",
+)
+_ENGLISH_TARGET_DAY_PATTERN = re.compile(
+    r"\bday\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b",
+    re.IGNORECASE,
+)
+_ENGLISH_ORDINAL_DAY_PATTERN = re.compile(
+    r"\b(?:the\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)"
+    r"(?:\s+day)?\b",
+    re.IGNORECASE,
+)
+_DAY_WORD_VALUES = {
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+    "one": 1,
+    "first": 1,
+    "two": 2,
+    "second": 2,
+    "three": 3,
+    "third": 3,
+    "four": 4,
+    "fourth": 4,
+    "five": 5,
+    "fifth": 5,
+    "six": 6,
+    "sixth": 6,
+    "seven": 7,
+    "seventh": 7,
+    "eight": 8,
+    "eighth": 8,
+    "nine": 9,
+    "ninth": 9,
+    "ten": 10,
+    "tenth": 10,
+}
+_TARGET_SLOT_VARIANTS = (
+    ("上午", "上午"),
+    ("早上", "上午"),
+    ("morning", "上午"),
+    ("下午", "下午"),
+    ("afternoon", "下午"),
+    ("晚上", "晚上"),
+    ("夜晚", "晚上"),
+    ("evening", "晚上"),
+    ("night", "晚上"),
 )
 
 @dataclass(slots=True)
@@ -258,6 +346,15 @@ class TravelQueryProcessor:
         missing_required = [key for key in HARD_REQUIRED_FIELDS if not presence.get(key, False)]
         # 意图识别
         intent, intent_detail = self._detect_intent(normalized)
+        target_day = self._extract_target_day(normalized)
+        target_slot = self._extract_target_slot(normalized)
+        if intent in {"qa", "edit"} and target_day is not None:
+            # "第三天" describes the target scope, not a new trip duration.
+            constraints.days = None
+            # A local edit such as "改成室内活动" must not reinterpret the
+            # activity phrase as a destination replacement.
+            if intent == "edit":
+                constraints.destination_city = None
         if intent != "create":
             # P0 missing fields only block itinerary creation. Read-only QA,
             # edits, reset, and chat should not carry clarification pressure
@@ -275,6 +372,8 @@ class TravelQueryProcessor:
             constraints=constraints,
             constraint_presence=presence,
             missing_required=missing_required,
+            target_day=target_day,
+            target_slot=target_slot,
         ).to_dict()
 
     @staticmethod
@@ -493,13 +592,13 @@ class TravelQueryProcessor:
         lower_q = query.lower()
         if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.reset_hints) or bool(
             _ENGLISH_RESET_HINT_PATTERN.search(lower_q)
-        ):
+        ) or bool(_RESET_REPLAN_PATTERN.search(query)):
             return "reset", "reset_all"
 
         rule_edit_hint = any(self._contains_hint(query, lower_q, word) for word in QP_RULES.edit_hints)
         english_edit_hint = bool(_ENGLISH_EDIT_HINT_PATTERN.search(lower_q))
         has_edit_hint = rule_edit_hint or english_edit_hint
-        has_day_ref = bool(QP_RULES.edit_day_pattern.search(lower_q))
+        has_day_ref = self._extract_target_day(query) is not None
         is_question = bool(QP_RULES.qa_question_pattern.search(query))
         has_travel_qa_topic = bool(_TRAVEL_QA_TOPIC_PATTERN.search(query))
         constraints = self._extract_constraints(query)
@@ -509,10 +608,21 @@ class TravelQueryProcessor:
             and constraints.budget is not None
         )
 
+        if _NEGATED_OR_PRESERVING_MUTATION_PATTERN.search(query):
+            if is_question and (
+                has_travel_qa_topic
+                or _TRAVEL_COMPARISON_OR_TRANSIT_PATTERN.search(query)
+            ):
+                return "qa", "qa_local"
+            return "chat", "general_chat"
         if any(self._contains_hint(query, lower_q, word) for word in QP_RULES.evidence_qa_hints) or bool(
             _ENGLISH_EVIDENCE_HINT_PATTERN.search(lower_q)
         ):
             return "qa", "qa_evidence"
+        if _READONLY_INFORMATION_REQUEST_PATTERN.search(query):
+            return "qa", "qa_local"
+        if is_question and _TRAVEL_COMPARISON_OR_TRANSIT_PATTERN.search(query):
+            return "qa", "qa_local"
         if is_question and has_travel_qa_topic and (
             not has_edit_hint or self._is_readonly_mutation_question(query)
         ):
@@ -531,6 +641,35 @@ class TravelQueryProcessor:
         if not has_any_travel_signal:
             return "chat", "general_chat"
         return "create", "first_create"
+
+    @staticmethod
+    def _extract_target_day(query: str) -> int | None:
+        for pattern in (
+            _CN_TARGET_DAY_PATTERN,
+            _ENGLISH_TARGET_DAY_PATTERN,
+            _ENGLISH_ORDINAL_DAY_PATTERN,
+        ):
+            match = pattern.search(query)
+            if not match:
+                continue
+            raw = match.group(1).lower()
+            if raw.isdigit():
+                return int(raw)
+            if raw in _DAY_WORD_VALUES:
+                return _DAY_WORD_VALUES[raw]
+            if len(raw) == 2 and raw.startswith("十"):
+                return 10 + _DAY_WORD_VALUES.get(raw[1], 0)
+            if len(raw) == 2 and raw.endswith("十"):
+                return _DAY_WORD_VALUES.get(raw[0], 1) * 10
+        return None
+
+    @staticmethod
+    def _extract_target_slot(query: str) -> str | None:
+        lowered = query.lower()
+        for variant, canonical in _TARGET_SLOT_VARIANTS:
+            if variant in query or (variant.isascii() and variant in lowered):
+                return canonical
+        return None
 
     @staticmethod
     def _contains_hint(raw_query: str, lower_query: str, hint: str) -> bool:

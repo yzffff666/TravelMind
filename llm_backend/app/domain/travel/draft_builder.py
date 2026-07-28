@@ -12,7 +12,23 @@ _CN_WEEK_PATTERN = re.compile(r"([一二两三四五六七八九十])\s*周")
 _CN_DAY_PATTERN = re.compile(r"([一二两三四五六七八九十]+)\s*[天日]")
 _DIGIT_WEEK_PATTERN = re.compile(r"(\d+)\s*周")
 _DIGIT_DAY_PATTERN = re.compile(r"(\d+)\s*日")
+_ENGLISH_WORD_DAY_PATTERN = re.compile(
+    r"\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+days?\b",
+    re.I,
+)
 _HALF_MONTH_PATTERN = re.compile(r"半个?月")
+_ENGLISH_NUMBERS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
 
 
 def _cn_to_int(cn: str) -> int | None:
@@ -38,6 +54,13 @@ def extract_days(query: str, config: DraftConfig = DRAFT_CONFIG) -> int | None:
     if m:
         return max(config.min_days, min(int(m.group(1)) * 7, config.max_days))
 
+    m = _ENGLISH_WORD_DAY_PATTERN.search(query)
+    if m:
+        return max(
+            config.min_days,
+            min(_ENGLISH_NUMBERS[m.group(1).lower()], config.max_days),
+        )
+
     m = _CN_WEEK_PATTERN.search(query)
     if m:
         weeks = _CN_NUM.get(m.group(1), 1)
@@ -59,7 +82,10 @@ _CN_BUDGET_PATTERN = re.compile(r"([一二两三四五六七八九十]+)\s*(万|
 _DIGIT_WAN_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*万")
 _DIGIT_W_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*[wW]")
 _DIGIT_K_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*[kK]")
-_DIGIT_YUAN_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(?:元|块钱?)")
+_DIGIT_YUAN_PATTERN = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:元|块钱?|yuan|rmb|cny)",
+    re.I,
+)
 _PER_PERSON_BUDGET_PATTERN = re.compile(
     r"(?:人均|每人|每个人|per\s*person)\s*(?:预算|花费|消费|费用|budget|cost)?\s*[:：]?\s*(\d{3,6}(?:\.\d+)?)\s*(?:元|块钱?|rmb|cny|港币|hkd)?",
     re.I,
@@ -77,7 +103,7 @@ _BUDGET_RANGE_PATTERN = re.compile(r"(\d{3,6})\s*[-~到至]\s*(\d{3,6})")
 _STANDALONE_BUDGET_PATTERN = re.compile(r"^\s*(\d{3,6})(?:\.0+)?\s*$")
 _QUALITATIVE_BUDGETS = (
     (("经济", "省钱", "低预算", "穷游"), 3000.0),
-    (("中等", "适中", "中档", "普通预算"), 6000.0),
+    (("中等", "适中", "中档", "普通预算", "medium", "moderate"), 6000.0),
     (("高预算", "宽松预算", "豪华", "品质"), 12000.0),
 )
 
@@ -143,9 +169,13 @@ def extract_budget(query: str, config: DraftConfig = DRAFT_CONFIG) -> float | No
     if m:
         return max(float(m.group(1)), 0.0)
 
-    if "预算" in query or "budget" in query.lower():
+    lower_query = query.lower()
+    if "预算" in query or "budget" in lower_query:
         for keywords, value in _QUALITATIVE_BUDGETS:
-            if any(keyword in query for keyword in keywords):
+            if any(
+                keyword in (lower_query if keyword.isascii() else query)
+                for keyword in keywords
+            ):
                 return value
 
     return None
@@ -159,6 +189,28 @@ _DESTINATION_BEFORE_DURATION_PATTERNS = (
 )
 _DESTINATION_NOISE_HINTS = ("规划", "安排", "帮我", "帮忙", "制定", "预算", "budget")
 _DESTINATION_SUFFIX_NOISE = ("亲子", "情侣", "家庭", "朋友")
+_DESTINATION_REPLACEMENT_PATTERNS = (
+    re.compile(
+        r"(?:不去[^，。,.!?？]{1,20}[，,]?\s*)?"
+        r"(?:换成|改去|改成|换去)\s*([A-Za-z\u4e00-\u9fa5]{2,30})"
+    ),
+    re.compile(
+        r"change\s+(?:the\s+)?destination\s+to\s+([A-Za-z]+(?:\s+[A-Za-z]+){0,3})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"let['’]?s\s+go\s+to\s+([A-Za-z]+(?:\s+[A-Za-z]+){0,3})\s+instead",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"帮我(?:规划|安排)\s*([A-Za-z\u4e00-\u9fa5]{2,20})\s*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b[Pp]lan\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,2})"
+        r"(?=\s+for\b|\s+\d|\s*$)",
+    ),
+)
 
 
 def _clean_destination_candidate(raw: str) -> str:
@@ -171,6 +223,14 @@ def _clean_destination_candidate(raw: str) -> str:
 
 
 def extract_destination(query: str, config: DraftConfig = DRAFT_CONFIG) -> str | None:
+    for pattern in _DESTINATION_REPLACEMENT_PATTERNS:
+        match = pattern.search(query)
+        if match:
+            cleaned = _clean_destination_candidate(match.group(1))
+            if cleaned and not any(
+                hint in cleaned for hint in _DESTINATION_NOISE_HINTS
+            ):
+                return cleaned
     for pattern in config.destination_patterns:
         match = pattern.search(query)
         if match:

@@ -94,6 +94,13 @@ class TravelClarificationService:
             return {"has_pending": False}
 
         delta = self._extract_values(query)
+        if (
+            delta.get("budget") is None
+            and "budget" in (pending.get("asked_fields") or [])
+        ):
+            # A short reply such as "中等就行" is unambiguous when the
+            # clarification question currently asks only for budget.
+            delta["budget"] = extract_budget(f"预算 {query}")
         merged = self._merge_values(pending["values"], delta)
         assumptions = list(pending.get("assumptions") or [])
         if self._is_flexible_answer(query):

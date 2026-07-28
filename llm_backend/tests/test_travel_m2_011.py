@@ -100,6 +100,110 @@ def test_qp_explicit_mutation_still_routes_to_edit():
         assert out["missing_required"] == []
 
 
+@pytest.mark.parametrize(
+    ("query", "intent", "day", "slot"),
+    [
+        ("第三天下午去哪里？", "qa", 3, "下午"),
+        ("把第二天晚上改成美食活动", "edit", 2, "晚上"),
+        ("What happens on day two?", "qa", 2, None),
+        ("Change the third afternoon to an indoor activity", "edit", 3, "下午"),
+        ("Replace the second evening with food", "edit", 2, "晚上"),
+    ],
+)
+def test_qp_rule_extracts_target_day_and_slot(query, intent, day, slot):
+    out = TravelQueryProcessor().process(query)
+
+    assert out["intent"] == intent
+    assert out["target_day"] == day
+    assert out["target_slot"] == slot
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "先别改",
+        "我只是问交通，不要换目的地",
+        "先不要真的修改",
+        "刚才两次修改都保留",
+        "Do not change my current trip",
+    ],
+)
+def test_qp_negated_or_preserving_mutation_language_is_read_only(query):
+    out = TravelQueryProcessor().process(query)
+
+    assert out["intent"] in {"qa", "chat"}
+
+
+@pytest.mark.parametrize(
+    ("query", "destination"),
+    [
+        ("不去澳门了，换成厦门", "厦门"),
+        ("Change the destination to Kyoto", "Kyoto"),
+        ("Let's go to Paris instead", "Paris"),
+        ("帮我规划深圳", "深圳"),
+    ],
+)
+def test_qp_extracts_destination_from_general_replacement_and_planning_phrases(
+    query,
+    destination,
+):
+    out = TravelQueryProcessor().process(query)
+
+    assert out["constraints"]["destination_city"] == destination
+
+
+def test_qp_local_day_edit_does_not_extract_activity_as_destination():
+    out = TravelQueryProcessor().process("把第二天下午改成室内活动")
+
+    assert out["intent"] == "edit"
+    assert out["constraints"]["destination_city"] is None
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "上海和苏州哪个更适合周末？",
+        "Is Osaka better than Kyoto for food?",
+        "How do I get from Paris to London?",
+        "Why did you choose that place?",
+        "How busy is day two?",
+    ],
+)
+def test_qp_travel_comparison_and_itinerary_questions_are_read_only_qa(query):
+    out = TravelQueryProcessor().process(query)
+
+    assert out["intent"] == "qa"
+
+
+def test_qp_english_clear_the_itinerary_is_reset():
+    out = TravelQueryProcessor().process("Clear the itinerary")
+
+    assert out["intent"] == "reset"
+
+
+@pytest.mark.parametrize(
+    ("query", "intent", "day"),
+    [
+        ("先看看当前预算", "qa", None),
+        ("day two?", "qa", 2),
+        ("Plan Berlin for four days with 9000 yuan", "create", None),
+    ],
+)
+def test_qp_understands_readonly_requests_word_days_and_english_plan(
+    query,
+    intent,
+    day,
+):
+    out = TravelQueryProcessor().process(query)
+
+    assert out["intent"] == intent
+    assert out["target_day"] == day
+    if intent == "create":
+        assert out["constraints"]["destination_city"] == "Berlin"
+        assert out["constraints"]["days"] == 4
+        assert out["constraints"]["budget"] == 9000.0
+
+
 def test_qp_intent_qa_evidence():
     processor = TravelQueryProcessor()
     for query in ("为什么推荐这个", "证据在哪", "来源链接"):
