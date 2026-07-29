@@ -434,3 +434,27 @@ def test_build_local_qa_fast_response_preserves_english_language(monkeypatch):
     assert event_2 == "final_text"
     assert data_2["payload"]["response_language"] == "en"
     assert data_2["payload"]["text"].startswith("Day 2")
+
+
+def test_intent_routed_event_exposes_resolved_response_language():
+    import asyncio
+
+    from app.api import travel
+
+    async def collect():
+        return [
+            chunk
+            async for chunk in travel._stream_intent_routed_event(
+                request_id="req_language",
+                conversation_id="conv_language",
+                intent="create",
+                intent_detail="first_create",
+                response_language="zh-CN",
+            )
+        ]
+
+    chunks = asyncio.run(collect())
+    event, data = _parse_sse_chunk(chunks[0])
+
+    assert event == "intent_routed"
+    assert data["payload"]["response_language"] == "zh-CN"

@@ -1,0 +1,180 @@
+[
+  {
+    "case_id": "zh-create-ack",
+    "language_bucket": "zh-CN",
+    "ui_locale": "en-US",
+    "turns": [
+      {"query": "我想规划香港三天", "response_key": "guided_budget", "expected_language": "zh-CN"},
+      {"query": "好的", "response_key": "draft_missing_fields", "expected_language": "zh-CN"}
+    ]
+  },
+  {
+    "case_id": "zh-flexible-clarify",
+    "language_bucket": "zh-CN",
+    "initial_language": "zh-CN",
+    "turns": [
+      {"query": "都可以", "response_key": "guided_budget", "expected_language": "zh-CN"},
+      {"query": "你安排", "response_key": "edit_not_confirmed", "expected_language": "zh-CN"}
+    ]
+  },
+  {
+    "case_id": "zh-ui-locale-fallback",
+    "language_bucket": "zh-CN",
+    "ui_locale": "zh-CN",
+    "turns": [
+      {"query": "ok", "response_key": "chat_fallback", "expected_language": "zh-CN"},
+      {"query": "sure", "response_key": "missing_itinerary", "expected_language": "zh-CN"}
+    ]
+  },
+  {
+    "case_id": "zh-explicit-override",
+    "language_bucket": "zh-CN",
+    "initial_language": "en",
+    "turns": [
+      {"query": "请用中文回答", "response_key": "chat_fallback", "expected_language": "zh-CN"},
+      {"query": "可以", "response_key": "missing_itinerary", "expected_language": "zh-CN"}
+    ]
+  },
+  {
+    "case_id": "zh-candidate-fallback",
+    "language_bucket": "zh-CN",
+    "turns": [
+      {"query": "帮我规划一个小众城市", "response_key": "candidate_insufficient", "expected_language": "zh-CN"},
+      {"query": "那换个区域", "response_key": "draft_missing_fields", "expected_language": "zh-CN"}
+    ]
+  },
+  {
+    "case_id": "zh-qa-preserves-language",
+    "language_bucket": "zh-CN",
+    "initial_language": "zh-CN",
+    "turns": [
+      {"query": "第三天下午去哪里", "response_key": "missing_itinerary", "expected_language": "zh-CN"},
+      {"query": "好的", "response_key": "chat_fallback", "expected_language": "zh-CN"}
+    ]
+  },
+  {
+    "case_id": "zh-edit-preserves-language",
+    "language_bucket": "zh-CN",
+    "initial_language": "zh-CN",
+    "turns": [
+      {"query": "把第二天改成室内", "response_key": "edit_success_generic", "expected_language": "zh-CN"},
+      {"query": "都行", "response_key": "edit_target_missing", "expected_language": "zh-CN"}
+    ]
+  },
+  {
+    "case_id": "zh-reset-and-recreate",
+    "language_bucket": "zh-CN",
+    "initial_language": "zh-CN",
+    "turns": [
+      {"query": "重新开始", "response_key": "reset_done", "expected_language": "zh-CN"},
+      {"query": "改去澳门三天", "response_key": "guided_budget", "expected_language": "zh-CN"}
+    ]
+  },
+  {
+    "case_id": "zh-duplicate-request",
+    "language_bucket": "zh-CN",
+    "turns": [
+      {"query": "帮我规划深圳三天", "response_key": "duplicate_request", "expected_language": "zh-CN"},
+      {"query": "好", "response_key": "chat_fallback", "expected_language": "zh-CN"}
+    ]
+  },
+  {
+    "case_id": "zh-switch-roundtrip",
+    "language_bucket": "zh-CN",
+    "initial_language": "zh-CN",
+    "turns": [
+      {"query": "Please reply in English", "response_key": "chat_fallback", "expected_language": "en"},
+      {"query": "okay", "response_key": "missing_itinerary", "expected_language": "en"},
+      {"query": "请用中文", "response_key": "chat_fallback", "expected_language": "zh-CN"}
+    ]
+  },
+  {
+    "case_id": "en-create-ack",
+    "language_bucket": "en",
+    "ui_locale": "zh-CN",
+    "turns": [
+      {"query": "Plan a three day trip to Bristol", "response_key": "guided_budget", "expected_language": "en"},
+      {"query": "okay", "response_key": "draft_missing_fields", "expected_language": "en"}
+    ]
+  },
+  {
+    "case_id": "en-flexible-clarify",
+    "language_bucket": "en",
+    "initial_language": "en",
+    "turns": [
+      {"query": "anything is fine", "response_key": "guided_budget", "expected_language": "en"},
+      {"query": "you decide", "response_key": "edit_not_confirmed", "expected_language": "en"}
+    ]
+  },
+  {
+    "case_id": "en-ui-locale-fallback",
+    "language_bucket": "en",
+    "ui_locale": "en-US",
+    "turns": [
+      {"query": "好的", "response_key": "chat_fallback", "expected_language": "en"},
+      {"query": "都可以", "response_key": "missing_itinerary", "expected_language": "en"}
+    ]
+  },
+  {
+    "case_id": "en-explicit-override",
+    "language_bucket": "en",
+    "initial_language": "zh-CN",
+    "turns": [
+      {"query": "Please respond in English", "response_key": "chat_fallback", "expected_language": "en"},
+      {"query": "sure", "response_key": "missing_itinerary", "expected_language": "en"}
+    ]
+  },
+  {
+    "case_id": "en-candidate-fallback",
+    "language_bucket": "en",
+    "turns": [
+      {"query": "Plan a trip to a small overseas city", "response_key": "candidate_insufficient", "expected_language": "en"},
+      {"query": "Try another area", "response_key": "draft_missing_fields", "expected_language": "en"}
+    ]
+  },
+  {
+    "case_id": "en-qa-preserves-language",
+    "language_bucket": "en",
+    "initial_language": "en",
+    "turns": [
+      {"query": "Where do I go on day three", "response_key": "missing_itinerary", "expected_language": "en"},
+      {"query": "okay", "response_key": "chat_fallback", "expected_language": "en"}
+    ]
+  },
+  {
+    "case_id": "en-edit-preserves-language",
+    "language_bucket": "en",
+    "initial_language": "en",
+    "turns": [
+      {"query": "Make day two indoor", "response_key": "edit_success_generic", "expected_language": "en"},
+      {"query": "anything is fine", "response_key": "edit_target_missing", "expected_language": "en"}
+    ]
+  },
+  {
+    "case_id": "en-reset-and-recreate",
+    "language_bucket": "en",
+    "initial_language": "en",
+    "turns": [
+      {"query": "Start over please", "response_key": "reset_done", "expected_language": "en"},
+      {"query": "Plan three days in Macau", "response_key": "guided_budget", "expected_language": "en"}
+    ]
+  },
+  {
+    "case_id": "en-duplicate-request",
+    "language_bucket": "en",
+    "turns": [
+      {"query": "Plan a three day Shenzhen trip", "response_key": "duplicate_request", "expected_language": "en"},
+      {"query": "okay", "response_key": "chat_fallback", "expected_language": "en"}
+    ]
+  },
+  {
+    "case_id": "en-switch-roundtrip",
+    "language_bucket": "en",
+    "initial_language": "en",
+    "turns": [
+      {"query": "请用中文回答", "response_key": "chat_fallback", "expected_language": "zh-CN"},
+      {"query": "好的", "response_key": "missing_itinerary", "expected_language": "zh-CN"},
+      {"query": "Please use English", "response_key": "chat_fallback", "expected_language": "en"}
+    ]
+  }
+]

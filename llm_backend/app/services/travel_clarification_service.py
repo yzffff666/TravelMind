@@ -5,8 +5,6 @@ from typing import Any, Dict, List, Tuple
 
 from app.domain.travel.clarification_rules import (
     CLARIFICATION_STAGE_NAME,
-    CLARIFICATION_MSG_HARD_AND_SOFT,
-    CLARIFICATION_MSG_HARD_ONLY,
     DEFAULT_DAILY_BUDGET,
     DEFAULT_DURATION_DAYS,
     FIELD_LABELS,
@@ -18,6 +16,7 @@ from app.domain.travel.clarification_rules import (
     SSE_EVENT_STAGE_PROGRESS,
     SSE_EVENT_STAGE_START,
 )
+from app.domain.travel.language_policy import localized_text
 from app.domain.travel.draft_builder import (
     extract_budget,
     extract_days,
@@ -26,6 +25,12 @@ from app.domain.travel.draft_builder import (
 )
 
 _VALUE_KEYS = ("destination", "duration", "budget", "travelers")
+_ENGLISH_FIELD_LABELS = {
+    "destination": "destination city",
+    "duration": "trip length or date range",
+    "budget": "budget range",
+    "travelers": "travel party",
+}
 
 
 class TravelClarificationService:
@@ -141,31 +146,59 @@ class TravelClarificationService:
             "assumptions": final_assumptions,
         }
 
-    def get_constraint_context(self, thread_id: str) -> tuple[str, str]:
+    def get_constraint_context(
+        self,
+        thread_id: str,
+        response_language: str = "zh-CN",
+    ) -> tuple[str, str]:
         """Return (known_text, missing_text) for LLM guided prompt."""
+        is_english = response_language == "en"
+        labels = _ENGLISH_FIELD_LABELS if is_english else FIELD_LABELS
+        separator = ", " if is_english else "\u3001"
         pending = self._pending.get(thread_id)
         if not pending:
+            if is_english:
+                return ("none", "destination city, trip length, budget range")
             return ("\u6682\u65e0", "\u76ee\u7684\u5730\u3001\u5929\u6570\u3001\u9884\u7b97")
 
         values = pending["values"]
 
         known_parts: list[str] = []
         if values.get("destination"):
-            known_parts.append(f"\u76ee\u7684\u5730: {values['destination']}")
+            label = "destination" if is_english else "\u76ee\u7684\u5730"
+            known_parts.append(f"{label}: {values['destination']}")
         if values.get("duration") is not None:
-            known_parts.append(f"\u5929\u6570: {values['duration']}\u5929")
+            if is_english:
+                known_parts.append(f"trip length: {values['duration']} days")
+            else:
+                known_parts.append(f"\u5929\u6570: {values['duration']}\u5929")
         if values.get("budget") is not None:
-            known_parts.append(f"\u9884\u7b97: {int(values['budget'])}\u5143")
+            if is_english:
+                known_parts.append(f"budget: {int(values['budget'])} CNY")
+            else:
+                known_parts.append(f"\u9884\u7b97: {int(values['budget'])}\u5143")
         if values.get("travelers"):
-            known_parts.append(f"\u51fa\u884c\u4eba\u7fa4: {values['travelers']}")
+            label = "travel party" if is_english else "\u51fa\u884c\u4eba\u7fa4"
+            known_parts.append(f"{label}: {values['travelers']}")
 
         missing_parts: list[str] = []
         for field in HARD_REQUIRED_FIELDS:
             if values.get(field) is None:
-                missing_parts.append(GUIDED_FIELD_HINTS.get(field, FIELD_LABELS[field]))
+                missing_parts.append(
+                    labels[field]
+                    if is_english
+                    else GUIDED_FIELD_HINTS.get(field, FIELD_LABELS[field])
+                )
 
-        known_text = "\u3001".join(known_parts) if known_parts else "\u6682\u65e0"
-        missing_text = "\u3001".join(missing_parts) if missing_parts else "\u65e0"
+        known_text = separator.join(known_parts) if known_parts else (
+            "none" if is_english else "\u6682\u65e0"
+        )
+        missing_text = separator.join(missing_parts) if missing_parts else (
+            "none" if is_english else "\u65e0"
+        )
+        if is_english:
+            known_text = f"Known constraints: {known_text}"
+            missing_text = f"Missing constraints: {missing_text}"
         return (known_text, missing_text)
 
     # ------------------------------------------------------------------
@@ -223,17 +256,37 @@ class TravelClarificationService:
     # Legacy helpers (still used by /travel/resume template path)
     # ------------------------------------------------------------------
 
-    def build_clarification_payload(self, missing_hard: List[str], missing_soft: List[str]) -> Dict[str, Any]:
-        clarification_text = self._build_clarification_message(missing_hard, missing_soft)
+    def build_clarification_payload(
+        self,
+        missing_hard: List[str],
+        missing_soft: List[str],
+        response_language: str = "zh-CN",
+    ) -> Dict[str, Any]:
+        clarification_text = self._build_clarification_message(
+            missing_hard,
+            missing_soft,
+            response_language=response_language,
+        )
         return {
             "stage": CLARIFICATION_STAGE_NAME,
             "missing_required": missing_hard,
             "missing_optional": missing_soft,
             "message": clarification_text,
+            "response_language": response_language,
         }
 
-    def build_clarification_stream(self, thread_id: str, missing_hard: List[str], missing_soft: List[str]):
-        payload = self.build_clarification_payload(missing_hard=missing_hard, missing_soft=missing_soft)
+    def build_clarification_stream(
+        self,
+        thread_id: str,
+        missing_hard: List[str],
+        missing_soft: List[str],
+        response_language: str = "zh-CN",
+    ):
+        payload = self.build_clarification_payload(
+            missing_hard=missing_hard,
+            missing_soft=missing_soft,
+            response_language=response_language,
+        )
         clarification_text = payload["message"]
 
         async def _stream():
@@ -258,15 +311,30 @@ class TravelClarificationService:
 
         return _stream()
 
-    def _build_clarification_message(self, missing_hard: List[str], missing_soft: List[str]) -> str:
-        hard_text = "\u3001".join(FIELD_LABELS[key] for key in missing_hard)
+    def _build_clarification_message(
+        self,
+        missing_hard: List[str],
+        missing_soft: List[str],
+        *,
+        response_language: str = "zh-CN",
+    ) -> str:
+        is_english = response_language == "en"
+        labels = _ENGLISH_FIELD_LABELS if is_english else FIELD_LABELS
+        separator = ", " if is_english else "\u3001"
+        hard_text = separator.join(labels[key] for key in missing_hard)
         if missing_soft:
-            soft_text = "\u3001".join(FIELD_LABELS[key] for key in missing_soft)
-            return CLARIFICATION_MSG_HARD_AND_SOFT.format(
+            soft_text = separator.join(labels[key] for key in missing_soft)
+            return localized_text(
+                "clarification_hard_and_soft",
+                response_language,
                 hard_text=hard_text,
                 soft_text=soft_text,
             )
-        return CLARIFICATION_MSG_HARD_ONLY.format(hard_text=hard_text)
+        return localized_text(
+            "clarification_hard_only",
+            response_language,
+            hard_text=hard_text,
+        )
 
     @staticmethod
     def _sse_line(payload: Any) -> str:

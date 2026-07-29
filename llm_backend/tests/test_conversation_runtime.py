@@ -252,6 +252,24 @@ def test_read_only_transition_preserves_itinerary_and_revision():
     assert result.revision_changed is False
 
 
+def test_read_only_transition_preserves_response_language():
+    snapshot = ConversationRuntimeSnapshot(
+        conversation_id="conv-language",
+        active_destination="深圳",
+        response_language="zh-CN",
+    )
+    decision = ConversationDecisionService().decide(
+        "第三天下午去哪里",
+        _qp(intent="qa", target_day=3, target_slot="下午"),
+        snapshot,
+    )
+
+    result = apply_transition(snapshot, decision)
+
+    assert snapshot.response_language == "zh-CN"
+    assert result.state_after.response_language == "zh-CN"
+
+
 def test_edit_preview_does_not_commit_a_revision():
     snapshot = _snapshot()
     decision = ConversationDecisionService().decide(

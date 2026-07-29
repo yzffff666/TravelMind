@@ -269,6 +269,71 @@ async def test_loading_runtime_restores_persisted_clarification(monkeypatch):
     assert travel.clarification_service.has_pending("conv-restore")
 
 
+def test_runtime_snapshot_round_trips_response_language():
+    from app.api.travel import (
+        _conversation_snapshot_from_state,
+        _dialogue_state_from_snapshot,
+    )
+
+    snapshot = _conversation_snapshot_from_state(
+        "conv-language",
+        {
+            "dialogue_state": {
+                "response_language": "zh-CN",
+                "asked_fields": [],
+            }
+        },
+    )
+
+    assert snapshot.response_language == "zh-CN"
+    assert _dialogue_state_from_snapshot(snapshot)["response_language"] == "zh-CN"
+
+
+def test_runtime_snapshot_is_backward_compatible_without_response_language():
+    from app.api.travel import (
+        _conversation_snapshot_from_state,
+        _dialogue_state_from_snapshot,
+    )
+
+    snapshot = _conversation_snapshot_from_state("conv-old", {"dialogue_state": {}})
+
+    assert snapshot.response_language is None
+    assert _dialogue_state_from_snapshot(snapshot)["response_language"] is None
+
+
+def test_apply_turn_language_uses_persisted_state_for_short_reply():
+    from app.api.travel import _apply_turn_language
+    from app.domain.travel.conversation_runtime import ConversationRuntimeSnapshot
+
+    snapshot = ConversationRuntimeSnapshot(
+        conversation_id="conv-short",
+        response_language="zh-CN",
+    )
+
+    decision = _apply_turn_language(snapshot, query="ok", ui_locale="en")
+
+    assert decision.language == "zh-CN"
+    assert decision.source == "conversation_state"
+    assert snapshot.response_language == "zh-CN"
+
+
+def test_apply_turn_language_prefers_substantive_query_over_ui_locale():
+    from app.api.travel import _apply_turn_language
+    from app.domain.travel.conversation_runtime import ConversationRuntimeSnapshot
+
+    snapshot = ConversationRuntimeSnapshot(conversation_id="conv-new")
+
+    decision = _apply_turn_language(
+        snapshot,
+        query="我想去香港三天",
+        ui_locale="en",
+    )
+
+    assert decision.language == "zh-CN"
+    assert decision.source == "query_signal"
+    assert snapshot.response_language == "zh-CN"
+
+
 @pytest.mark.asyncio
 async def test_replace_runtime_state_can_explicitly_clear_old_revision(monkeypatch):
     state = _state()
@@ -436,6 +501,7 @@ async def test_query_endpoint_switches_destination_with_portable_constraints(mon
     await _consume_response(response)
 
     assert replacements
+    assert replacements[0]["dialogue_state"]["response_language"] == "zh-CN"
     assert replacements[0]["current_revision_id"] is None
     assert replacements[0]["current_itinerary"] is None
     assert replacements[0]["trip_profile"]["destination_city"] == "杭州"
@@ -574,10 +640,138 @@ async def test_query_endpoint_restores_pending_clarification_before_routing(monk
     await _consume_response(response)
 
     assert generated
+    assert generated[0]["response_language"] == "zh-CN"
     assert "香港" in generated[0]["original_query"]
     assert "3天" in generated[0]["original_query"]
     assert "6000" in generated[0]["original_query"]
     assert persisted_dialogue[-1]["pending_clarification"] is None
+
+
+@pytest.mark.asyncio
+async def test_query_endpoint_threads_english_language_into_chat_response(monkeypatch):
+    from app.api import travel
+
+    state = _api_state()
+    state["dialogue_state"] = {"response_language": "en"}
+    captured: list[str] = []
+
+    async def fake_ensure_user(_user_id: int):
+        return None
+
+    async def fake_get_state(_conversation_id: str):
+        return state
+
+    async def fake_upsert(**kwargs):
+        if kwargs.get("dialogue_state") is not None:
+            state["dialogue_state"] = kwargs["dialogue_state"]
+        return state
+
+    async def fake_process(_query: str, _conversation_id: str):
+        return _qp_result(intent="chat")
+
+    async def fake_chat(_query: str, _conversation_id: str, response_language: str):
+        captured.append(response_language)
+        return "English response"
+
+    monkeypatch.setattr(travel, "_ensure_user_exists", fake_ensure_user)
+    monkeypatch.setattr(
+        travel.ConversationService,
+        "get_travel_conversation_state",
+        fake_get_state,
+    )
+    monkeypatch.setattr(
+        travel.ConversationService,
+        "upsert_travel_conversation_state",
+        fake_upsert,
+    )
+    monkeypatch.setattr(travel, "_process_qp", fake_process)
+    monkeypatch.setattr(travel, "_generate_chat_response", fake_chat)
+    travel.clarification_service.clear_pending("conv-chat-en")
+    travel._active_request_fingerprints.clear()
+
+    response = await travel.langgraph_query(
+        query="Okay",
+        user_id=1,
+        conversation_id="conv-chat-en",
+        image=None,
+        ui_locale="en-US",
+    )
+    chunks = await _consume_response(response)
+
+    assert captured == ["en"]
+    assert '"response_language": "en"' in "".join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_query_endpoint_threads_english_language_into_guided_response(monkeypatch):
+    from app.api import travel
+
+    state = {
+        "conversation_id": "conv-guided-en",
+        "user_id": 1,
+        "current_revision_id": None,
+        "trip_profile": None,
+        "current_itinerary": None,
+        "dialogue_state": {"response_language": "en"},
+        "last_user_query": "I want to visit Bristol",
+    }
+    captured: list[tuple[str, str, str]] = []
+
+    async def fake_ensure_user(_user_id: int):
+        return None
+
+    async def fake_get_state(_conversation_id: str):
+        return state
+
+    async def fake_upsert(**kwargs):
+        if kwargs.get("dialogue_state") is not None:
+            state["dialogue_state"] = kwargs["dialogue_state"]
+        return state
+
+    async def fake_process(_query: str, _conversation_id: str):
+        return _qp_result(intent="create", destination="Bristol")
+
+    async def fake_guided(
+        _query: str,
+        _conversation_id: str,
+        known_text: str,
+        missing_text: str,
+        response_language: str,
+    ):
+        captured.append((known_text, missing_text, response_language))
+        return "How many days are you planning?"
+
+    monkeypatch.setattr(travel, "_ensure_user_exists", fake_ensure_user)
+    monkeypatch.setattr(
+        travel.ConversationService,
+        "get_travel_conversation_state",
+        fake_get_state,
+    )
+    monkeypatch.setattr(
+        travel.ConversationService,
+        "upsert_travel_conversation_state",
+        fake_upsert,
+    )
+    monkeypatch.setattr(travel, "_process_qp", fake_process)
+    monkeypatch.setattr(travel, "_generate_guided_response", fake_guided)
+    travel.clarification_service.clear_pending("conv-guided-en")
+    travel._active_request_fingerprints.clear()
+
+    response = await travel.langgraph_query(
+        query="I want to visit Bristol",
+        user_id=1,
+        conversation_id="conv-guided-en",
+        image=None,
+        ui_locale="en-US",
+    )
+    chunks = await _consume_response(response)
+
+    assert captured
+    known_text, missing_text, language = captured[0]
+    assert language == "en"
+    assert "Known constraints" in known_text
+    assert "Missing constraints" in missing_text
+    assert '"response_language": "en"' in "".join(chunks)
 
 
 @pytest.mark.asyncio

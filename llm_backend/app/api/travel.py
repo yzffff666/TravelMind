@@ -22,6 +22,11 @@ from app.domain.travel.conversation_runtime import (
     ConversationTransitionResult,
     apply_transition,
 )
+from app.domain.travel.language_policy import (
+    LanguageDecision,
+    localized_text,
+    resolve_response_language,
+)
 from app.domain.travel.structured_edit_command import build_structured_edit_command
 from app.domain.travel.sse_envelope import (
     build_data_line,
@@ -80,6 +85,7 @@ def _conversation_snapshot_from_state(
     )
     return ConversationRuntimeSnapshot(
         conversation_id=conversation_id,
+        response_language=dialogue_state.get("response_language"),
         active_destination=active_destination,
         trip_profile=trip_profile,
         current_itinerary=itinerary,
@@ -108,6 +114,7 @@ def _dialogue_state_from_snapshot(
 ) -> dict[str, Any]:
     return {
         "active_goal": "travel_planning",
+        "response_language": snapshot.response_language,
         "active_destination": snapshot.active_destination,
         "pending_clarification": snapshot.pending_clarification,
         "asked_fields": list(snapshot.asked_fields),
@@ -225,6 +232,7 @@ async def _prepare_conversation_turn(
     user_id: int,
     query: str,
     persisted_state: dict[str, Any] | None,
+    ui_locale: str | None = None,
 ) -> PreparedConversationTurn:
     qp_output = await _process_qp(query, conversation_id)
     transition = _resolve_conversation_transition(
@@ -235,6 +243,11 @@ async def _prepare_conversation_turn(
     )
     _log_conversation_transition(transition)
     runtime_snapshot = transition.state_after
+    _apply_turn_language(
+        runtime_snapshot,
+        query=query,
+        ui_locale=ui_locale,
+    )
     intent = transition.decision.intent
     intent_detail = transition.decision.intent_detail
     planning_query = query
@@ -296,6 +309,26 @@ async def _prepare_conversation_turn(
     )
 
 
+def _apply_turn_language(
+    snapshot: ConversationRuntimeSnapshot,
+    *,
+    query: str,
+    ui_locale: str | None = None,
+) -> LanguageDecision:
+    current_language = snapshot.response_language
+    if current_language is None and snapshot.last_user_query:
+        previous = resolve_response_language(snapshot.last_user_query)
+        if previous.source in {"explicit_override", "query_signal"}:
+            current_language = previous.language
+    decision = resolve_response_language(
+        query,
+        current_language=current_language,
+        ui_locale=ui_locale,
+    )
+    snapshot.response_language = decision.language
+    return decision
+
+
 def _request_fingerprint(*, user_id: int, conversation_id: str | None, query: str) -> str:
     scope = conversation_id or "new"
     normalized = " ".join((query or "").strip().lower().split())
@@ -335,14 +368,20 @@ def _guard_response(response: StreamingResponse, fingerprint: str | None) -> Str
     return response
 
 
-def _build_duplicate_request_response(*, request_id: str, conversation_id: str) -> StreamingResponse:
+def _build_duplicate_request_response(
+    *,
+    request_id: str,
+    conversation_id: str,
+    response_language: str = "zh-CN",
+) -> StreamingResponse:
     return StreamingResponse(
         _stream_intent_text_response(
             request_id=request_id,
             conversation_id=conversation_id,
             intent="chat",
             intent_detail="general_chat",
-            text="相同请求正在处理中，请稍等当前结果返回后再继续。",
+            text=localized_text("duplicate_request", response_language),
+            payload_extra={"response_language": response_language},
         ),
         media_type="text/event-stream",
     )
@@ -379,6 +418,7 @@ async def _stream_intent_routed_event(
     conversation_id: str,
     intent: str,
     intent_detail: str,
+    response_language: str | None = None,
 ):
     # 构建事件行
     yield build_event_line(
@@ -391,6 +431,11 @@ async def _stream_intent_routed_event(
             payload={
                 "intent": intent,
                 "intent_detail": intent_detail,
+                **(
+                    {"response_language": response_language}
+                    if response_language
+                    else {}
+                ),
             },
         ),
     )
@@ -412,6 +457,7 @@ async def _stream_intent_text_response(
         conversation_id=conversation_id,
         intent=intent,
         intent_detail=intent_detail,
+        response_language=(payload_extra or {}).get("response_language"),
     ):
         yield line
     # 构建事件行
@@ -460,6 +506,7 @@ RECENT_WINDOW = 6  # keep last 6 turns raw (12 messages)
 _AMBIGUOUS_BUDGET_PHRASES = (
     "少一点", "低一点", "便宜点", "省一点", "差不多", "看情况",
     "都可以", "都行", "都好", "随便", "无所谓", "可以", "好的", "好",
+    "either is fine", "anything is fine", "up to you", "you decide", "okay", "ok",
 )
 
 async def _ensure_user_exists(user_id: int) -> None:
@@ -478,10 +525,17 @@ def _needs_budget_clarification_hint(query: str, missing_text: str) -> bool:
     trigger a question about days/destination on vague replies.
     """
     budget_only_missing = (
-        "预算" in missing_text
-        and "几天" not in missing_text
-        and "哪里" not in missing_text
-        and "目的地" not in missing_text
+        (
+            "预算" in missing_text
+            and "几天" not in missing_text
+            and "哪里" not in missing_text
+            and "目的地" not in missing_text
+        )
+        or (
+            "budget" in missing_text.lower()
+            and "destination" not in missing_text.lower()
+            and "trip length" not in missing_text.lower()
+        )
     )
     if not budget_only_missing:
         return False
@@ -489,8 +543,17 @@ def _needs_budget_clarification_hint(query: str, missing_text: str) -> bool:
     return any(phrase in q for phrase in _AMBIGUOUS_BUDGET_PHRASES)
 
 
-def _build_system_prompt(summary: str, itinerary: dict | None) -> str:
-    parts = [_CHAT_SYSTEM_PROMPT]
+def _build_system_prompt(
+    summary: str,
+    itinerary: dict | None,
+    response_language: str = "zh-CN",
+) -> str:
+    language_instruction = (
+        "\nRespond in English."
+        if response_language == "en"
+        else "\n请使用中文回答。"
+    )
+    parts = [_CHAT_SYSTEM_PROMPT, language_instruction]
     if summary:
         parts.append(f"\n[之前的对话摘要] {summary}")
     if itinerary:
@@ -521,13 +584,26 @@ async def _compress_old_history(conversation_id: str, full_history: list[dict]) 
     await ConversationService.update_chat_summary(conversation_id, summary, recent_part)
 
 
-async def _generate_chat_response(query: str, conversation_id: str) -> str:
+async def _generate_chat_response(
+    query: str,
+    conversation_id: str,
+    response_language: str = "zh-CN",
+) -> str:
     state = await ConversationService.get_travel_conversation_state(conversation_id)
     history: list[dict] = (state.get("chat_history") or []) if state else []
     summary: str = (state.get("chat_summary") or "") if state else ""
     itinerary: dict | None = (state.get("current_itinerary") or None) if state else None
 
-    messages: list[dict] = [{"role": "system", "content": _build_system_prompt(summary, itinerary)}]
+    messages: list[dict] = [
+        {
+            "role": "system",
+            "content": _build_system_prompt(
+                summary,
+                itinerary,
+                response_language=response_language,
+            ),
+        }
+    ]
     recent = history[-(RECENT_WINDOW * 2):] if len(history) > RECENT_WINDOW * 2 else history
     messages.extend(recent)
     messages.append({"role": "user", "content": query})
@@ -536,7 +612,7 @@ async def _generate_chat_response(query: str, conversation_id: str) -> str:
         reply = await _chat_llm.generate(messages)
     except Exception as e:
         logger.error(f"Chat LLM call failed: {e}", exc_info=True)
-        reply = "你好！我是 TravelMind 旅行助手，有什么我可以帮你的吗？"
+        reply = localized_text("chat_fallback", response_language)
 
     await ConversationService.append_chat_history(conversation_id, query, reply)
 
@@ -555,16 +631,25 @@ async def _generate_guided_response(
     conversation_id: str,
     known_text: str,
     missing_text: str,
+    response_language: str = "zh-CN",
 ) -> str:
     """Use LLM to generate a natural follow-up question for missing constraints."""
     if _needs_budget_clarification_hint(query=query, missing_text=missing_text):
         # Keep one-question rhythm and ask for concrete budget values.
-        return "可以的，那我们先定预算区间吧：比如3000、5000或8000元，你更倾向哪个？"
+        return localized_text("guided_budget", response_language)
 
     state = await ConversationService.get_travel_conversation_state(conversation_id)
     history: list[dict] = (state.get("chat_history") or []) if state else []
 
-    system_prompt = _GUIDED_SYSTEM_PROMPT.format(known=known_text, missing=missing_text)
+    language_instruction = (
+        "\nRespond in English."
+        if response_language == "en"
+        else "\n请使用中文回答。"
+    )
+    system_prompt = (
+        _GUIDED_SYSTEM_PROMPT.format(known=known_text, missing=missing_text)
+        + language_instruction
+    )
     messages: list[dict] = [{"role": "system", "content": system_prompt}]
     recent = history[-(RECENT_WINDOW * 2):] if len(history) > RECENT_WINDOW * 2 else history
     messages.extend(recent)
@@ -574,7 +659,11 @@ async def _generate_guided_response(
         reply = await _chat_llm.generate(messages)
     except Exception as e:
         logger.error(f"Guided LLM call failed: {e}", exc_info=True)
-        reply = f"收到！还需要了解一下：{missing_text}，方便告诉我吗？"
+        reply = localized_text(
+            "guided_fallback",
+            response_language,
+            missing_text=missing_text,
+        )
 
     await ConversationService.append_chat_history(conversation_id, query, reply)
     return reply
@@ -587,11 +676,13 @@ async def _stream_clarification_events(
     conversation_id: str,
     missing_hard: list[str],
     missing_soft: list[str],
+    response_language: str = "zh-CN",
 ):
     # 构建澄清负载
     clarification_payload = clarification_service.build_clarification_payload(
         missing_hard=missing_hard,
         missing_soft=missing_soft,
+        response_language=response_language,
     )
     # 阶段
     stage = clarification_payload["stage"]
@@ -605,7 +696,10 @@ async def _stream_clarification_events(
             request_id=request_id,
             conversation_id=conversation_id,
             revision_id=None,
-            payload={"stage": stage},
+            payload={
+                "stage": stage,
+                "response_language": response_language,
+            },
         ),
     )
     # 构建事件行
@@ -632,6 +726,7 @@ async def _stream_minimal_itinerary(
     conversation_id: str,
     request_id: str,
     user_id: int | None = None,
+    response_language: str | None = None,
 ):
     # --- stage_start(draft_plan) → 前端显示骨架屏 ---
     yield build_event_line(
@@ -640,13 +735,24 @@ async def _stream_minimal_itinerary(
             request_id=request_id,
             conversation_id=conversation_id,
             revision_id=None,
-            payload={"stage": "draft_plan"},
+            payload={
+                "stage": "draft_plan",
+                **(
+                    {"response_language": response_language}
+                    if response_language
+                    else {}
+                ),
+            },
         ),
     )
 
     try:
         result = await travel_draft_graph.ainvoke(
-            input={"query": query_text, "original_query": original_query or query_text},
+            input={
+                "query": query_text,
+                "original_query": original_query or query_text,
+                "response_language": response_language,
+            },
             config=thread_config,
         )
         final_itinerary = result.get("final_itinerary")
@@ -655,14 +761,20 @@ async def _stream_minimal_itinerary(
         perf = result.get("perf", {})
 
         if not final_itinerary:
-            fallback_text = final_text or "未能生成结构化草案，请补充目的地、天数和预算后重试。"
+            fallback_text = final_text or localized_text(
+                "draft_missing_fields",
+                response_language,
+            )
             yield build_event_line(
                 "final_text",
                 build_event_envelope(
                     request_id=request_id,
                     conversation_id=conversation_id,
                     revision_id=None,
-                    payload={"text": fallback_text},
+                    payload={
+                        "text": fallback_text,
+                        "response_language": response_language or "en",
+                    },
                 ),
             )
             yield _build_sse_line(fallback_text)
@@ -680,6 +792,7 @@ async def _stream_minimal_itinerary(
                 payload={
                     "candidate_count": candidate_count,
                     "recall_ms": perf.get("recall_ms"),
+                    "response_language": response_language or "en",
                 },
             ),
         )
@@ -696,6 +809,7 @@ async def _stream_minimal_itinerary(
                         "tool": "evidence_batch",
                         "evidence_count": len(evidence_items),
                         "evidence": evidence_items,
+                        "response_language": response_language or "en",
                     },
                 ),
             )
@@ -709,7 +823,10 @@ async def _stream_minimal_itinerary(
                     request_id=request_id,
                     conversation_id=conversation_id,
                     revision_id=final_itinerary.get("revision_id"),
-                    payload={"day": day},
+                    payload={
+                        "day": day,
+                        "response_language": response_language or "en",
+                    },
                 ),
             )
 
@@ -727,6 +844,7 @@ async def _stream_minimal_itinerary(
                         "coverage_score": validation.get("coverage_score"),
                         "assumptions": validation.get("assumptions", []),
                         "conflicts": validation.get("conflicts", []),
+                        "response_language": response_language or "en",
                     },
                 ),
             )
@@ -742,6 +860,7 @@ async def _stream_minimal_itinerary(
                     "itinerary": final_itinerary,
                     "explanation": explanation or "",
                     "perf": perf,
+                    "response_language": response_language or "en",
                 },
             ),
         )
@@ -763,14 +882,17 @@ async def _stream_minimal_itinerary(
             yield _build_sse_line(explanation)
     except Exception as e:
         logger.error(f"Generate travel draft failed: {str(e)}", exc_info=True)
-        fallback_text = "草案生成失败，请稍后再试。"
+        fallback_text = localized_text("draft_failed", response_language)
         yield build_event_line(
             "error",
             build_event_envelope(
                 request_id=request_id,
                 conversation_id=conversation_id,
                 revision_id=None,
-                payload={"text": fallback_text},
+                payload={
+                    "text": fallback_text,
+                    "response_language": response_language or "en",
+                },
             ),
         )
         yield _build_sse_line(fallback_text)
@@ -787,7 +909,9 @@ def _answer_itinerary_qa(
     days = itinerary.get("days", [])
     profile = itinerary.get("trip_profile", {})
     budget = itinerary.get("budget_summary", {})
-    dest = profile.get("destination_city", "未知")
+    dest = profile.get("destination_city") or (
+        "Unknown" if is_english else "未知"
+    )
 
     import re as _re
 
@@ -836,7 +960,9 @@ def _answer_itinerary_qa(
                 for s in d.get("slots", []):
                     slot = s.get("slot", "")
                     activity = s.get("activity", "")
-                    place = s.get("place", "未定")
+                    place = s.get("place") or (
+                        "TBD" if is_english else "未定"
+                    )
                     if is_english:
                         slots_desc.append(f"{slot}: {activity} ({place})")
                     else:
@@ -872,6 +998,7 @@ async def _build_local_qa_fast_response(
     conversation_id: str,
     query_text: str,
     user_id: int,
+    ui_locale: str | None = None,
 ) -> StreamingResponse | None:
     started = time.perf_counter()
     state = await ConversationService.get_travel_conversation_state(conversation_id)
@@ -888,9 +1015,14 @@ async def _build_local_qa_fast_response(
         qp_output=qp_output,
         state=state,
     )
+    language_decision = _apply_turn_language(
+        transition.state_after,
+        query=query_text,
+        ui_locale=ui_locale,
+    )
     _log_conversation_transition(transition)
 
-    response_language = _detect_response_language(query_text)
+    response_language = language_decision.language
     text = _answer_itinerary_qa(query_text, itinerary, response_language=response_language)
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     logger.info(
@@ -928,6 +1060,40 @@ async def _build_local_qa_fast_response(
     )
 
 
+def _localize_edit_feedback(
+    *,
+    explanation: str,
+    change_summary: dict,
+    response_language: str | None,
+) -> tuple[str, dict]:
+    if response_language != "en":
+        return explanation, change_summary
+
+    localized_summary = dict(change_summary)
+    changed_days = [
+        int(day)
+        for day in (localized_summary.get("changed_days") or [])
+        if isinstance(day, int)
+    ]
+    if not changed_days:
+        localized_summary["diff_items"] = []
+        return localized_text("edit_success_generic", "en"), localized_summary
+
+    day_labels = [f"day {day}" for day in changed_days]
+    if len(day_labels) > 1:
+        days_text = ", ".join(day_labels[:-1]) + f" and {day_labels[-1]}"
+    else:
+        days_text = day_labels[0]
+    localized_summary["diff_items"] = [
+        localized_text("edit_success_item", "en", day=day_label)
+        for day_label in day_labels
+    ]
+    return (
+        localized_text("edit_success", "en", days=days_text),
+        localized_summary,
+    )
+
+
 async def _stream_edit_result(
     *,
     utterance: str,
@@ -938,6 +1104,7 @@ async def _stream_edit_result(
     intent_detail: str,
     user_id: int | None = None,
     qp_output: dict | None = None,
+    response_language: str = "zh-CN",
 ):
     """解析编辑 → apply patch → 流式输出编辑后行程 + diff 事件。"""
     async for line in _stream_intent_routed_event(
@@ -945,6 +1112,7 @@ async def _stream_edit_result(
         conversation_id=conversation_id,
         intent=intent,
         intent_detail=intent_detail,
+        response_language=response_language,
     ):
         yield line
 
@@ -973,10 +1141,11 @@ async def _stream_edit_result(
                     conversation_id=conversation_id,
                     revision_id=None,
                     payload={
-                        "text": (
-                            "我还不能确认你是要修改行程。"
-                            "如果只是询问，我会按当前行程回答；如果要修改，请明确说“把第N天改成...”或“删掉/增加...”。"
-                        )
+                        "text": localized_text(
+                            "edit_not_confirmed",
+                            response_language,
+                        ),
+                        "response_language": response_language or "en",
                     },
                 ),
             )
@@ -991,7 +1160,13 @@ async def _stream_edit_result(
                     request_id=request_id,
                     conversation_id=conversation_id,
                     revision_id=None,
-                    payload={"text": "未指定修改哪一天或时段，请说明第N天和上午/下午/晚上。"},
+                    payload={
+                        "text": localized_text(
+                            "edit_target_missing",
+                            response_language,
+                        ),
+                        "response_language": response_language or "en",
+                    },
                 ),
             )
             return
@@ -1004,7 +1179,11 @@ async def _stream_edit_result(
                     request_id=request_id,
                     conversation_id=conversation_id,
                     revision_id=None,
-                    payload={"text": result.error or "编辑失败，请重新描述修改内容。"},
+                    payload={
+                        "text": result.error
+                        or localized_text("edit_failed", response_language),
+                        "response_language": response_language or "en",
+                    },
                 ),
             )
             return
@@ -1028,7 +1207,15 @@ async def _stream_edit_result(
                 }
                 applied_days = set(replan_report.applied_days)
                 if requested_days - applied_days:
-                    details = "；".join(replan_report.assumptions[:2]) or "候选不足，未生成可验证的局部行程。"
+                    details = (
+                        localized_text("edit_replan_details", response_language)
+                        if response_language == "en"
+                        else "；".join(replan_report.assumptions[:2])
+                        or localized_text(
+                            "edit_replan_details",
+                            response_language,
+                        )
+                    )
                     yield build_event_line(
                         "final_text",
                         build_event_envelope(
@@ -1036,8 +1223,13 @@ async def _stream_edit_result(
                             conversation_id=conversation_id,
                             revision_id=None,
                             payload={
-                                "text": f"这次修改未生成可验证的候选行程，已保留原行程。{details}",
+                                "text": localized_text(
+                                    "edit_replan_unverified",
+                                    response_language,
+                                    details=details,
+                                ),
                                 "execution_source": execution_source,
+                                "response_language": response_language or "en",
                             },
                         ),
                     )
@@ -1074,8 +1266,12 @@ async def _stream_edit_result(
                         conversation_id=conversation_id,
                         revision_id=None,
                         payload={
-                            "text": "这次修改未能完成候选验证，已保留原行程，请稍后重试。",
+                            "text": localized_text(
+                                "edit_provider_failed",
+                                response_language,
+                            ),
                             "execution_source": execution_source,
+                            "response_language": response_language or "en",
                         },
                     ),
                 )
@@ -1102,6 +1298,14 @@ async def _stream_edit_result(
         except Exception as enrich_err:  # noqa: BLE001
             logger.warning(f"Edit backfill skipped: {enrich_err}")
 
+        result.explanation, result.change_summary = _localize_edit_feedback(
+            explanation=result.explanation,
+            change_summary=result.change_summary,
+            response_language=response_language,
+        )
+        if result.new_itinerary is not None:
+            result.new_itinerary["change_summary"] = result.change_summary
+
         yield build_event_line(
             "edit_diff",
             build_event_envelope(
@@ -1113,6 +1317,7 @@ async def _stream_edit_result(
                     "new_revision_id": result.new_revision_id,
                     "change_summary": result.change_summary,
                     "explanation": result.explanation,
+                    "response_language": response_language or "en",
                 },
             ),
         )
@@ -1126,6 +1331,7 @@ async def _stream_edit_result(
                 payload={
                     "itinerary": result.new_itinerary,
                     "explanation": result.explanation,
+                    "response_language": response_language or "en",
                 },
             ),
         )
@@ -1146,16 +1352,24 @@ async def _stream_edit_result(
 
     except Exception as e:
         logger.error(f"Edit flow failed: {e}", exc_info=True)
+        error_text = localized_text(
+            "edit_exception",
+            response_language,
+            details=str(e),
+        )
         yield build_event_line(
             "error",
             build_event_envelope(
                 request_id=request_id,
                 conversation_id=conversation_id,
                 revision_id=None,
-                payload={"text": f"编辑处理异常：{str(e)}"},
+                payload={
+                    "text": error_text,
+                    "response_language": response_language or "en",
+                },
             ),
         )
-        yield _build_sse_line(f"编辑处理异常：{str(e)}")
+        yield _build_sse_line(error_text)
 
 
 async def _build_reset_response(
@@ -1166,6 +1380,7 @@ async def _build_reset_response(
     intent_detail: str,
     user_id: int,
     last_user_query: str,
+    response_language: str = "zh-CN",
 ) -> StreamingResponse:
     """统一构造 reset 意图的 SSE 响应，供 query 与 resume 复用。"""
     clarification_service.clear_pending(conversation_id)
@@ -1180,8 +1395,9 @@ async def _build_reset_response(
             conversation_id=conversation_id,
             intent=intent,
             intent_detail=intent_detail,
-            text="已为当前会话重置行程状态，你可以重新输入新的出行需求。",
+            text=localized_text("reset_done", response_language),
             event_name="reset_done",
+            payload_extra={"response_language": response_language},
         ),
         media_type="text/event-stream",
     )
@@ -1196,9 +1412,11 @@ async def _build_edit_qa_response(
     query_text: str,
     user_id: int,
     qp_output: dict | None = None,
+    response_language: str | None = None,
 ) -> StreamingResponse:
     """统一构造 edit/qa 意图的 SSE 响应，供 query 与 resume 复用。"""
     state = await ConversationService.get_travel_conversation_state(conversation_id)
+    response_language = response_language or _detect_response_language(query_text)
     has_itinerary = bool(state and state.get("current_itinerary"))
     if not has_itinerary:
         return StreamingResponse(
@@ -1207,7 +1425,8 @@ async def _build_edit_qa_response(
                 conversation_id=conversation_id,
                 intent=intent,
                 intent_detail=intent_detail,
-                text="当前会话还没有可编辑的行程，请先描述目的地、天数和预算生成草案。",
+                text=localized_text("missing_itinerary", response_language),
+                payload_extra={"response_language": response_language},
             ),
             media_type="text/event-stream",
         )
@@ -1222,10 +1441,10 @@ async def _build_edit_qa_response(
                 intent_detail=intent_detail,
                 user_id=user_id,
                 qp_output=qp_output,
+                response_language=response_language,
             ),
             media_type="text/event-stream",
         )
-    response_language = _detect_response_language(query_text)
     text = _answer_itinerary_qa(
         query_text,
         state["current_itinerary"],
@@ -1250,6 +1469,7 @@ class LangGraphResumeRequest(BaseModel):
     query: str
     user_id: int
     conversation_id: str
+    ui_locale: str | None = None
 
 # 双路由别名：`/travel/*` 是新语义入口，`/langgraph/*` 兼容旧前端调用。
 @router.post("/travel/query")
@@ -1258,6 +1478,7 @@ async def langgraph_query(
     query: str = Form(...),
     user_id: int = Form(...),
     conversation_id: Optional[str] = Form(None),
+    ui_locale: Optional[str] = Form(None),
     image: Optional[UploadFile] = File(None),
 ):
     """旅行规划主入口：新建/续跑会话 + 澄清门槛 + SSE 流式输出。"""
@@ -1304,6 +1525,10 @@ async def langgraph_query(
             response = _build_duplicate_request_response(
                 request_id=request_id,
                 conversation_id=thread_id,
+                response_language=resolve_response_language(
+                    query,
+                    ui_locale=ui_locale,
+                ).language,
             )
             response.headers["X-Conversation-ID"] = thread_id
             return response
@@ -1316,6 +1541,7 @@ async def langgraph_query(
                 conversation_id=thread_id,
                 query_text=query,
                 user_id=user_id,
+                ui_locale=ui_locale,
             )
             if local_qa_response is not None:
                 local_qa_response.headers["X-Conversation-ID"] = thread_id
@@ -1326,6 +1552,7 @@ async def langgraph_query(
             user_id=user_id,
             query=query,
             persisted_state=persisted_state,
+            ui_locale=ui_locale,
         )
         qp_output = prepared_turn.qp_output
         runtime_snapshot = prepared_turn.runtime_snapshot
@@ -1352,6 +1579,7 @@ async def langgraph_query(
                 intent_detail=intent_detail,
                 user_id=user_id,
                 last_user_query=query,
+                response_language=runtime_snapshot.response_language or "en",
             )
             response.headers["X-Conversation-ID"] = thread_id
             return _guard_response(response, request_fingerprint)
@@ -1373,9 +1601,16 @@ async def langgraph_query(
                     f"Guided follow-up for thread={thread_id}, "
                     f"missing_hard={decision['missing_hard']}"
                 )
-                known_text, missing_text = clarification_service.get_constraint_context(thread_id)
+                known_text, missing_text = clarification_service.get_constraint_context(
+                    thread_id,
+                    response_language=runtime_snapshot.response_language or "en",
+                )
                 guided_text = await _generate_guided_response(
-                    query, thread_id, known_text, missing_text,
+                    query,
+                    thread_id,
+                    known_text,
+                    missing_text,
+                    response_language=runtime_snapshot.response_language or "en",
                 )
                 response = StreamingResponse(
                     _stream_intent_text_response(
@@ -1384,6 +1619,9 @@ async def langgraph_query(
                         intent="create",
                         intent_detail="guided_clarification",
                         text=guided_text,
+                        payload_extra={
+                            "response_language": runtime_snapshot.response_language or "en",
+                        },
                     ),
                     media_type="text/event-stream",
                 )
@@ -1405,6 +1643,7 @@ async def langgraph_query(
                         conversation_id=thread_id,
                         intent="create",
                         intent_detail="first_create",
+                        response_language=runtime_snapshot.response_language,
                     ):
                         yield line
                     async for line in _stream_minimal_itinerary(
@@ -1414,6 +1653,7 @@ async def langgraph_query(
                         conversation_id=thread_id,
                         request_id=request_id,
                         user_id=user_id,
+                        response_language=runtime_snapshot.response_language,
                     ):
                         yield line
 
@@ -1429,6 +1669,7 @@ async def langgraph_query(
                 conversation_id=thread_id,
                 intent=intent,
                 intent_detail=intent_detail,
+                response_language=runtime_snapshot.response_language,
                 query_text=query,
                 user_id=user_id,
                 qp_output=qp_output,
@@ -1437,7 +1678,11 @@ async def langgraph_query(
             return _guard_response(response, request_fingerprint)
 
         if intent == "chat":
-            chat_text = await _generate_chat_response(query, thread_id)
+            chat_text = await _generate_chat_response(
+                query,
+                thread_id,
+                response_language=runtime_snapshot.response_language or "en",
+            )
             response = StreamingResponse(
                 _stream_intent_text_response(
                     request_id=request_id,
@@ -1445,6 +1690,9 @@ async def langgraph_query(
                     intent=intent,
                     intent_detail=intent_detail,
                     text=chat_text,
+                    payload_extra={
+                        "response_language": runtime_snapshot.response_language or "en",
+                    },
                 ),
                 media_type="text/event-stream",
             )
@@ -1465,9 +1713,16 @@ async def langgraph_query(
                 f"Guided clarification for thread={thread_id}, "
                 f"missing_hard={decision['missing_hard']}"
             )
-            known_text, missing_text = clarification_service.get_constraint_context(thread_id)
+            known_text, missing_text = clarification_service.get_constraint_context(
+                thread_id,
+                response_language=runtime_snapshot.response_language or "en",
+            )
             guided_text = await _generate_guided_response(
-                query, thread_id, known_text, missing_text,
+                query,
+                thread_id,
+                known_text,
+                missing_text,
+                response_language=runtime_snapshot.response_language or "en",
             )
             response = StreamingResponse(
                 _stream_intent_text_response(
@@ -1476,6 +1731,9 @@ async def langgraph_query(
                     intent="create",
                     intent_detail="guided_clarification",
                     text=guided_text,
+                    payload_extra={
+                        "response_language": runtime_snapshot.response_language or "en",
+                    },
                 ),
                 media_type="text/event-stream",
             )
@@ -1490,6 +1748,7 @@ async def langgraph_query(
                 conversation_id=thread_id,
                 intent=intent,
                 intent_detail=intent_detail,
+                response_language=runtime_snapshot.response_language,
             ):
                 yield line
             async for line in _stream_minimal_itinerary(
@@ -1499,6 +1758,7 @@ async def langgraph_query(
                 conversation_id=thread_id,
                 request_id=request_id,
                 user_id=user_id,
+                response_language=runtime_snapshot.response_language,
             ):
                 yield line
 
@@ -1545,6 +1805,10 @@ async def langgraph_resume(request: LangGraphResumeRequest):
             response = _build_duplicate_request_response(
                 request_id=request_id,
                 conversation_id=thread_id,
+                response_language=resolve_response_language(
+                    request.query,
+                    ui_locale=request.ui_locale,
+                ).language,
             )
             response.headers["X-Conversation-ID"] = thread_id
             return response
@@ -1557,6 +1821,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 conversation_id=thread_id,
                 query_text=request.query,
                 user_id=request.user_id,
+                ui_locale=request.ui_locale,
             )
             if local_qa_response is not None:
                 local_qa_response.headers["X-Conversation-ID"] = thread_id
@@ -1567,6 +1832,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
             user_id=request.user_id,
             query=request.query,
             persisted_state=persisted_state,
+            ui_locale=request.ui_locale,
         )
         qp_output = prepared_turn.qp_output
         runtime_snapshot = prepared_turn.runtime_snapshot
@@ -1585,6 +1851,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 intent_detail=intent_detail,
                 user_id=request.user_id,
                 last_user_query=request.query,
+                response_language=runtime_snapshot.response_language or "en",
             )
             response.headers["X-Conversation-ID"] = thread_id
             return _guard_response(response, request_fingerprint)
@@ -1612,6 +1879,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                         conversation_id=thread_id,
                         intent=intent,
                         intent_detail=intent_detail,
+                        response_language=runtime_snapshot.response_language,
                     ):
                         yield line
                     async for line in _stream_clarification_events(
@@ -1619,6 +1887,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                         conversation_id=thread_id,
                         missing_hard=decision["missing_hard"],
                         missing_soft=decision["missing_soft"],
+                        response_language=runtime_snapshot.response_language or "en",
                     ):
                         yield line
                 response = StreamingResponse(
@@ -1641,6 +1910,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                     conversation_id=thread_id,
                     intent=intent,
                     intent_detail=intent_detail,
+                    response_language=runtime_snapshot.response_language,
                 ):
                     yield line
                 async for line in _stream_minimal_itinerary(
@@ -1650,6 +1920,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                     conversation_id=thread_id,
                     request_id=request_id,
                     user_id=request.user_id,
+                    response_language=runtime_snapshot.response_language,
                 ):
                     yield line
 
@@ -1663,6 +1934,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 conversation_id=thread_id,
                 intent=intent,
                 intent_detail=intent_detail,
+                response_language=runtime_snapshot.response_language,
                 query_text=request.query,
                 user_id=request.user_id,
                 qp_output=qp_output,
@@ -1671,7 +1943,11 @@ async def langgraph_resume(request: LangGraphResumeRequest):
             return _guard_response(response, request_fingerprint)
 
         if intent == "chat":
-            chat_text = await _generate_chat_response(request.query, thread_id)
+            chat_text = await _generate_chat_response(
+                request.query,
+                thread_id,
+                response_language=runtime_snapshot.response_language or "en",
+            )
             response = StreamingResponse(
                 _stream_intent_text_response(
                     request_id=request_id,
@@ -1679,6 +1955,9 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                     intent=intent,
                     intent_detail=intent_detail,
                     text=chat_text,
+                    payload_extra={
+                        "response_language": runtime_snapshot.response_language or "en",
+                    },
                 ),
                 media_type="text/event-stream",
             )
@@ -1692,6 +1971,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 conversation_id=thread_id,
                 intent=intent,
                 intent_detail=intent_detail,
+                response_language=runtime_snapshot.response_language,
             ):
                 yield line
             async for line in _stream_minimal_itinerary(
@@ -1701,6 +1981,7 @@ async def langgraph_resume(request: LangGraphResumeRequest):
                 conversation_id=thread_id,
                 request_id=request_id,
                 user_id=request.user_id,
+                response_language=runtime_snapshot.response_language,
             ):
                 yield line
 

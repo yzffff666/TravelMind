@@ -30,6 +30,10 @@ from app.domain.travel.draft_prompts import (
 from app.domain.travel.draft_rules import DRAFT_CONFIG
 from app.domain.travel.qp_rules import QP_RULES
 from app.domain.travel.query_processor import TravelQueryProcessor
+from app.domain.travel.language_policy import (
+    localized_text,
+    resolve_response_language,
+)
 from app.schemas.itinerary_v1 import (
     BudgetByCategory,
     BudgetSummary,
@@ -181,9 +185,7 @@ def _count_prompt_candidates(pipeline_result: PipelineResult | None) -> int:
 
 def _detect_response_language(query: str) -> str:
     """Infer the response language from the user's query for draft generation."""
-    if _re.search(r"[\u4e00-\u9fff]", query or ""):
-        return "zh-CN"
-    return "en"
+    return resolve_response_language(query).language
 
 
 def _format_draft_explanation(
@@ -500,6 +502,7 @@ def _append_budget_validation(
 class TravelDraftInput(TypedDict):
     query: str
     original_query: str
+    response_language: str
 
 
 class TravelDraftState(TravelDraftInput):
@@ -807,12 +810,31 @@ async def extract_node(state: TravelDraftState) -> dict:
 async def early_exit_node(state: TravelDraftState) -> dict:
     """Return a prompt for missing P0 fields without running pipeline or LLM."""
     missing = state.get("missing_p0", [])
+    response_language = state.get("response_language")
+    if response_language == "en":
+        labels = {
+            "目的地": "destination",
+            "行程天数": "trip length",
+            "预算": "budget",
+        }
+        translated = [labels.get(item, item) for item in missing]
+        if len(translated) > 1:
+            missing_text = ", ".join(translated[:-1]) + f" and {translated[-1]}"
+        else:
+            missing_text = "".join(translated)
+        final_text = localized_text(
+            "draft_missing_p0",
+            response_language,
+            missing_fields=missing_text,
+        )
+    else:
+        final_text = DRAFT_CONFIG.missing_p0_template.format(
+            missing_fields="、".join(missing)
+        )
     return {
         "final_itinerary": None,
         "explanation": None,
-        "final_text": DRAFT_CONFIG.missing_p0_template.format(
-            missing_fields="、".join(missing)
-        ),
+        "final_text": final_text,
     }
 
 
@@ -1081,10 +1103,20 @@ async def recall_node(state: TravelDraftState) -> dict:
 
 async def grounding_exit_node(state: TravelDraftState) -> dict:
     """Stop before LLM generation when dynamic grounding is not reliable."""
+    response_language = state.get("response_language")
+    grounding_message = state.get("grounding_message")
+    if response_language == "en":
+        grounding_message = localized_text(
+            "candidate_insufficient",
+            response_language,
+        )
     return {
         "final_itinerary": None,
         "explanation": None,
-        "final_text": state.get("grounding_message") or "目的地候选不足，暂不生成行程。",
+        "final_text": grounding_message or localized_text(
+            "candidate_insufficient",
+            response_language,
+        ),
     }
 
 
@@ -1109,7 +1141,9 @@ async def llm_draft_node(state: TravelDraftState) -> dict:
     assumptions = list(state.get("assumptions", []))
     pipeline_result = state.get("pipeline_result")
     response_language_query = state.get("original_query") or state.get("query", "")
-    response_language = _detect_response_language(response_language_query)
+    response_language = state.get("response_language") or _detect_response_language(
+        response_language_query
+    )
 
     itinerary_dict = None
     explanation = None
@@ -1271,7 +1305,10 @@ async def postprocess_node(state: TravelDraftState) -> dict:
         return {
             "final_itinerary": None,
             "explanation": explanation,
-            "final_text": "未能生成结构化草案，请补充目的地、天数和预算后重试。",
+            "final_text": localized_text(
+                "draft_missing_fields",
+                state.get("response_language") or "zh-CN",
+            ),
         }
 
     itinerary = ItineraryV1(**itinerary_dict)
@@ -1281,14 +1318,21 @@ async def postprocess_node(state: TravelDraftState) -> dict:
         state.get("destination_profile"),
     )
     if unverified_places:
-        sample = "、".join(unverified_places[:3])
+        if state.get("response_language") == "en":
+            final_text = localized_text(
+                "candidate_insufficient",
+                state.get("response_language"),
+            )
+        else:
+            sample = "、".join(unverified_places[:3])
+            final_text = (
+                f"已定位目的地，但草案包含 {len(unverified_places)} 个未通过本地候选校验的地点"
+                f"（例如：{sample}）。为避免串城，暂不发布该行程，请稍后重试。"
+            )
         return {
             "final_itinerary": None,
             "explanation": None,
-            "final_text": (
-                f"已定位目的地，但草案包含 {len(unverified_places)} 个未通过本地候选校验的地点"
-                f"（例如：{sample}）。为避免串城，暂不发布该行程，请稍后重试。"
-            ),
+            "final_text": final_text,
         }
 
     try:

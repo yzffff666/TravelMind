@@ -432,6 +432,31 @@ class TestLlmDraftNode:
         assert draft_calls[0].kwargs["extra"]["response_language"] == "en"
         assert result["explanation"].startswith("Generated a 3-day itinerary for Phuket")
 
+    def test_llm_draft_uses_resolved_conversation_language(self):
+        from app.lg_agent.travel_draft_graph import llm_draft_node
+
+        state = {
+            "query": "Plan a 3 day trip to Phuket with budget 6000 CNY",
+            "original_query": "Plan a 3 day trip to Phuket with budget 6000 CNY",
+            "response_language": "zh-CN",
+            "destination": "Phuket",
+            "days_count": 3,
+            "total_budget": 6000.0,
+            "traveler_type": None,
+            "preferences": [],
+            "pace": None,
+            "assumptions": [],
+            "pipeline_result": None,
+            "perf": {},
+        }
+        with patch(
+            "app.lg_agent.travel_draft_graph._get_llm",
+            return_value=_make_mock_llm(),
+        ):
+            result = _run(llm_draft_node(state))
+
+        assert result["explanation"].startswith("已为你生成 Phuket 3 天行程草案")
+
     def test_response_language_detects_chinese(self):
         from app.lg_agent.travel_draft_graph import _detect_response_language
 

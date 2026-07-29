@@ -1,5 +1,25 @@
 # TravelMind Bilingual Experience Contract
 
+## Implementation Status
+
+As of 2026-07-29, **Bilingual Conversation Core v1 is complete**:
+
+- one deterministic `en` / `zh-CN` response-language policy;
+- response language persisted in the existing conversation dialogue state;
+- query/resume, SSE, clarification, draft, QA, edit, reset, duplicate-request,
+  and safe-degradation paths share the same language decision;
+- short acknowledgements preserve the conversation language;
+- explicit language switches override the current language; and
+- the checked-in backend acceptance set passes `20/20` cases and `42` turns
+  with zero language drift, wrong-language responses, persistence failures, or
+  missing SSE language metadata.
+
+The full bilingual experience is **not complete yet**. The remaining delivery
+loop is the English-first Vue interface, persistent English/Chinese switch,
+locale-aware formatting, frontend component tests, and two-locale browser
+verification. The final `bilingual_experience_eval` milestone gate is added
+only after those frontend checks exist.
+
 ## 1. Goal
 
 Make TravelMind English-first for an overseas university demonstration while
@@ -24,7 +44,7 @@ Provider and browser demonstration.
 The backend already detects Chinese characters for parts of draft generation,
 and some QA/edit paths already accept English. That is only partial support.
 
-The current system still has:
+The baseline before this milestone had:
 
 - Chinese strings embedded in Vue views and components;
 - Chinese-only date and number formatting;

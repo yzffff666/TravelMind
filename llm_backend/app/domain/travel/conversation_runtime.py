@@ -78,6 +78,7 @@ class ConversationDecision(BaseModel):
 
 class ConversationRuntimeSnapshot(BaseModel):
     conversation_id: str
+    response_language: Literal["en", "zh-CN"] | None = None
     active_destination: str | None = None
     trip_profile: dict[str, Any] = Field(default_factory=dict)
     current_itinerary: dict[str, Any] | None = None

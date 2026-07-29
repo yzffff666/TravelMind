@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Completed on 2026-07-29. Backend acceptance: `20/20` cases,
+`42` turns, all four hard language-consistency metrics at zero. Full backend:
+`771 passed, 2 skipped`. Existing project milestone: `17/17`.
+
 **Goal:** Build one persisted, deterministic response-language policy so TravelMind keeps Chinese and English conversations consistent across create, clarification, QA, edit, reset, and safe fallback paths.
 
 **Architecture:** Add a focused language-policy module that resolves `en` or `zh-CN` from explicit overrides, substantive input, persisted conversation language, and `ui_locale`. Persist the decision in the existing dialogue state, pass it through API/SSE and the draft graph, and centralize the core backend user-visible copy. Validate the behavior with checked-in bilingual multi-turn fixtures and focused integration tests.
@@ -228,7 +232,7 @@ Run the Task 3 command and require all tests to pass.
 - Modify: `llm_backend/app/domain/travel/clarification_rules.py`
 - Modify: `llm_backend/app/api/travel.py`
 - Modify: `llm_backend/app/lg_agent/travel_draft_graph.py`
-- Modify: `llm_backend/tests/test_travel_clarification_service.py`
+- Create: `llm_backend/tests/test_travel_language_paths.py`
 - Modify: `llm_backend/tests/test_travel_m2_012_013.py`
 - Modify: `llm_backend/tests/test_draft_pipeline_integration.py`
 
@@ -260,7 +264,7 @@ Run:
 ```bash
 cd llm_backend
 ./.venv/bin/pytest \
-  tests/test_travel_clarification_service.py \
+  tests/test_travel_language_paths.py \
   tests/test_travel_m2_012_013.py \
   tests/test_draft_pipeline_integration.py -q
 ```
@@ -384,7 +388,7 @@ cd llm_backend
   tests/test_conversation_runtime.py \
   tests/test_conversation_runtime_integration.py \
   tests/test_travel_sse_envelope.py \
-  tests/test_travel_clarification_service.py \
+  tests/test_travel_language_paths.py \
   tests/test_travel_m2_012_013.py \
   tests/test_draft_pipeline_integration.py \
   tests/test_bilingual_conversation_eval.py -q
@@ -418,4 +422,3 @@ Commit only the files owned by this plan with:
 ```bash
 git commit -m "feat: add bilingual conversation language core"
 ```
-
