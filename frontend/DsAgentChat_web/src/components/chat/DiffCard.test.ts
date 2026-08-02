@@ -2,6 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import DiffCard from './DiffCard.vue'
 import type { EditDiffData } from '../../types/itinerary'
+import { createTestI18n } from '../../test/i18n'
+
+const mountDiff = (diff: EditDiffData) => mount(DiffCard, {
+  props: { diff },
+  global: { plugins: [createTestI18n('en')] },
+})
 
 const makeDiff = (overrides?: Partial<EditDiffData>): EditDiffData => ({
   summary: {
@@ -17,13 +23,13 @@ const makeDiff = (overrides?: Partial<EditDiffData>): EditDiffData => ({
 
 describe('DiffCard', () => {
   it('renders diff header', () => {
-    const wrapper = mount(DiffCard, { props: { diff: makeDiff() } })
-    expect(wrapper.find('.diff-title').text()).toBe('行程已修改')
+    const wrapper = mountDiff(makeDiff())
+    expect(wrapper.find('.diff-title').text()).toBe('Itinerary updated')
   })
 
   it('renders all diff_items', () => {
     const diff = makeDiff()
-    const wrapper = mount(DiffCard, { props: { diff } })
+    const wrapper = mountDiff(diff)
 
     const items = wrapper.findAll('.diff-item')
     expect(items).toHaveLength(2)
@@ -33,17 +39,17 @@ describe('DiffCard', () => {
 
   it('renders changed_days tags', () => {
     const diff = makeDiff()
-    const wrapper = mount(DiffCard, { props: { diff } })
+    const wrapper = mountDiff(diff)
 
     const tags = wrapper.findAll('.diff-day-tag')
     expect(tags).toHaveLength(2)
-    expect(tags[0].text()).toBe('第 1 天')
-    expect(tags[1].text()).toBe('第 3 天')
+    expect(tags[0].text()).toBe('Day 1')
+    expect(tags[1].text()).toBe('Day 3')
   })
 
   it('renders explanation', () => {
     const diff = makeDiff()
-    const wrapper = mount(DiffCard, { props: { diff } })
+    const wrapper = mountDiff(diff)
     expect(wrapper.find('.diff-explanation').text()).toBe('已修改第1天、第3天')
   })
 
@@ -51,7 +57,7 @@ describe('DiffCard', () => {
     const diff = makeDiff({
       summary: { changed_days: [1], diff_items: [] },
     })
-    const wrapper = mount(DiffCard, { props: { diff } })
+    const wrapper = mountDiff(diff)
     expect(wrapper.findAll('.diff-item')).toHaveLength(0)
   })
 
@@ -59,13 +65,13 @@ describe('DiffCard', () => {
     const diff = makeDiff({
       summary: { changed_days: [], diff_items: ['something'] },
     })
-    const wrapper = mount(DiffCard, { props: { diff } })
+    const wrapper = mountDiff(diff)
     expect(wrapper.findAll('.diff-day-tag')).toHaveLength(0)
   })
 
   it('hides explanation when empty', () => {
     const diff = makeDiff({ explanation: '' })
-    const wrapper = mount(DiffCard, { props: { diff } })
+    const wrapper = mountDiff(diff)
     expect(wrapper.find('.diff-explanation').exists()).toBe(false)
   })
 
@@ -77,7 +83,7 @@ describe('DiffCard', () => {
       },
       explanation: '已修改 第2天。第2天按「室内」重新规划（原安排：豫园、田子坊）。',
     })
-    const wrapper = mount(DiffCard, { props: { diff } })
+    const wrapper = mountDiff(diff)
     expect(wrapper.find('.diff-explanation').exists()).toBe(false)
   })
 })

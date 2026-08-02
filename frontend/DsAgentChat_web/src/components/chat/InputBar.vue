@@ -8,8 +8,8 @@
           :disabled="isStreaming"
           :rows="1"
           :maxRows="5"
-          aria-label="输入旅行规划需求"
-          placeholder="描述目的地、天数、预算或想调整的地方..."
+          :aria-label="t('input.label')"
+          :placeholder="t('input.placeholder')"
           @keydown.enter="onEnterKey"
         />
         <BaseButton
@@ -19,7 +19,7 @@
           size="md"
           :disabled="isStreaming || !text.trim()"
           :loading="isStreaming"
-          :aria-label="isStreaming ? '正在生成' : '发送消息'"
+          :aria-label="isStreaming ? t('input.generating') : t('input.send')"
           @click="handleSubmit"
         >
           <svg v-if="!isStreaming" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -37,7 +37,7 @@
         :disabled="isStreaming"
         @click="$emit('reset')"
       >
-        重置
+        {{ t('input.reset') }}
       </BaseButton>
     </div>
   </div>
@@ -45,7 +45,10 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { BaseButton, BaseTextarea } from '../ui'
+
+const { t } = useI18n()
 
 const props = defineProps<{
   isStreaming: boolean
@@ -59,7 +62,7 @@ const emit = defineEmits<{
 
 const text = ref('')
 const composerRef = ref<InstanceType<typeof BaseTextarea> | null>(null)
-const sendLabel = computed(() => props.isStreaming ? '生成中' : '')
+const sendLabel = computed(() => props.isStreaming ? t('input.generating') : '')
 
 const onEnterKey = (e: KeyboardEvent) => {
   if (e.shiftKey) return

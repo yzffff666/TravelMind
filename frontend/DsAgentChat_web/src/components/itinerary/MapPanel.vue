@@ -4,7 +4,7 @@
     <div v-if="!mapReady" class="map-placeholder map-placeholder--fullscreen">
       <div class="map-placeholder-card" :class="{ 'map-placeholder-card--error': mapError }">
         <StatusBadge :tone="mapError ? 'danger' : 'info'">
-          {{ mapError ? '地图异常' : '地图加载' }}
+          {{ mapError ? t('map.statusError') : t('map.statusLoading') }}
         </StatusBadge>
         <div class="map-placeholder-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none">
@@ -13,9 +13,9 @@
           </svg>
         </div>
         <div>
-          <p class="map-placeholder-title">{{ mapError ? '地图暂时不可用' : '正在准备地图' }}</p>
+          <p class="map-placeholder-title">{{ mapError ? t('map.titleError') : t('map.titleLoading') }}</p>
           <p class="map-placeholder-desc">
-            {{ mapError || '根据目的地自动选择高德或 OpenStreetMap，并绘制行程点位。' }}
+            {{ mapError || t('map.description') }}
           </p>
         </div>
       </div>
@@ -24,15 +24,15 @@
       <StatusBadge :tone="mapEngine === 'leaflet' ? 'info' : 'success'">
         {{ mapEngineLabel }}
       </StatusBadge>
-      <span class="map-engine-count">{{ activeLocationCount }}/{{ totalLocationCount }} 点位</span>
+      <span class="map-engine-count">{{ t('map.pointCount', { active: activeLocationCount, total: totalLocationCount }) }}</span>
     </div>
     <div
       v-if="mapReady && slotsWithLocation.length === 0 && dayTabs.length > 0"
       class="map-hint"
     >
-      <StatusBadge tone="warning">本日暂无坐标点</StatusBadge>
-      <span class="map-hint-title">可以切换其他 Day 查看已定位地点</span>
-      <span class="map-hint-sub">生成完成后会自动显示标记与路线；如果底图只有网格、无道路，通常是高德 Web 端 JS API Key 未开通。</span>
+      <StatusBadge tone="warning">{{ t('map.noPoints') }}</StatusBadge>
+      <span class="map-hint-title">{{ t('map.switchDay') }}</span>
+      <span class="map-hint-sub">{{ t('map.keyHint') }}</span>
     </div>
     <div v-if="mapReady && dayTabs.length > 0" class="day-tabs">
       <button
@@ -40,10 +40,10 @@
         :key="tab.index"
         :class="['day-tab', { active: tab.index === activeDayIndex }]"
         :aria-pressed="tab.index === activeDayIndex"
-        :title="tab.theme || `Day ${tab.index}`"
+        :title="tab.theme || t('common.day', { day: tab.index })"
         @click="$emit('selectDay', tab.index)"
       >
-        Day {{ tab.index }}
+        {{ t('common.day', { day: tab.index }) }}
       </button>
     </div>
   </div>
@@ -51,6 +51,7 @@
 
 <script setup lang="ts">
 import { ref, watch, onMounted, onBeforeUnmount, computed, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ItineraryDay, ItinerarySlot, Location } from '@/types/itinerary'
 import AMapLoader from '@amap/amap-jsapi-loader'
 import { StatusBadge } from '../ui'
@@ -66,6 +67,7 @@ const emit = defineEmits<{
   selectDay: [dayIndex: number]
   selectSlot: [dayIndex: number, slotIndex: number]
 }>()
+const { t } = useI18n()
 
 const mapContainer = ref<HTMLElement>()
 const mapReady = ref(false)
@@ -94,7 +96,7 @@ const dayTabs = computed(() =>
   props.days.map(d => ({ index: d.day_index, theme: d.theme }))
 )
 const mapEngineLabel = computed(() =>
-  mapEngine.value === 'leaflet' ? '海外 · OpenStreetMap' : '国内 · 高德地图'
+  mapEngine.value === 'leaflet' ? t('map.engineOverseas') : t('map.engineChina')
 )
 const activeLocationCount = computed(() => slotsWithLocation.value.length)
 const totalLocationCount = computed(() => allLocations.value.length)
@@ -210,7 +212,7 @@ async function initAmap() {
   if (_mapLoading || mapInstance) return
   const key = import.meta.env.VITE_AMAP_KEY
   if (!key) {
-    mapError.value = '请配置 VITE_AMAP_KEY（高德地图 Web API Key）'
+    mapError.value = t('map.missingKey')
     return
   }
 
@@ -239,7 +241,7 @@ async function initAmap() {
     await nextTick()
     renderAmapMarkers()
   } catch (e: any) {
-    mapError.value = `地图加载失败: ${e.message || e}`
+    mapError.value = t('map.loadFailed', { error: e.message || e })
     mapReady.value = false
   } finally {
     _mapLoading = false
@@ -271,7 +273,7 @@ async function initLeaflet() {
     mapInstance.invalidateSize?.()
     renderLeafletMarkers()
   } catch (e: any) {
-    mapError.value = `海外地图加载失败: ${e.message || e}`
+    mapError.value = t('map.overseasLoadFailed', { error: e.message || e })
     mapReady.value = false
   } finally {
     _mapLoading = false
@@ -298,7 +300,7 @@ async function refreshMap() {
     await ensureMapReady()
     renderCurrentEngine()
   } catch (e: any) {
-    mapError.value = `地图刷新失败: ${e?.message || e}`
+    mapError.value = t('map.refreshFailed', { error: e?.message || e })
     mapReady.value = false
   }
 }

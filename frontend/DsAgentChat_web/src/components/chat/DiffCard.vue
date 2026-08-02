@@ -8,8 +8,8 @@
         </svg>
       </div>
       <div>
-        <StatusBadge class="diff-title" tone="warning">行程已修改</StatusBadge>
-        <p class="diff-kicker">已按你的要求更新 itinerary 片段</p>
+        <StatusBadge class="diff-title" tone="warning">{{ t('diff.title') }}</StatusBadge>
+        <p class="diff-kicker">{{ t('diff.subtitle') }}</p>
       </div>
     </div>
 
@@ -22,13 +22,13 @@
     </ul>
 
     <div v-if="diff.summary.changed_days.length" class="diff-days">
-      <span class="diff-days-label">涉及天数</span>
+      <span class="diff-days-label">{{ t('diff.changedDays') }}</span>
       <StatusBadge
         v-for="d in diff.summary.changed_days"
         :key="d"
         class="diff-day-tag"
         tone="info"
-      >第 {{ d }} 天</StatusBadge>
+      >{{ t('common.day', { day: d }) }}</StatusBadge>
     </div>
 
     <p v-if="visibleExplanation" class="diff-explanation">{{ visibleExplanation }}</p>
@@ -37,10 +37,12 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { EditDiffData } from '../../types/itinerary'
 import { GlassCard, StatusBadge } from '../ui'
 
 const props = defineProps<{ diff: EditDiffData }>()
+const { t } = useI18n()
 
 const normalizeText = (value: string) => value.replace(/[。；;，,\s]/g, '')
 

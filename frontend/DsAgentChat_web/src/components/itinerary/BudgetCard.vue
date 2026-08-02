@@ -2,8 +2,8 @@
   <GlassCard class="budget-card fade-in">
     <div class="bgt-header">
       <div>
-        <span class="bgt-label">Budget estimate</span>
-        <h3 class="bgt-title">预算概览</h3>
+        <span class="bgt-label">{{ t('budget.kicker') }}</span>
+        <h3 class="bgt-title">{{ t('budget.title') }}</h3>
       </div>
       <span class="bgt-total">&yen;{{ fmt(budget.total_estimate) }}</span>
     </div>
@@ -29,7 +29,7 @@
       </div>
     </div>
     <p v-if="budget.uncertainty_note" class="bgt-note">
-      <StatusBadge tone="warning">预算浮动</StatusBadge>
+      <StatusBadge tone="warning">{{ t('budget.flexible') }}</StatusBadge>
       {{ budget.uncertainty_note }}
     </p>
   </GlassCard>
@@ -37,23 +37,25 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { BudgetSummary } from '../../types/itinerary'
 import { GlassCard, StatusBadge } from '../ui'
 
 const props = defineProps<{ budget: BudgetSummary }>()
+const { n, t } = useI18n()
 
-const fmt = (n: number) => Math.round(n).toLocaleString('zh-CN')
+const fmt = (value: number) => n(Math.round(value), 'integer')
 
 const categories = computed(() => {
   const cat = props.budget.by_category
   if (!cat) return []
   const total = props.budget.total_estimate || 1
   const mapping: [string, number | null | undefined, string][] = [
-    ['交通', cat.transport, 'info'],
-    ['住宿', cat.hotel, 'lodging'],
-    ['门票', cat.tickets, 'warning'],
-    ['餐饮', cat.food, 'success'],
-    ['其他', cat.other, 'neutral'],
+    [t('budget.categories.transport'), cat.transport, 'info'],
+    [t('budget.categories.hotel'), cat.hotel, 'lodging'],
+    [t('budget.categories.tickets'), cat.tickets, 'warning'],
+    [t('budget.categories.food'), cat.food, 'success'],
+    [t('budget.categories.other'), cat.other, 'neutral'],
   ]
   return mapping
     .filter(([, v]) => v && v > 0)

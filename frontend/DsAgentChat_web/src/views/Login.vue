@@ -2,19 +2,20 @@
   <div class="login-container">
     <div class="login-orb login-orb--left" aria-hidden="true" />
     <div class="login-orb login-orb--right" aria-hidden="true" />
+    <div class="login-locale"><LocaleSwitch /></div>
 
     <GlassCard class="login-box">
       <div class="brand-block">
         <div class="logo">
           <img src="../assets/deepseek.svg" alt="TravelMind" />
         </div>
-        <StatusBadge tone="info">AI Travel Copilot</StatusBadge>
+        <StatusBadge tone="info">{{ t('auth.badge') }}</StatusBadge>
       </div>
 
       <div class="title-group">
-        <h1 class="login-title">{{ activeTab === 'login' ? '欢迎回来' : '创建 TravelMind 账号' }}</h1>
+        <h1 class="login-title">{{ activeTab === 'login' ? t('auth.loginTitle') : t('auth.registerTitle') }}</h1>
         <p class="login-subtitle">
-          {{ activeTab === 'login' ? '继续规划你的下一段旅程。' : '用对话、证据和地图一起完成旅行计划。' }}
+          {{ activeTab === 'login' ? t('auth.loginSubtitle') : t('auth.registerSubtitle') }}
         </p>
       </div>
 
@@ -26,15 +27,15 @@
         <BaseInput
           v-if="activeTab === 'register'"
           v-model="form.username"
-          label="用户名"
-          placeholder="4-16 位字母、数字或下划线"
+          :label="t('auth.username')"
+          :placeholder="t('auth.usernamePlaceholder')"
           autocomplete="username"
           :error="errors.username"
         />
 
         <BaseInput
           v-model="form.email"
-          label="邮箱"
+          :label="t('auth.email')"
           type="email"
           placeholder="you@example.com"
           autocomplete="email"
@@ -43,9 +44,9 @@
 
         <BaseInput
           v-model="form.password"
-          label="密码"
+          :label="t('auth.password')"
           type="password"
-          placeholder="请输入密码"
+          :placeholder="t('auth.passwordPlaceholder')"
           autocomplete="current-password"
           :error="errors.password"
         />
@@ -53,47 +54,48 @@
         <BaseInput
           v-if="activeTab === 'register'"
           v-model="form.confirmPassword"
-          label="确认密码"
+          :label="t('auth.confirmPassword')"
           type="password"
-          placeholder="再次输入密码"
+          :placeholder="t('auth.confirmPasswordPlaceholder')"
           autocomplete="new-password"
         />
 
         <div v-if="activeTab === 'register'" class="agreement">
           <input type="checkbox" v-model="form.agreement" id="agreement" />
           <label for="agreement">
-            我已同意 <a href="#" @click.prevent="showTerms">用户协议</a> 与 <a href="#" @click.prevent="showPrivacy">隐私政策</a>
+            {{ t('auth.agreementPrefix') }} <a href="#" @click.prevent="showTerms">{{ t('auth.terms') }}</a>
+            {{ t('auth.and') }} <a href="#" @click.prevent="showPrivacy">{{ t('auth.privacy') }}</a>
           </label>
         </div>
 
         <BaseButton class="submit-btn" size="lg" :loading="isSubmitting" :disabled="!isFormValid" @click="handleSubmit">
-          {{ activeTab === 'login' ? '登录' : '注册' }}
+          {{ activeTab === 'login' ? t('auth.login') : t('auth.register') }}
         </BaseButton>
 
         <div class="register-link">
-          {{ activeTab === 'login' ? '还没有账号？' : '已有账号？' }}
+          {{ activeTab === 'login' ? t('auth.noAccount') : t('auth.hasAccount') }}
           <a href="#" @click.prevent="handleTabChange">
-            {{ activeTab === 'login' ? '立即注册' : '返回登录' }}
+            {{ activeTab === 'login' ? t('auth.registerNow') : t('auth.backToLogin') }}
           </a>
         </div>
 
         <div class="other-login" v-if="activeTab === 'login'">
           <div class="divider">
-            <span>其他登录方式</span>
+            <span>{{ t('auth.otherLogin') }}</span>
           </div>
           <BaseButton class="wechat-btn" variant="secondary" @click="handleWechatLogin">
             <img src="../assets/wechat.svg" alt="WeChat" />
-            使用微信自动登录
+            {{ t('auth.wechat') }}
           </BaseButton>
         </div>
       </div>
     </GlassCard>
     <MessageBox
       v-if="showSuccessMessage"
-      title="注册成功"
-      message="请使用注册的账号登录"
+      :title="t('auth.registerSuccess')"
+      :message="t('auth.registerSuccessMessage')"
       type="success"
-      buttonText="去登录"
+      :buttonText="t('auth.goToLogin')"
       @confirm="handleSuccessConfirm"
     />
   </div>
@@ -102,12 +104,14 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { AuthService } from '../services/api'
 import MessageBox from '../components/MessageBox.vue'
 import { useConversationStore } from '../stores/conversation'
-import { BaseButton, BaseInput, GlassCard, StatusBadge } from '../components/ui'
+import { BaseButton, BaseInput, GlassCard, LocaleSwitch, StatusBadge } from '../components/ui'
 
 const router = useRouter()
+const { t } = useI18n()
 const conversationStore = useConversationStore()
 const activeTab = ref('login')
 
@@ -132,25 +136,30 @@ const isSubmitting = ref(false)
 const validateRules = {
   username: {
     pattern: /^[a-zA-Z0-9_]{4,16}$/,
-    message: '用户名必须是4-16位字母、数字或下划线'
+    messageKey: 'auth.validation.username'
   },
   email: {
     pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-    message: '请输入有效的邮箱地址'
+    messageKey: 'auth.validation.email'
   },
   password: {
     pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/,
-    message: '密码必须包含大小写字母和数字，至少8位，可使用特殊字符'
+    messageKey: 'auth.validation.password'
   }
 }
 
 const validate = (field: 'username' | 'email' | 'password', value: string) => {
   if (!value) {
-    errors.value[field] = `请输入${field === 'username' ? '用户名' : field === 'email' ? '邮箱' : '密码'}`
+    const key = field === 'username'
+      ? 'auth.validation.requiredUsername'
+      : field === 'email'
+        ? 'auth.validation.requiredEmail'
+        : 'auth.validation.requiredPassword'
+    errors.value[field] = t(key)
     return false
   }
   if (!validateRules[field].pattern.test(value)) {
-    errors.value[field] = validateRules[field].message
+    errors.value[field] = t(validateRules[field].messageKey)
     return false
   }
   errors.value[field] = ''
@@ -190,7 +199,7 @@ const clearErrors = () => {
 
 const handleSubmit = async () => {
   if (activeTab.value === 'register' && !form.value.agreement) {
-    errors.value.general = '请先同意用户协议和隐私政策'
+    errors.value.general = t('auth.validation.agreement')
     return
   }
   
@@ -222,7 +231,7 @@ const handleSubmit = async () => {
     }
   } catch (error: any) {
     if (error.response?.status === 401) {
-      errors.value.general = '邮箱或密码错误'
+      errors.value.general = t('auth.validation.credentials')
     } else if (error.response?.data?.detail) {
       const detail = error.response.data.detail
       if (typeof detail === 'string') {
@@ -234,7 +243,7 @@ const handleSubmit = async () => {
         })
       }
     } else {
-      errors.value.general = '发生错误，请稍后重试'
+      errors.value.general = t('auth.validation.generic')
     }
   } finally {
     isSubmitting.value = false
@@ -313,6 +322,13 @@ watch(() => form.value.password, (val) => {
   background-size: 42px 42px;
   mask-image: radial-gradient(circle at center, black, transparent 72%);
   pointer-events: none;
+}
+
+.login-locale {
+  position: absolute;
+  z-index: 2;
+  top: var(--tm-space-5);
+  right: var(--tm-space-5);
 }
 
 .login-orb {

@@ -10,7 +10,7 @@
     >
       <div class="day-hdr">
         <StatusBadge :tone="changedDays?.includes(day.day_index) ? 'success' : 'info'">
-          第 {{ day.day_index }} 天
+          {{ t('common.day', { day: day.day_index }) }}
         </StatusBadge>
         <span v-if="day.theme" class="day-theme">{{ day.theme }}</span>
       </div>
@@ -39,7 +39,7 @@
             <div class="pc-body">
               <div class="pc-topline">
                 <StatusBadge tone="neutral">{{ slot.slot }}</StatusBadge>
-                <StatusBadge v-if="slot.location" tone="info">已定位</StatusBadge>
+                <StatusBadge v-if="slot.location" tone="info">{{ t('timeline.located') }}</StatusBadge>
               </div>
 
               <h4 class="pc-activity">{{ slot.activity }}</h4>
@@ -64,15 +64,15 @@
                   &yen;{{ fmt(slotCost(slot)!) }}
                 </StatusBadge>
                 <StatusBadge v-if="slot.transit" tone="neutral">
-                  交通
+                  {{ t('timeline.transport') }}
                 </StatusBadge>
                 <StatusBadge
                   v-if="slot.evidence_refs && slot.evidence_refs.length > 0"
                   class="pc-evidence"
                   tone="success"
-                  :title="`${slot.evidence_refs.length} 条数据源佐证`"
+                  :title="t('timeline.evidenceTitle', { count: slot.evidence_refs.length })"
                 >
-                  已验证 {{ slot.evidence_refs.length }}
+                  {{ t('timeline.verified', { count: slot.evidence_refs.length }) }}
                 </StatusBadge>
               </div>
             </div><!-- /.pc-body -->
@@ -85,6 +85,7 @@
 
 <script setup lang="ts">
 import { ref, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { ItineraryDay, ItinerarySlot } from '../../types/itinerary'
 import { GlassCard, StatusBadge } from '../ui'
 
@@ -92,6 +93,7 @@ const props = defineProps<{
   days: ItineraryDay[]
   changedDays?: number[]
 }>()
+const { n, t } = useI18n()
 
 const dayRefs = ref<Record<number, HTMLElement>>({})
 
@@ -104,7 +106,7 @@ function scrollToDay(dayIndex: number) {
   })
 }
 
-const fmt = (n: number) => Math.round(n).toLocaleString('zh-CN')
+const fmt = (value: number) => n(Math.round(value), 'integer')
 
 const slotCost = (slot: ItinerarySlot): number | null => {
   const cb = slot.cost_breakdown

@@ -6,17 +6,17 @@
         class="tab-btn"
         :class="{ active: activeTab === 'chat' }"
         @click="activeTab = 'chat'"
-      >对话</button>
+      >{{ t('planner.tabs.chat') }}</button>
       <button
         class="tab-btn"
         :class="{ active: activeTab === 'itinerary' }"
         @click="activeTab = 'itinerary'"
-      >行程</button>
+      >{{ t('planner.tabs.itinerary') }}</button>
       <button
         class="tab-btn"
         :class="{ active: activeTab === 'map' }"
         @click="activeTab = 'map'"
-      >地图</button>
+      >{{ t('planner.tabs.map') }}</button>
     </div>
 
     <!-- ========== Chat Panel (Left) ========== -->
@@ -31,7 +31,8 @@
             <StatusBadge :tone="workspaceStatusTone">{{ workspaceStatusLabel }}</StatusBadge>
           </div>
           <div class="nav-spacer" />
-          <button class="user-menu-btn" aria-label="退出登录" @click="handleLogout" title="退出登录">
+          <LocaleSwitch />
+          <button class="user-menu-btn" :aria-label="t('planner.logout')" @click="handleLogout" :title="t('planner.logout')">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
               <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
               <polyline points="16 17 21 12 16 7"/>
@@ -44,10 +45,10 @@
         <div class="chat-messages">
           <div v-if="!chatHistory.length && phase === 'idle'" class="welcome">
             <div class="welcome-card">
-              <span class="welcome-kicker">AI Travel Concierge</span>
-              <h2 class="welcome-title">把下一段旅程，写成一份可以出发的计划。</h2>
-              <p class="welcome-sub">告诉我目的地、天数、预算和旅行节奏，我会把对话整理成行程、证据和地图点位。</p>
-              <div class="welcome-prompts" aria-label="推荐旅行需求">
+              <span class="welcome-kicker">{{ t('planner.welcome.kicker') }}</span>
+              <h2 class="welcome-title">{{ t('planner.welcome.title') }}</h2>
+              <p class="welcome-sub">{{ t('planner.welcome.subtitle') }}</p>
+              <div class="welcome-prompts" :aria-label="t('planner.welcome.suggestionsLabel')">
                 <button
                   v-for="prompt in welcomePrompts"
                   :key="prompt"
@@ -79,6 +80,7 @@
           <PhaseIndicator
             :phase="phase"
             :intentLabel="intentLabel"
+            :intent="currentIntent"
           />
 
           <!-- Live clarification (before it becomes a chat entry) -->
@@ -120,7 +122,7 @@
         </template>
         <template v-else>
           <div class="ld-ring" />
-          <p class="ld-text">{{ pipelineStatus || '正在为你规划行程…' }}</p>
+          <p class="ld-text">{{ pipelineStatus || t('planner.planning') }}</p>
         </template>
       </div>
 
@@ -145,7 +147,7 @@
           v-if="itinerary.validation?.coverage_score != null"
           class="coverage-bar fade-in"
         >
-          <span class="coverage-label">数据覆盖率</span>
+          <span class="coverage-label">{{ t('planner.coverage') }}</span>
           <div class="coverage-track">
             <div
               class="coverage-fill"
@@ -209,12 +211,12 @@ import TripOverview from '../components/itinerary/TripOverview.vue'
 import BudgetCard from '../components/itinerary/BudgetCard.vue'
 import ItineraryTimeline from '../components/itinerary/ItineraryTimeline.vue'
 import MapPanel from '../components/itinerary/MapPanel.vue'
-import { StatusBadge } from '../components/ui'
+import { LocaleSwitch, StatusBadge } from '../components/ui'
 
 // ---------- State ----------
 
 const router = useRouter()
-const { locale } = useI18n()
+const { locale, t } = useI18n()
 const conversationId = ref<string | null>(null)
 const phase = ref<PlannerPhase>('idle')
 const liveClarification = ref('')
@@ -282,20 +284,16 @@ onUnmounted(() => {
 // ---------- Computed ----------
 
 const intentLabel = computed(() => {
-  const map: Record<string, string> = {
-    create: '生成行程',
-    edit: '编辑行程',
-    qa: '行程问答',
-    reset: '重置会话',
-  }
-  return map[currentIntent.value] || ''
+  if (!currentIntent.value) return ''
+  const key = `planner.intent.${currentIntent.value}`
+  return t(key)
 })
 
 const workspaceStatusLabel = computed(() => {
-  if (isStreaming.value) return currentIntent.value === 'edit' ? '正在编辑' : '正在规划'
-  if (phase.value === 'error') return '需要处理'
-  if (itinerary.value) return '行程已就绪'
-  return '准备规划'
+  if (isStreaming.value) return currentIntent.value === 'edit' ? t('planner.status.editing') : t('planner.status.planning')
+  if (phase.value === 'error') return t('planner.status.attention')
+  if (itinerary.value) return t('planner.status.ready')
+  return t('planner.status.idle')
 })
 
 const workspaceStatusTone = computed<'neutral' | 'info' | 'success' | 'warning' | 'danger'>(() => {
@@ -310,11 +308,11 @@ const canReset = computed(() =>
   Boolean(itinerary.value) ||
   chatHistory.value.length > 0
 )
-const welcomePrompts = [
-  '帮我规划 3 天成都亲子游，预算中等，节奏轻松',
-  '帮我规划 4 天普吉岛轻松游，偏好海岛和美食',
-  '东京 5 天情侣旅行，想要城市漫步和好餐厅',
-]
+const welcomePrompts = computed(() => [
+  t('planner.welcome.prompt1'),
+  t('planner.welcome.prompt2'),
+  t('planner.welcome.prompt3'),
+])
 
 // ---------- Helpers ----------
 
@@ -373,7 +371,9 @@ const resetPlanner = async () => {
 }
 
 const cleanMsg = (text: string) =>
-  text.replace(/（可选，不填也能先出草案）/g, '')
+  text
+    .replace(/（可选，不填也能先出草案）/g, '')
+    .replace(/\(optional; a draft can be created without it\)/gi, '')
 
 const handleLogout = () => {
   localStorage.removeItem('token')
@@ -393,7 +393,7 @@ const submitQuery = async (queryText: string) => {
   if (!queryText.trim()) return
   const userId = localStorage.getItem('user_id')
   if (!userId) {
-    errorText.value = '缺少 user_id，请重新登录后重试。'
+    errorText.value = t('planner.errors.missingUser')
     phase.value = 'error'
     return
   }
@@ -441,8 +441,8 @@ const submitQuery = async (queryText: string) => {
         onPipelineComplete: (envelope) => {
           const count = envelope.payload.candidate_count ?? 0
           pipelineStatus.value = count > 0
-            ? `找到 ${count} 个推荐地点，正在生成行程...`
-            : '正在生成行程...'
+            ? t('planner.candidateProgress', { count })
+            : t('planner.planning')
         },
         onDayReady: (envelope) => {
           partialDays.value.push(envelope.payload.day as unknown as ItineraryDay)
@@ -491,7 +491,7 @@ const submitQuery = async (queryText: string) => {
         onResetDone: (envelope) => {
           phase.value = 'done'
           itinerary.value = null
-          const text = envelope.payload.text || '会话已重置，可以开始新的行程规划。'
+          const text = envelope.payload.text || t('planner.errors.resetFallback')
           addChatEntry('assistant', text)
         },
         onFinalText: (envelope) => {
@@ -503,7 +503,7 @@ const submitQuery = async (queryText: string) => {
         },
         onError: (envelope) => {
           phase.value = 'error'
-          errorText.value = envelope.payload.text || '行程生成失败，请稍后再试。'
+          errorText.value = envelope.payload.text || t('planner.errors.generation')
           addChatEntry('assistant', errorText.value, 'error')
         },
         onTextFallback: (text) => {
@@ -525,7 +525,7 @@ const submitQuery = async (queryText: string) => {
     }
   } catch (err) {
     phase.value = 'error'
-    errorText.value = err instanceof Error ? err.message : '请求失败，请稍后再试。'
+    errorText.value = err instanceof Error ? err.message : t('planner.errors.request')
     addChatEntry('assistant', errorText.value, 'error')
   } finally {
     isStreaming.value = false

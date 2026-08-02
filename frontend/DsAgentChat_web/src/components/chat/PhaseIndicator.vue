@@ -17,40 +17,46 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { PlannerPhase } from '../../types/itinerary'
 import { GlassCard, StatusBadge } from '../ui'
 
 const props = defineProps<{
   phase: PlannerPhase
   intentLabel: string
+  intent?: string
 }>()
+
+const { locale, t } = useI18n()
 
 const isActive = computed(() =>
   props.phase === 'planning' || props.phase === 'editing' || props.phase === 'clarifying'
 )
 
 const label = computed(() => {
-  const suffix = props.intentLabel ? `（${props.intentLabel}）` : ''
+  const suffix = props.intentLabel
+    ? locale.value === 'zh-CN' ? `（${props.intentLabel}）` : ` (${props.intentLabel})`
+    : ''
   switch (props.phase) {
-    case 'planning': return `正在生成草案${suffix}`
-    case 'editing': return `正在编辑行程${suffix}`
-    case 'clarifying': return '需要补充信息'
-    case 'done': return `已完成${suffix}`
-    case 'error': return '请求失败'
+    case 'planning': return t('phase.label.planning', { suffix })
+    case 'editing': return t('phase.label.editing', { suffix })
+    case 'clarifying': return t('phase.label.clarifying')
+    case 'done': return t('phase.label.done', { suffix })
+    case 'error': return t('phase.label.error')
     default: return ''
   }
 })
 
 const description = computed(() => {
   switch (props.phase) {
-    case 'planning': return '正在把对话、证据和地图点位整理成可浏览的旅行叙事。'
-    case 'editing': return '正在保留原行程结构，仅重写你指定的片段。'
-    case 'clarifying': return '还需要补充一个关键信息，才能继续生成可靠行程。'
+    case 'planning': return t('phase.description.planning')
+    case 'editing': return t('phase.description.editing')
+    case 'clarifying': return t('phase.description.clarifying')
     case 'done':
-      if (props.intentLabel === '行程问答') return '已回答你的问题，行程内容保持不变。'
-      if (props.intentLabel === '重置会话') return '当前会话已重置，可以重新开始规划。'
-      return '行程已更新，可继续追问、调整或查看地图。'
-    case 'error': return '当前请求没有完成，可以调整输入后重试。'
+      if (props.intent === 'qa') return t('phase.description.qaDone')
+      if (props.intent === 'reset') return t('phase.description.resetDone')
+      return t('phase.description.done')
+    case 'error': return t('phase.description.error')
     default: return ''
   }
 })

@@ -8,7 +8,7 @@
         </svg>
       </div>
       <div class="ov-title">
-        <span class="ov-kicker">Trip overview</span>
+        <span class="ov-kicker">{{ t('overview.kicker') }}</span>
         <h3 class="ov-city">{{ profile.destination_city }}</h3>
       </div>
     </div>
@@ -17,7 +17,7 @@
         v-if="profile.constraints?.traveler_type"
         tone="info"
       >{{ profile.constraints.traveler_type }}</StatusBadge>
-      <StatusBadge tone="success">{{ dayCount }} 天</StatusBadge>
+      <StatusBadge tone="success">{{ t('overview.days', { count: dayCount }) }}</StatusBadge>
       <StatusBadge
         v-if="profile.constraints?.budget_range"
         tone="neutral"
@@ -32,8 +32,11 @@
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import type { TripProfile } from '../../types/itinerary'
 import { GlassCard, StatusBadge } from '../ui'
+
+const { t } = useI18n()
 
 defineProps<{
   profile: TripProfile

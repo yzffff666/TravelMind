@@ -9,8 +9,8 @@
         <path d="M20 52h24M24 48h16" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.2"/>
       </svg>
     </div>
-    <p class="empty-title">你的行程将在这里呈现</p>
-    <p class="empty-sub">试试下面的热门目的地，或输入你想去的地方</p>
+    <p class="empty-title">{{ t('emptyState.title') }}</p>
+    <p class="empty-sub">{{ t('emptyState.subtitle') }}</p>
 
     <div class="suggestions">
       <button
@@ -28,18 +28,22 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
 defineEmits<{
   suggest: [query: string]
 }>()
 
-const suggestions = [
-  { emoji: '🗼', city: '东京', desc: '5天深度游', query: '东京 5天 预算8000 自由行' },
-  { emoji: '🏖️', city: '普吉岛', desc: '4天海岛度假', query: '普吉岛 4天 预算5000 情侣 海岛度假' },
-  { emoji: '🏯', city: '京都', desc: '3天文化之旅', query: '京都 3天 预算6000 文化 美食' },
-  { emoji: '🌆', city: '上海', desc: '3天城市探索', query: '上海 3天 预算4000 美食 文化' },
-  { emoji: '🎭', city: '北京', desc: '4天经典路线', query: '北京 4天 预算5000 亲子 文化 历史' },
-  { emoji: '🌺', city: '清迈', desc: '5天慢旅行', query: '清迈 5天 预算4000 自由行 休闲' },
-]
+const { t } = useI18n()
+const suggestionKeys = ['tokyo', 'phuket', 'kyoto', 'shanghai', 'beijing', 'chiangMai'] as const
+const suggestionIcons = ['TYO', 'HKT', 'KYO', 'SHA', 'BJS', 'CNX']
+const suggestions = computed(() => suggestionKeys.map((key, index) => ({
+  emoji: suggestionIcons[index],
+  city: t(`emptyState.suggestions.${key}.city`),
+  desc: t(`emptyState.suggestions.${key}.desc`),
+  query: t(`emptyState.suggestions.${key}.query`),
+})))
 </script>
 
 <style scoped>
@@ -104,7 +108,10 @@ const suggestions = [
 }
 
 .sg-emoji {
-  font-size: 28px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--tm-color-primary);
   line-height: 1;
 }
 

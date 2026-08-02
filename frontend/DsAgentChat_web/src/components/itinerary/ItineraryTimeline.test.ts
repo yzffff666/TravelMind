@@ -2,6 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ItineraryTimeline from './ItineraryTimeline.vue'
 import type { ItineraryDay } from '../../types/itinerary'
+import { createTestI18n } from '../../test/i18n'
+
+const mountTimeline = (days: ItineraryDay[], changedDays?: number[]) => mount(ItineraryTimeline, {
+  props: { days, changedDays },
+  global: { plugins: [createTestI18n('en')] },
+})
 
 const makeDays = (overrides?: Partial<ItineraryDay>[]): ItineraryDay[] => [
   {
@@ -41,23 +47,23 @@ const makeDays = (overrides?: Partial<ItineraryDay>[]): ItineraryDay[] => [
 describe('ItineraryTimeline', () => {
   it('renders all days and slots', () => {
     const days = makeDays()
-    const wrapper = mount(ItineraryTimeline, { props: { days } })
+    const wrapper = mountTimeline(days)
 
     expect(wrapper.findAll('.day-section')).toHaveLength(2)
     expect(wrapper.findAll('.tl-item')).toHaveLength(3)
-    expect(wrapper.text()).toContain('第 1 天')
-    expect(wrapper.text()).toContain('第 2 天')
+    expect(wrapper.text()).toContain('Day 1')
+    expect(wrapper.text()).toContain('Day 2')
     expect(wrapper.text()).toContain('参观博物馆')
     expect(wrapper.text()).toContain('城市漫步')
   })
 
   it('shows evidence badge only when evidence_refs is non-empty', () => {
     const days = makeDays()
-    const wrapper = mount(ItineraryTimeline, { props: { days } })
+    const wrapper = mountTimeline(days)
 
     const badges = wrapper.findAll('.pc-evidence')
     expect(badges).toHaveLength(1)
-    expect(badges[0].text()).toContain('已验证')
+    expect(badges[0].text()).toContain('Verified')
   })
 
   it('hides evidence badge when evidence_refs is empty or absent', () => {
@@ -70,15 +76,13 @@ describe('ItineraryTimeline', () => {
         ],
       },
     ]
-    const wrapper = mount(ItineraryTimeline, { props: { days } })
+    const wrapper = mountTimeline(days)
     expect(wrapper.findAll('.pc-evidence')).toHaveLength(0)
   })
 
   it('applies day-changed class to matching changedDays', () => {
     const days = makeDays()
-    const wrapper = mount(ItineraryTimeline, {
-      props: { days, changedDays: [2] },
-    })
+    const wrapper = mountTimeline(days, [2])
 
     const sections = wrapper.findAll('.day-section')
     expect(sections[0].classes()).not.toContain('day-changed')
@@ -87,9 +91,7 @@ describe('ItineraryTimeline', () => {
 
   it('does not apply day-changed when changedDays is empty', () => {
     const days = makeDays()
-    const wrapper = mount(ItineraryTimeline, {
-      props: { days, changedDays: [] },
-    })
+    const wrapper = mountTimeline(days, [])
 
     const sections = wrapper.findAll('.day-section')
     sections.forEach((s) => {
@@ -99,7 +101,7 @@ describe('ItineraryTimeline', () => {
 
   it('works without changedDays prop (undefined)', () => {
     const days = makeDays()
-    const wrapper = mount(ItineraryTimeline, { props: { days } })
+    const wrapper = mountTimeline(days)
 
     const sections = wrapper.findAll('.day-section')
     sections.forEach((s) => {
@@ -109,7 +111,7 @@ describe('ItineraryTimeline', () => {
 
   it('shows cost when cost_breakdown sums > 0', () => {
     const days = makeDays()
-    const wrapper = mount(ItineraryTimeline, { props: { days } })
+    const wrapper = mountTimeline(days)
 
     const costs = wrapper.findAll('.pc-cost')
     expect(costs).toHaveLength(1)
@@ -123,7 +125,7 @@ describe('ItineraryTimeline', () => {
         slots: [{ slot: '上午', activity: '散步' }],
       },
     ]
-    const wrapper = mount(ItineraryTimeline, { props: { days } })
+    const wrapper = mountTimeline(days)
     expect(wrapper.findAll('.pc-cost')).toHaveLength(0)
   })
 
@@ -141,14 +143,14 @@ describe('ItineraryTimeline', () => {
         ],
       },
     ]
-    const wrapper = mount(ItineraryTimeline, { props: { days } })
+    const wrapper = mountTimeline(days)
     expect(wrapper.text()).toContain('故宫')
     expect(wrapper.text()).toContain('地铁1号线')
   })
 
   it('exposes scrollToDay method', () => {
     const days = makeDays()
-    const wrapper = mount(ItineraryTimeline, { props: { days } })
+    const wrapper = mountTimeline(days)
     expect(typeof wrapper.vm.scrollToDay).toBe('function')
   })
 })

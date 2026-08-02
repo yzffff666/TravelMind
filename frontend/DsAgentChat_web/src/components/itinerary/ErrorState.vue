@@ -7,18 +7,21 @@
         <circle cx="24" cy="32" r="1.5" fill="currentColor"/>
       </svg>
     </div>
-    <p class="error-title">{{ errorText || '请求失败' }}</p>
-    <p class="error-sub">请检查网络连接或稍后重试</p>
+    <p class="error-title">{{ errorText || t('errorState.title') }}</p>
+    <p class="error-sub">{{ t('errorState.subtitle') }}</p>
     <div class="error-actions">
-      <button class="btn-retry" @click="$emit('retry')">重试</button>
-      <button class="btn-reset" @click="$emit('reset')">重置会话</button>
+      <button class="btn-retry" @click="$emit('retry')">{{ t('errorState.retry') }}</button>
+      <button class="btn-reset" @click="$emit('reset')">{{ t('errorState.reset') }}</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
 defineProps<{ errorText: string }>()
 defineEmits<{ retry: []; reset: [] }>()
+const { t } = useI18n()
 </script>
 
 <style scoped>
