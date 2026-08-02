@@ -195,7 +195,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { ApiService } from '../services/api'
+import type { AppLocale } from '../i18n'
 import type { ItineraryResult, ItineraryDay, PlannerPhase, EditDiffData, ChatEntry } from '../types/itinerary'
 
 import InputBar from '../components/chat/InputBar.vue'
@@ -212,6 +214,7 @@ import { StatusBadge } from '../components/ui'
 // ---------- State ----------
 
 const router = useRouter()
+const { locale } = useI18n()
 const conversationId = ref<string | null>(null)
 const phase = ref<PlannerPhase>('idle')
 const liveClarification = ref('')
@@ -413,6 +416,7 @@ const submitQuery = async (queryText: string) => {
       {
         query: queryText.trim(),
         userId,
+        uiLocale: locale.value as AppLocale,
         conversationId: conversationId.value || undefined,
       },
       {

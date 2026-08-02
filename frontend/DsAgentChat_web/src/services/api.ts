@@ -2,6 +2,7 @@ import { ChatMessage } from '../types'
 import axios from './axios'
 import router from '../router'
 import { sha256 } from '../utils/crypto'
+import type { AppLocale } from '../i18n'
 
 // 接口定义
 interface StreamChunk {
@@ -62,6 +63,7 @@ export interface TravelSseCallbacks {
 export interface TravelStreamOptions {
   query: string
   userId: string
+  uiLocale: AppLocale
   conversationId?: string
   imageFile?: File
 }
@@ -321,6 +323,7 @@ export class ApiService {
     const formData = new FormData()
     formData.append('query', options.query)
     formData.append('user_id', options.userId)
+    formData.append('ui_locale', options.uiLocale)
     if (options.conversationId) {
       formData.append('conversation_id', options.conversationId)
     }
