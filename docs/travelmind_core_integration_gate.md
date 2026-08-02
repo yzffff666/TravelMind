@@ -80,7 +80,7 @@ missing_language_metadata=0
 | `overseas_candidate_supply_eval` | 4 个 Geoapify 脱敏快照回放，真实执行目的地消歧与 Places 候选发布，验证 Tromso/Hobart/Valletta 可发布、Oaxaca 候选不足安全降级，以及远距离/近距离邻城与 Mock 零发布 |
 | `multi_turn_conversation_eval` | 48 组、144 turn 的自然语言确定性回放；真实经过规则 QP、会话决策、澄清和状态迁移，覆盖目的地切换/提及只读、QA 不误改、灵活回答、闲聊目标保持、连续编辑、reset 恢复与歧义输入 |
 | `demo_journey_eval` | 四场景旅程级组合验收连续运行两轮，串联真实 QP、会话决策、目的地发布门禁、线上候选排序选择（学习排序保持默认关闭）、约束规划、revision 与 SSE envelope；要求 8/8 通过且九项安全计数为零 |
-| `bilingual_conversation_eval`（独立） | 10 组中文、10 组英文多轮会话，共 42 turn；验证短回复语言继承、显式切换、create/QA/edit/reset/fallback 文案、会话状态持久化和 SSE 语言元数据。待前端 i18n 完成后再并入默认 Gate |
+| `bilingual_experience_eval` | English-first Vue 界面、EN/中文持久化切换、活跃页面静态中文清单与双语组件测试；后端 20 组、42 turn 双语会话测试同时纳入 backend gate |
 | `backend_core_integration_tests` | QP、patch engine、day replan、edit_diff、QA、SSE envelope、候选人工审核、目的地 grounding 契约、runner 自测 |
 | `frontend_chat_component_tests` | DiffCard 与 PhaseIndicator，防止编辑结果重复展示、QA 状态误导 |
 | `frontend_type_check` | Vue/TypeScript 类型契约 |
@@ -91,7 +91,7 @@ missing_language_metadata=0
 ```text
 milestone=travelmind-core-integration-gate
 status=passed
-gates=17/17 passed
+gates=18/18 passed
 ```
 
 如果任一 Gate 失败，先看：
@@ -117,6 +117,7 @@ llm_backend/reports/milestone-runs/<run_id>/failures.json
 - 修改动态目的地解析、Provider 地理编码或未见城市候选过滤之后。
 - 修改 patch engine / day replan 之后。
 - 修改 SSE event payload 或前端聊天展示之后。
+- 修改界面文案、语言切换、数字格式或 `ui_locale` 请求契约之后。
 - 准备演示或 push 前。
 
 ## 单独运行多轮会话回放

@@ -52,6 +52,9 @@ DEFAULT_PYTEST_TARGETS = (
     "tests/test_conversation_runtime_integration.py",
     "tests/test_multi_turn_conversation_eval.py",
     "tests/test_demo_journey_eval.py",
+    "tests/test_bilingual_conversation_eval.py",
+    "tests/test_language_policy.py",
+    "tests/test_travel_language_paths.py",
     "tests/test_observability_summary.py",
     "tests/test_milestone_runner.py",
 )
@@ -105,6 +108,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "repetitions": 2,
         },
         {"type": "pytest", "name": "backend_core_integration_tests", "targets": list(DEFAULT_PYTEST_TARGETS)},
+        {
+            "type": "command",
+            "name": "bilingual_experience_eval",
+            "cwd": "../frontend/DsAgentChat_web",
+            "cmd": ["npm", "run", "bilingual-gate"],
+            "timeout_sec": 120,
+        },
         {
             "type": "command",
             "name": "frontend_chat_component_tests",

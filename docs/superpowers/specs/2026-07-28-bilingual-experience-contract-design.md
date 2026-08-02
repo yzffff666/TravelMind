@@ -2,7 +2,7 @@
 
 ## Implementation Status
 
-As of 2026-07-29, **Bilingual Conversation Core v1 is complete**:
+As of 2026-08-02, **Bilingual Experience v1 is complete**:
 
 - one deterministic `en` / `zh-CN` response-language policy;
 - response language persisted in the existing conversation dialogue state;
@@ -14,11 +14,12 @@ As of 2026-07-29, **Bilingual Conversation Core v1 is complete**:
   with zero language drift, wrong-language responses, persistence failures, or
   missing SSE language metadata.
 
-The full bilingual experience is **not complete yet**. The remaining delivery
-loop is the English-first Vue interface, persistent English/Chinese switch,
-locale-aware formatting, frontend component tests, and two-locale browser
-verification. The final `bilingual_experience_eval` milestone gate is added
-only after those frontend checks exist.
+The Vue interface is English-first, persists the EN/中文 selection, sends
+`ui_locale` with every travel request, and formats UI-owned numbers through the
+active locale. Active runtime routes use message catalogs and are protected by
+component tests plus a visible-string inventory. The default milestone now
+includes `bilingual_experience_eval`; browser verification remains the final
+visual acceptance step for each release candidate.
 
 ## 1. Goal
 

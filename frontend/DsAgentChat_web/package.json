@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "type-check": "vue-tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:i18n": "vitest run src/i18n/index.test.ts src/components/ui/LocaleSwitch.test.ts src/views/TravelPlanner.i18n.test.ts src/views/Login.i18n.test.ts",
+    "i18n-check": "node scripts/check-visible-i18n.mjs",
+    "bilingual-gate": "npm run test:i18n && npm run i18n-check"
   },
   "dependencies": {
     "@amap/amap-jsapi-loader": "^1.0.1",

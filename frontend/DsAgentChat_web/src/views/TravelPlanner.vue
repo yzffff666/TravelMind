@@ -773,7 +773,7 @@ const submitQuery = async (queryText: string) => {
   margin: 0;
   font-size: var(--tm-font-size-lg);
   font-weight: 800;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   color: var(--text);
 }
 
@@ -837,19 +837,19 @@ const submitQuery = async (queryText: string) => {
   color: var(--tm-color-primary);
   font-size: var(--tm-font-size-xs);
   font-weight: 800;
-  letter-spacing: 0.16em;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
 .welcome-title {
   position: relative;
-  max-width: 10em;
+  max-width: 14em;
   margin: 0;
-  font-size: clamp(32px, 5.4vw, 54px);
+  font-size: 34px;
   font-weight: 800;
   color: var(--text);
-  letter-spacing: -0.055em;
-  line-height: 0.98;
+  letter-spacing: 0;
+  line-height: 1.08;
 }
 
 .welcome-sub {

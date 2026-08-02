@@ -16,6 +16,7 @@ TravelMind v1 的唯一终极目标是交付一个稳定、可泛化、可解释
 - 无需新增城市专属硬编码，为未见国内外目的地召回真实 POI；
 - 通过规则安全门禁与轻量学习排序选择候选，再进行约束感知规划；
 - 支持连续局部重规划，并通过决策轨迹回放和定位失败；
+- 提供 English-first 界面与 EN/中文持久化切换，输入和 Agent 输出支持中英双语；
 - 候选不足或依赖异常时安全降级，不允许 LLM 编造未经验证的地点。
 
 完整范围、验收标准和停止条件见：
@@ -86,6 +87,12 @@ TravelMind v1 的唯一终极目标是交付一个稳定、可泛化、可解释
 - LLM astream 流式生成 + SSE 渐进协议
 - pipeline_complete → day_ready × N → final_itinerary 逐步推送
 - 前端骨架屏 → 进度提示 → 逐天渲染，用户无需空等
+
+### 双语体验
+
+- `vue-i18n` 统一管理登录、工作区、行程、地图和错误状态文案
+- UI locale 与会话 `response_language` 分离，中文输入生成中文行程，英文输入生成英文行程
+- EN/中文选择写入本地持久化，并随每次旅行请求发送 `ui_locale`
 
 ### 性能优化
 
@@ -165,7 +172,7 @@ npm install
 ### 4. 启动服务
 
 ```bash
-# 后端（默认端口 9000）
+# 后端（默认端口 8000）
 cd llm_backend
 python run.py
 
@@ -221,13 +228,17 @@ TravelMind-main/
 
 ```bash
 cd llm_backend
+.venv/bin/pytest tests/ -q
+.venv/bin/python -m scripts.milestone_runner
 
-# 性能回归测试（9 项，全 mock）
-py -X utf8 -m pytest tests/test_performance_regression.py -v
-
-# 全量测试
-py -X utf8 -m pytest -v
+cd ../frontend/DsAgentChat_web
+npm run test
+npm run bilingual-gate
+npm run type-check
+npm run build
 ```
+
+当前默认 milestone 包含 Agent 路由、候选排序、约束规划、多轮会话、双语体验和前端构建等 `18` 个 Gate，交付标准为 `18/18 passed`。
 
 ---
 

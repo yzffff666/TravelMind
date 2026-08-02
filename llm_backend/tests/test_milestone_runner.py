@@ -306,11 +306,13 @@ def test_default_config_covers_core_integration_gates():
         "overseas_candidate_supply_eval",
         "multi_turn_conversation_eval",
         "demo_journey_eval",
+        "bilingual_experience_eval",
         "backend_core_integration_tests",
         "frontend_chat_component_tests",
         "frontend_type_check",
         "frontend_production_build",
     }.issubset(gate_names)
+    assert len(DEFAULT_CONFIG["gates"]) == 18
 
     backend_gate = next(gate for gate in DEFAULT_CONFIG["gates"] if gate["name"] == "backend_core_integration_tests")
     assert "tests/test_golden_demo_eval.py" in backend_gate["targets"]
@@ -338,6 +340,12 @@ def test_default_config_covers_core_integration_gates():
     assert "tests/test_conversation_runtime_integration.py" in backend_gate["targets"]
     assert "tests/test_multi_turn_conversation_eval.py" in backend_gate["targets"]
     assert "tests/test_demo_journey_eval.py" in backend_gate["targets"]
+    assert "tests/test_bilingual_conversation_eval.py" in backend_gate["targets"]
+    assert "tests/test_language_policy.py" in backend_gate["targets"]
+    assert "tests/test_travel_language_paths.py" in backend_gate["targets"]
+
+    bilingual_gate = next(gate for gate in DEFAULT_CONFIG["gates"] if gate["name"] == "bilingual_experience_eval")
+    assert bilingual_gate["cmd"] == ["npm", "run", "bilingual-gate"]
 
 
 def test_command_gate_passes_and_captures_output():

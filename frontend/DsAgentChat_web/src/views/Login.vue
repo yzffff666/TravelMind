@@ -276,6 +276,7 @@ const showPrivacy = () => {
 
 const handleTabChange = () => {
   const newTab = activeTab.value === 'login' ? 'register' : 'login'
+  clearErrors()
   activeTab.value = newTab
   // 更新 URL，但不触发新的导航
   router.replace(`/${newTab}`)
