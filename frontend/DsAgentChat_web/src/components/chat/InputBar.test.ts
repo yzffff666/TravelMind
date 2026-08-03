@@ -11,7 +11,7 @@ describe('InputBar i18n', () => {
       global: { plugins: [createTestI18n('en')] },
     })
 
-    expect(wrapper.get('textarea').attributes('placeholder')).toContain('destination')
+    expect(wrapper.get('textarea').attributes('placeholder')).toContain('Trip details')
     expect(wrapper.get('.btn-reset').text()).toBe('Reset')
   })
 

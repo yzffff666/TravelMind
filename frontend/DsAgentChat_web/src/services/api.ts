@@ -45,6 +45,7 @@ export interface TravelSseCallbacks {
   onIntentRouted?: (envelope: TravelEventEnvelope<{
     intent: string
     intent_detail: string
+    response_language: 'en' | 'zh-CN'
   }>) => void
   onEditDiff?: (envelope: TravelEventEnvelope<{
     old_revision_id: string | null
@@ -169,7 +170,11 @@ export class ApiService {
         return
       case 'intent_routed':
         callbacks.onIntentRouted?.(
-          envelope as TravelEventEnvelope<{ intent: string; intent_detail: string }>
+          envelope as TravelEventEnvelope<{
+            intent: string
+            intent_detail: string
+            response_language: 'en' | 'zh-CN'
+          }>
         )
         return
       case 'edit_diff':

@@ -67,11 +67,15 @@ const emit = defineEmits<{
   selectDay: [dayIndex: number]
   selectSlot: [dayIndex: number, slotIndex: number]
 }>()
-const { t } = useI18n()
+const { locale, t } = useI18n()
 
 const mapContainer = ref<HTMLElement>()
 const mapReady = ref(false)
-const mapError = ref('')
+type MapErrorState = { key: string; params?: Record<string, string | number> } | null
+const mapErrorState = ref<MapErrorState>(null)
+const mapError = computed(() => mapErrorState.value
+  ? t(mapErrorState.value.key, mapErrorState.value.params ?? {})
+  : '')
 const mapEngine = ref<'amap' | 'leaflet'>('amap')
 
 let mapInstance: any = null
@@ -212,7 +216,7 @@ async function initAmap() {
   if (_mapLoading || mapInstance) return
   const key = import.meta.env.VITE_AMAP_KEY
   if (!key) {
-    mapError.value = t('map.missingKey')
+    mapErrorState.value = { key: 'map.missingKey' }
     return
   }
 
@@ -236,12 +240,12 @@ async function initAmap() {
 
     infoWindow = new AMapLib.InfoWindow({ offset: new AMapLib.Pixel(0, -30) })
     mapReady.value = true
-    mapError.value = ''
+    mapErrorState.value = null
 
     await nextTick()
     renderAmapMarkers()
   } catch (e: any) {
-    mapError.value = t('map.loadFailed', { error: e.message || e })
+    mapErrorState.value = { key: 'map.loadFailed', params: { error: String(e.message || e) } }
     mapReady.value = false
   } finally {
     _mapLoading = false
@@ -268,12 +272,12 @@ async function initLeaflet() {
     }).addTo(mapInstance)
 
     mapReady.value = true
-    mapError.value = ''
+    mapErrorState.value = null
     await nextTick()
     mapInstance.invalidateSize?.()
     renderLeafletMarkers()
   } catch (e: any) {
-    mapError.value = t('map.overseasLoadFailed', { error: e.message || e })
+    mapErrorState.value = { key: 'map.overseasLoadFailed', params: { error: String(e.message || e) } }
     mapReady.value = false
   } finally {
     _mapLoading = false
@@ -300,7 +304,7 @@ async function refreshMap() {
     await ensureMapReady()
     renderCurrentEngine()
   } catch (e: any) {
-    mapError.value = t('map.refreshFailed', { error: e?.message || e })
+    mapErrorState.value = { key: 'map.refreshFailed', params: { error: String(e?.message || e) } }
     mapReady.value = false
   }
 }
@@ -408,7 +412,7 @@ function renderLeafletMarkers() {
       <div style="padding:6px;max-width:220px;">
         <strong>${slot.place || slot.activity}</strong>
         <div style="color:#666;font-size:12px;margin-top:4px;">${slot.slot} · ${slot.activity}</div>
-        ${slot.transit ? `<div style="color:#999;font-size:11px;margin-top:2px;">Transit: ${slot.transit}</div>` : ''}
+        ${slot.transit ? `<div style="color:#999;font-size:11px;margin-top:2px;">${t('map.transit')}: ${slot.transit}</div>` : ''}
       </div>
     `
     marker.bindPopup(popup)
@@ -473,6 +477,10 @@ watch(() => props.activeDayIndex, () => {
 
 watch(() => props.activeSlotIndex, (val) => {
   if (val != null) highlightSlot(val)
+})
+
+watch(locale, () => {
+  if (mapReady.value) renderCurrentEngine()
 })
 
 watch(

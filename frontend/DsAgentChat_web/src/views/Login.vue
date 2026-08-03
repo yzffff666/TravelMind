@@ -20,8 +20,8 @@
       </div>
 
       <div class="form-container">
-        <div v-if="errors.general" class="general-error">
-          {{ errors.general }}
+        <div v-if="errorMessage('general')" class="general-error">
+          {{ errorMessage('general') }}
         </div>
 
         <BaseInput
@@ -30,7 +30,7 @@
           :label="t('auth.username')"
           :placeholder="t('auth.usernamePlaceholder')"
           autocomplete="username"
-          :error="errors.username"
+          :error="errorMessage('username')"
         />
 
         <BaseInput
@@ -39,7 +39,7 @@
           type="email"
           placeholder="you@example.com"
           autocomplete="email"
-          :error="errors.email"
+          :error="errorMessage('email')"
         />
 
         <BaseInput
@@ -48,7 +48,7 @@
           type="password"
           :placeholder="t('auth.passwordPlaceholder')"
           autocomplete="current-password"
-          :error="errors.password"
+          :error="errorMessage('password')"
         />
 
         <BaseInput
@@ -123,12 +123,22 @@ const form = ref({
   agreement: false
 })
 
-const errors = ref({
-  username: '',
-  email: '',
-  password: '',
-  general: ''
+type ErrorField = 'username' | 'email' | 'password' | 'general'
+type FormError = { key: string } | { text: string } | null
+
+const emptyErrors = (): Record<ErrorField, FormError> => ({
+  username: null,
+  email: null,
+  password: null,
+  general: null,
 })
+
+const errors = ref<Record<ErrorField, FormError>>(emptyErrors())
+const errorMessage = (field: ErrorField) => {
+  const error = errors.value[field]
+  if (!error) return ''
+  return 'key' in error ? t(error.key) : error.text
+}
 
 const showSuccessMessage = ref(false)
 const isSubmitting = ref(false)
@@ -155,14 +165,14 @@ const validate = (field: 'username' | 'email' | 'password', value: string) => {
       : field === 'email'
         ? 'auth.validation.requiredEmail'
         : 'auth.validation.requiredPassword'
-    errors.value[field] = t(key)
+    errors.value[field] = { key }
     return false
   }
   if (!validateRules[field].pattern.test(value)) {
-    errors.value[field] = t(validateRules[field].messageKey)
+    errors.value[field] = { key: validateRules[field].messageKey }
     return false
   }
-  errors.value[field] = ''
+  errors.value[field] = null
   return true
 }
 
@@ -189,17 +199,12 @@ const isFormValid = computed(() => {
 })
 
 const clearErrors = () => {
-  errors.value = {
-    username: '',
-    email: '',
-    password: '',
-    general: ''
-  }
+  errors.value = emptyErrors()
 }
 
 const handleSubmit = async () => {
   if (activeTab.value === 'register' && !form.value.agreement) {
-    errors.value.general = t('auth.validation.agreement')
+    errors.value.general = { key: 'auth.validation.agreement' }
     return
   }
   
@@ -231,19 +236,21 @@ const handleSubmit = async () => {
     }
   } catch (error: any) {
     if (error.response?.status === 401) {
-      errors.value.general = t('auth.validation.credentials')
+      errors.value.general = { key: 'auth.validation.credentials' }
     } else if (error.response?.data?.detail) {
       const detail = error.response.data.detail
       if (typeof detail === 'string') {
-        errors.value.general = detail
+        errors.value.general = { text: detail }
       } else if (Array.isArray(detail)) {
         detail.forEach(err => {
           const field = err.loc[1]
-          errors.value[field as keyof typeof errors.value] = err.msg
+          if (typeof field === 'string' && field in errors.value) {
+            errors.value[field as ErrorField] = { text: err.msg }
+          }
         })
       }
     } else {
-      errors.value.general = t('auth.validation.generic')
+      errors.value.general = { key: 'auth.validation.generic' }
     }
   } finally {
     isSubmitting.value = false
@@ -505,4 +512,4 @@ watch(() => form.value.password, (val) => {
     padding: var(--tm-space-6);
   }
 }
-</style> 
+</style>

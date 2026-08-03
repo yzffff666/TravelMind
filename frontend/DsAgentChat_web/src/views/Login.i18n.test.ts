@@ -3,10 +3,11 @@ import { createPinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 
-import { createTestI18n } from '../test/i18n'
+import { i18n, setAppLocale } from '../i18n'
 import Login from './Login.vue'
 
 async function mountLogin(locale: 'en' | 'zh-CN', path = '/login') {
+  setAppLocale(locale)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -20,7 +21,7 @@ async function mountLogin(locale: 'en' | 'zh-CN', path = '/login') {
 
   return mount(Login, {
     global: {
-      plugins: [createPinia(), createTestI18n(locale), router],
+      plugins: [createPinia(), i18n, router],
       stubs: { MessageBox: true },
     },
   })
@@ -42,5 +43,16 @@ describe('Login i18n', () => {
     expect(wrapper.text()).toContain('创建 TravelMind 账号')
     expect(wrapper.text()).toContain('用户名')
     expect(wrapper.text()).toContain('注册')
+  })
+
+  it('retranslates an existing validation error when the locale changes', async () => {
+    const wrapper = await mountLogin('en')
+
+    await wrapper.get('input[type="email"]').setValue('not-an-email')
+    expect(wrapper.text()).toContain('Enter a valid email address')
+
+    await wrapper.get('[data-locale="zh-CN"]').trigger('click')
+    expect(wrapper.text()).toContain('请输入有效的邮箱地址')
+    expect(wrapper.text()).not.toContain('Enter a valid email address')
   })
 })

@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 const activeRuntimeFiles = [
   'src/views/TravelPlanner.vue',
   'src/views/Login.vue',
+  'src/components/ui/LocaleSwitch.vue',
   'src/components/chat/InputBar.vue',
   'src/components/chat/PhaseIndicator.vue',
   'src/components/chat/DiffCard.vue',
@@ -21,6 +22,10 @@ const nonUiChineseFragments = new Map([
     '上午', '下午', '晚上',
     '普吉', '泰国', '东京', '大阪', '京都', '首尔', '新加坡',
   ]],
+])
+
+const forbiddenVisibleEnglish = new Map([
+  ['src/components/itinerary/MapPanel.vue', ['Transit:']],
 ])
 
 function stripComments(source) {
@@ -46,11 +51,16 @@ for (const relativePath of activeRuntimeFiles) {
     if (/\p{Script=Han}/u.test(line)) {
       violations.push(`${relativePath}:${index + 1}: ${originalLine.trim()}`)
     }
+    for (const fragment of forbiddenVisibleEnglish.get(relativePath) ?? []) {
+      if (originalLine.includes(fragment)) {
+        violations.push(`${relativePath}:${index + 1}: ${originalLine.trim()}`)
+      }
+    }
   })
 }
 
 if (violations.length > 0) {
-  console.error('Uncatalogued Chinese found in active runtime UI files:')
+  console.error('Uncatalogued UI copy found in active runtime files:')
   violations.forEach((violation) => console.error(`- ${violation}`))
   process.exit(1)
 }

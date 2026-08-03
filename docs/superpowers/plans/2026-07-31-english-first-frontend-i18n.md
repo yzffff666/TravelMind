@@ -39,7 +39,7 @@
 - Produces: `setAppLocale(locale: AppLocale) -> void`
 - Produces: configured `i18n` instance in composition mode
 
-- [ ] **Step 1: Install the standard translation dependency**
+- [x] **Step 1: Install the standard translation dependency**
 
 Run:
 
@@ -48,7 +48,7 @@ cd frontend/DsAgentChat_web
 npm install vue-i18n
 ```
 
-- [ ] **Step 2: Write failing locale-policy tests**
+- [x] **Step 2: Write failing locale-policy tests**
 
 Cover:
 
@@ -61,7 +61,7 @@ expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('zh-CN')
 expect(document.documentElement.lang).toBe('zh-CN')
 ```
 
-- [ ] **Step 3: Run the test and verify RED**
+- [x] **Step 3: Run the test and verify RED**
 
 Run:
 
@@ -71,7 +71,7 @@ npm run test -- src/i18n/index.test.ts
 
 Expected: import failure because `src/i18n/index.ts` does not exist.
 
-- [ ] **Step 4: Implement the locale boundary**
+- [x] **Step 4: Implement the locale boundary**
 
 Configure:
 
@@ -86,7 +86,7 @@ createI18n({
 
 `setAppLocale` updates the reactive global locale, `localStorage`, and the HTML `lang` attribute. Register `i18n` in `main.ts` before mounting.
 
-- [ ] **Step 5: Run the focused test and verify GREEN**
+- [x] **Step 5: Run the focused test and verify GREEN**
 
 Run `npm run test -- src/i18n/index.test.ts` and require all tests to pass.
 
@@ -105,7 +105,7 @@ Run `npm run test -- src/i18n/index.test.ts` and require all tests to pass.
 - Extends: `TravelStreamOptions.uiLocale: AppLocale`
 - Produces: multipart form field `ui_locale`
 
-- [ ] **Step 1: Write failing switch and request tests**
+- [x] **Step 1: Write failing switch and request tests**
 
 Verify that clicking `中文` changes the active locale and persists it. Stub `fetch`, call `travelQueryStream`, inspect `FormData`, and assert:
 
@@ -113,7 +113,7 @@ Verify that clicking `中文` changes the active locale and persists it. Stub `f
 expect(formData.get('ui_locale')).toBe('en')
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run:
 
@@ -123,11 +123,11 @@ npm run test -- src/components/ui/LocaleSwitch.test.ts src/services/api.test.ts
 
 Expected: component/option contract missing.
 
-- [ ] **Step 3: Implement the segmented control and API field**
+- [x] **Step 3: Implement the segmented control and API field**
 
 The switch exposes `aria-label` from the catalog, stable button dimensions, `aria-pressed`, visible focus, and no layout shift. `travelQueryStream` always appends `ui_locale` from its required option.
 
-- [ ] **Step 4: Run focused tests and verify GREEN**
+- [x] **Step 4: Run focused tests and verify GREEN**
 
 Require both files to pass.
 
@@ -152,15 +152,15 @@ Require both files to pass.
 - Passes: `uiLocale: locale.value as AppLocale` into `travelQueryStream`
 - Uses: `n(value, 'integer')` and catalog currency/day labels for locale-aware display
 
-- [ ] **Step 1: Convert component tests into bilingual contract tests**
+- [x] **Step 1: Convert component tests into bilingual contract tests**
 
 Mount with an i18n test plugin and assert representative English defaults and Chinese switch output for phase, diff, input, empty, error, budget, timeline, and overview components. Add a workspace test that verifies the English welcome title, English navigation, and locale switch.
 
-- [ ] **Step 2: Run workspace/component tests and verify RED**
+- [x] **Step 2: Run workspace/component tests and verify RED**
 
 Run `npm run test` and confirm new English assertions fail against hardcoded Chinese copy.
 
-- [ ] **Step 3: Move active workspace copy into the catalogs**
+- [x] **Step 3: Move active workspace copy into the catalogs**
 
 Catalog groups must cover:
 
@@ -171,15 +171,15 @@ emptyState, errorState, overview, budget, timeline, map
 
 Use English suggestion queries in English UI and Chinese queries in Chinese UI so demonstrations naturally produce matching Agent output. Keep backend text and POI names unchanged.
 
-- [ ] **Step 4: Localize runtime status and fallback copy**
+- [x] **Step 4: Localize runtime status and fallback copy**
 
 Replace hardcoded workspace status, intent labels, candidate progress, local errors, reset fallback, and request failure text with `t(...)`. Remove only the known optional-clause suffix in both supported languages.
 
-- [ ] **Step 5: Localize itinerary and map chrome**
+- [x] **Step 5: Localize itinerary and map chrome**
 
 Translate day labels, transport/evidence badges, budget categories, map status/hints/errors, engine labels, coordinate counts, accessibility labels, and tooltips. Preserve canonical map provider and POI names.
 
-- [ ] **Step 6: Run component tests and verify GREEN**
+- [x] **Step 6: Run component tests and verify GREEN**
 
 Run `npm run test` and require the complete frontend suite to pass.
 
@@ -193,19 +193,19 @@ Run `npm run test` and require the complete frontend suite to pass.
 - Consumes: `useI18n()` and `LocaleSwitch`
 - Produces: English default login/register form and Chinese switched form
 
-- [ ] **Step 1: Write failing login/register locale tests**
+- [x] **Step 1: Write failing login/register locale tests**
 
 Assert English default title, labels, validation copy, submit action, and language switch; then switch to Chinese and assert Chinese title/labels. Mock auth/store/router boundaries only where submission is exercised.
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run `npm run test -- src/views/Login.i18n.test.ts`.
 
-- [ ] **Step 3: Replace authentication copy and validators with translation keys**
+- [x] **Step 3: Replace authentication copy and validators with translation keys**
 
 Localize login/register headings, field labels, validation errors, agreement, links, alternative login, success dialog, and service-error fallback. Keep backend-provided detail text unchanged when returned.
 
-- [ ] **Step 4: Run the focused test and verify GREEN**
+- [x] **Step 4: Run the focused test and verify GREEN**
 
 Require the authentication tests to pass.
 
@@ -225,11 +225,11 @@ Require the authentication tests to pass.
 - Produces: `bilingual_experience_eval` milestone gate
 - Upgrades: default milestone from `17/17` to `18/18`
 
-- [ ] **Step 1: Write failing inventory and milestone tests**
+- [x] **Step 1: Write failing inventory and milestone tests**
 
 The inventory scans only active routes and imported runtime components. It rejects literal visible Chinese sentence copy while allowing comments, translation catalogs, provider names, slot-key lookup tables, and backend content. The milestone test expects a new frontend gate named `bilingual_experience_eval`.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -238,11 +238,11 @@ cd frontend/DsAgentChat_web && npm run i18n-check
 cd ../../../llm_backend && .venv/bin/pytest tests/test_milestone_runner.py -q
 ```
 
-- [ ] **Step 3: Implement the inventory and milestone command**
+- [x] **Step 3: Implement the inventory and milestone command**
 
 The new gate runs frontend i18n tests plus `npm run i18n-check`. Keep the existing standalone backend bilingual evaluator and all 17 previous gates.
 
-- [ ] **Step 4: Run all automated verification**
+- [x] **Step 4: Run all automated verification**
 
 Run:
 
@@ -263,7 +263,7 @@ cd ../../llm_backend
 
 Expected: frontend tests/check/type/build pass, backend tests pass, bilingual backend remains `20/20`, and milestone reports `18/18`.
 
-- [ ] **Step 5: Run browser acceptance in both locales**
+- [x] **Step 5: Run browser acceptance in both locales**
 
 Start the backend and frontend. Verify desktop and mobile:
 
@@ -274,6 +274,6 @@ switch to Chinese -> refresh persistence -> create -> QA -> local edit -> reset
 
 Capture screenshots and confirm no overlapping text, empty map canvas, clipped controls, or untranslated active UI copy.
 
-- [ ] **Step 6: Update status and deliver**
+- [x] **Step 6: Update status and deliver**
 
 Record the automated and browser evidence without claiming provider content translation. Run `git diff --check`, scan staged files for secrets, commit with `feat: add English-first bilingual frontend`, push `main`, and verify a clean synchronized repository.

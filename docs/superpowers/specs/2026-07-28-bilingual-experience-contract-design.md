@@ -2,7 +2,7 @@
 
 ## Implementation Status
 
-As of 2026-08-02, **Bilingual Experience v1 is complete**:
+As of 2026-08-03, **Bilingual Experience v1 is complete**:
 
 - one deterministic `en` / `zh-CN` response-language policy;
 - response language persisted in the existing conversation dialogue state;
@@ -17,9 +17,12 @@ As of 2026-08-02, **Bilingual Experience v1 is complete**:
 The Vue interface is English-first, persists the EN/中文 selection, sends
 `ui_locale` with every travel request, and formats UI-owned numbers through the
 active locale. Active runtime routes use message catalogs and are protected by
-component tests plus a visible-string inventory. The default milestone now
-includes `bilingual_experience_eval`; browser verification remains the final
-visual acceptance step for each release candidate.
+the complete frontend test suite plus a 12-file visible-string inventory. Local
+validation, progress, and map error states store semantic keys so already
+rendered UI retranslates immediately when the locale changes; backend content
+remains unchanged. The default milestone includes `bilingual_experience_eval`,
+and this release candidate passed English/Chinese browser verification at
+1280x720 and 390x844 without horizontal overflow.
 
 ## 1. Goal
 

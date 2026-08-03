@@ -71,7 +71,7 @@
             <div v-else class="msg msg-assistant slide-up">
               <DiffCard v-if="msg.type === 'diff' && msg.diffData" :diff="msg.diffData" />
               <p v-else class="msg-text" :class="{ 'msg-warn': msg.type === 'clarification', 'msg-error': msg.type === 'error' }">
-                {{ cleanMsg(msg.text) }}
+                {{ cleanMsg(msg.messageKey ? t(msg.messageKey, msg.messageParams ?? {}) : msg.text) }}
               </p>
             </div>
           </template>
@@ -220,10 +220,18 @@ const { locale, t } = useI18n()
 const conversationId = ref<string | null>(null)
 const phase = ref<PlannerPhase>('idle')
 const liveClarification = ref('')
-const errorText = ref('')
+const localErrorKey = ref<string | null>(null)
+const externalErrorText = ref('')
+const errorText = computed(() => localErrorKey.value ? t(localErrorKey.value) : externalErrorText.value)
 const itinerary = ref<ItineraryResult | null>(null)
 const partialDays = ref<ItineraryDay[]>([])
-const pipelineStatus = ref('')
+const pipelineCandidateCount = ref<number | null>(null)
+const pipelineStatus = computed(() => {
+  if (pipelineCandidateCount.value == null) return ''
+  return pipelineCandidateCount.value > 0
+    ? t('planner.candidateProgress', { count: pipelineCandidateCount.value })
+    : t('planner.planning')
+})
 const isStreaming = ref(false)
 const currentIntent = ref('')
 const editDiff = ref<EditDiffData | null>(null)
@@ -316,9 +324,31 @@ const welcomePrompts = computed(() => [
 
 // ---------- Helpers ----------
 
-const addChatEntry = (role: 'user' | 'assistant', text: string, type: ChatEntry['type'] = 'text', diffData?: EditDiffData) => {
-  chatHistory.value.push({ id: ++msgSeq, role, text, type, diffData })
+const addChatEntry = (
+  role: 'user' | 'assistant',
+  text: string,
+  type: ChatEntry['type'] = 'text',
+  diffData?: EditDiffData,
+  messageKey?: string,
+  messageParams?: Record<string, string | number>,
+) => {
+  chatHistory.value.push({ id: ++msgSeq, role, text, type, diffData, messageKey, messageParams })
   scrollChatToBottom()
+}
+
+const clearError = () => {
+  localErrorKey.value = null
+  externalErrorText.value = ''
+}
+
+const setLocalError = (key: string) => {
+  localErrorKey.value = key
+  externalErrorText.value = ''
+}
+
+const setExternalError = (text: string) => {
+  localErrorKey.value = null
+  externalErrorText.value = text
 }
 
 const scrollChatToBottom = async () => {
@@ -355,10 +385,10 @@ const resetPlanner = async () => {
   phase.value = 'idle'
   isStreaming.value = false
   liveClarification.value = ''
-  errorText.value = ''
+  clearError()
   itinerary.value = null
   partialDays.value = []
-  pipelineStatus.value = ''
+  pipelineCandidateCount.value = null
   currentIntent.value = ''
   editDiff.value = null
   chatHistory.value = []
@@ -383,7 +413,7 @@ const handleLogout = () => {
 
 const retryLast = () => {
   if (lastQuery.value) {
-    errorText.value = ''
+    clearError()
     phase.value = 'idle'
     submitQuery(lastQuery.value)
   }
@@ -393,7 +423,7 @@ const submitQuery = async (queryText: string) => {
   if (!queryText.trim()) return
   const userId = localStorage.getItem('user_id')
   if (!userId) {
-    errorText.value = t('planner.errors.missingUser')
+    setLocalError('planner.errors.missingUser')
     phase.value = 'error'
     return
   }
@@ -402,7 +432,7 @@ const submitQuery = async (queryText: string) => {
   addChatEntry('user', queryText)
 
   liveClarification.value = ''
-  errorText.value = ''
+  clearError()
   editDiff.value = null
   currentIntent.value = ''
   isStreaming.value = true
@@ -433,16 +463,14 @@ const submitQuery = async (queryText: string) => {
           if (stage === 'draft_plan') {
             phase.value = 'planning'
             partialDays.value = []
-            pipelineStatus.value = ''
+            pipelineCandidateCount.value = null
           } else {
             phase.value = 'clarifying'
           }
         },
         onPipelineComplete: (envelope) => {
           const count = envelope.payload.candidate_count ?? 0
-          pipelineStatus.value = count > 0
-            ? t('planner.candidateProgress', { count })
-            : t('planner.planning')
+          pipelineCandidateCount.value = count
         },
         onDayReady: (envelope) => {
           partialDays.value.push(envelope.payload.day as unknown as ItineraryDay)
@@ -463,7 +491,7 @@ const submitQuery = async (queryText: string) => {
           phase.value = 'done'
           itinerary.value = envelope.payload.itinerary as unknown as ItineraryResult
           partialDays.value = []
-          pipelineStatus.value = ''
+          pipelineCandidateCount.value = null
           activeDayIndex.value = 1
           activeSlotIndex.value = undefined
           const explanation = envelope.payload.explanation || ''
@@ -491,8 +519,11 @@ const submitQuery = async (queryText: string) => {
         onResetDone: (envelope) => {
           phase.value = 'done'
           itinerary.value = null
-          const text = envelope.payload.text || t('planner.errors.resetFallback')
-          addChatEntry('assistant', text)
+          if (envelope.payload.text) {
+            addChatEntry('assistant', envelope.payload.text)
+          } else {
+            addChatEntry('assistant', '', 'text', undefined, 'planner.errors.resetFallback')
+          }
         },
         onFinalText: (envelope) => {
           phase.value = 'done'
@@ -503,8 +534,13 @@ const submitQuery = async (queryText: string) => {
         },
         onError: (envelope) => {
           phase.value = 'error'
-          errorText.value = envelope.payload.text || t('planner.errors.generation')
-          addChatEntry('assistant', errorText.value, 'error')
+          if (envelope.payload.text) {
+            setExternalError(envelope.payload.text)
+            addChatEntry('assistant', envelope.payload.text, 'error')
+          } else {
+            setLocalError('planner.errors.generation')
+            addChatEntry('assistant', '', 'error', undefined, 'planner.errors.generation')
+          }
         },
         onTextFallback: (text) => {
           if (text && phase.value !== 'done') {
@@ -525,8 +561,13 @@ const submitQuery = async (queryText: string) => {
     }
   } catch (err) {
     phase.value = 'error'
-    errorText.value = err instanceof Error ? err.message : t('planner.errors.request')
-    addChatEntry('assistant', errorText.value, 'error')
+    if (err instanceof Error) {
+      setExternalError(err.message)
+      addChatEntry('assistant', err.message, 'error')
+    } else {
+      setLocalError('planner.errors.request')
+      addChatEntry('assistant', '', 'error', undefined, 'planner.errors.request')
+    }
   } finally {
     isStreaming.value = false
     if (currentIntent.value === 'chat' || (currentIntent.value === 'create' && !itinerary.value)) {

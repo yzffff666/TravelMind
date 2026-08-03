@@ -104,4 +104,6 @@ export interface ChatEntry {
   text: string
   type: 'text' | 'clarification' | 'error' | 'diff'
   diffData?: EditDiffData
+  messageKey?: string
+  messageParams?: Record<string, string | number>
 }

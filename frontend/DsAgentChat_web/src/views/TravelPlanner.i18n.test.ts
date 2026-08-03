@@ -2,10 +2,11 @@ import { mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 
-import { createTestI18n } from '../test/i18n'
+import { i18n, setAppLocale } from '../i18n'
 import TravelPlanner from './TravelPlanner.vue'
 
 async function mountPlanner(locale: 'en' | 'zh-CN') {
+  setAppLocale(locale)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/', component: TravelPlanner }],
@@ -15,7 +16,7 @@ async function mountPlanner(locale: 'en' | 'zh-CN') {
 
   return mount(TravelPlanner, {
     global: {
-      plugins: [createTestI18n(locale), router],
+      plugins: [i18n, router],
       stubs: { MapPanel: true },
     },
   })
@@ -35,5 +36,17 @@ describe('TravelPlanner i18n', () => {
 
     expect(wrapper.text()).toContain('把下一段旅程')
     expect(wrapper.text()).toContain('准备规划')
+  })
+
+  it('retranslates an existing local planner error after switching locale', async () => {
+    localStorage.removeItem('user_id')
+    const wrapper = await mountPlanner('en')
+
+    await wrapper.get('.welcome-prompt').trigger('click')
+    expect(wrapper.text()).toContain('missing a user ID')
+
+    await wrapper.get('[data-locale="zh-CN"]').trigger('click')
+    expect(wrapper.text()).toContain('缺少 user_id')
+    expect(wrapper.text()).not.toContain('missing a user ID')
   })
 })

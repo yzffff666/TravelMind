@@ -11,22 +11,23 @@
       :title="t(option.titleKey)"
       @click="setAppLocale(option.locale)"
     >
-      {{ option.label }}
+      {{ t(option.labelKey) }}
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { setAppLocale, type AppLocale } from '../../i18n'
 
 const { locale, t } = useI18n()
 
-const options: Array<{ locale: AppLocale; label: string; titleKey: string }> = [
-  { locale: 'en', label: 'EN', titleKey: 'localeSwitch.english' },
-  { locale: 'zh-CN', label: '中文', titleKey: 'localeSwitch.chinese' },
-]
+const options = computed<Array<{ locale: AppLocale; labelKey: string; titleKey: string }>>(() => [
+  { locale: 'en', labelKey: 'localeSwitch.shortEnglish', titleKey: 'localeSwitch.english' },
+  { locale: 'zh-CN', labelKey: 'localeSwitch.shortChinese', titleKey: 'localeSwitch.chinese' },
+])
 </script>
 
 <style scoped>

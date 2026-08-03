@@ -7,6 +7,8 @@ export default {
   },
   localeSwitch: {
     label: 'Interface language',
+    shortEnglish: 'EN',
+    shortChinese: '中文',
     english: 'English',
     chinese: 'Chinese',
   },
@@ -66,7 +68,7 @@ export default {
   },
   input: {
     label: 'Travel planning request',
-    placeholder: 'Describe a destination, trip length, budget, or requested change...',
+    placeholder: 'Trip details or changes...',
     generating: 'Generating',
     send: 'Send message',
     reset: 'Reset',
@@ -123,6 +125,7 @@ export default {
     loadFailed: 'Map failed to load: {error}',
     overseasLoadFailed: 'Overseas map failed to load: {error}',
     refreshFailed: 'Map refresh failed: {error}',
+    transit: 'Transit',
   },
   auth: {
     badge: 'AI Travel Copilot',

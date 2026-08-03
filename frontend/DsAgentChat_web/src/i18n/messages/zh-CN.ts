@@ -1,7 +1,7 @@
 export default {
   app: { name: 'TravelMind' },
   common: { day: '第 {day} 天', reset: '重置', retry: '重试' },
-  localeSwitch: { label: '界面语言', english: '英文', chinese: '中文' },
+  localeSwitch: { label: '界面语言', shortEnglish: 'EN', shortChinese: '中文', english: '英文', chinese: '中文' },
   planner: {
     tabs: { chat: '对话', itinerary: '行程', map: '地图' },
     logout: '退出登录',
@@ -38,8 +38,8 @@ export default {
       error: '当前请求没有完成，可以调整输入后重试。',
     },
   },
-  input: { label: '输入旅行规划需求', placeholder: '描述目的地、天数、预算或想调整的地方...', generating: '生成中', send: '发送消息', reset: '重置' },
-  diff: { title: '行程已修改', subtitle: '已按你的要求重新规划 itinerary 片段', changedDays: '涉及天数' },
+  input: { label: '输入旅行规划需求', placeholder: '目的地、天数、预算或修改要求...', generating: '生成中', send: '发送消息', reset: '重置' },
+  diff: { title: '行程已修改', subtitle: '已按你的要求重新规划行程片段', changedDays: '涉及天数' },
   emptyState: {
     title: '你的行程将在这里呈现', subtitle: '试试下面的热门目的地，或输入你想去的地方',
     suggestions: {
@@ -61,11 +61,11 @@ export default {
   map: {
     statusError: '地图异常', statusLoading: '地图加载', titleError: '地图暂时不可用', titleLoading: '正在准备地图',
     description: '根据目的地自动选择高德或 OpenStreetMap，并绘制行程点位。', pointCount: '{active}/{total} 点位',
-    noPoints: '本日暂无坐标点', switchDay: '可以切换其他 Day 查看已定位地点',
+    noPoints: '本日暂无坐标点', switchDay: '可以切换其他日期查看已定位地点',
     keyHint: '生成完成后会自动显示标记与路线；如果底图只有网格、无道路，通常是高德 Web 端 JS API Key 未开通。',
     engineOverseas: '海外 · OpenStreetMap', engineChina: '国内 · 高德地图',
     missingKey: '请配置 VITE_AMAP_KEY（高德地图 Web API Key）', loadFailed: '地图加载失败: {error}',
-    overseasLoadFailed: '海外地图加载失败: {error}', refreshFailed: '地图刷新失败: {error}',
+    overseasLoadFailed: '海外地图加载失败: {error}', refreshFailed: '地图刷新失败: {error}', transit: '交通',
   },
   auth: {
     badge: 'AI 旅行助手', loginTitle: '欢迎回来', registerTitle: '创建 TravelMind 账号',
