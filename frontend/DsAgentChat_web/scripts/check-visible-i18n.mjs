@@ -25,7 +25,7 @@ const nonUiChineseFragments = new Map([
 ])
 
 const forbiddenVisibleEnglish = new Map([
-  ['src/components/itinerary/MapPanel.vue', ['Transit:']],
+  ['src/components/itinerary/MapPanel.vue', ['Transit:', 'Leaflet script load failed']],
 ])
 
 function stripComments(source) {

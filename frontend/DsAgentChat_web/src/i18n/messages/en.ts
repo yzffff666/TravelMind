@@ -124,6 +124,7 @@ export default {
     missingKey: 'Configure VITE_AMAP_KEY (AMap Web API key)',
     loadFailed: 'Map failed to load: {error}',
     overseasLoadFailed: 'Overseas map failed to load: {error}',
+    leafletScriptLoadFailed: 'The overseas map component failed to load',
     refreshFailed: 'Map refresh failed: {error}',
     transit: 'Transit',
   },

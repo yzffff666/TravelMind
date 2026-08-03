@@ -15,6 +15,8 @@ describe('bilingual product gate coverage', () => {
     expect(zhCN.diff.subtitle).not.toContain('itinerary')
     expect(zhCN.map.switchDay).not.toContain('Day')
     expect(zhCN.map.transit).toBe('交通')
+    expect(zhCN.map.leafletScriptLoadFailed).toBe('海外地图组件加载失败')
     expect(mapSource).not.toContain('Transit:')
+    expect(mapSource).not.toContain('Leaflet script load failed')
   })
 })

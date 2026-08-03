@@ -65,7 +65,8 @@ export default {
     keyHint: '生成完成后会自动显示标记与路线；如果底图只有网格、无道路，通常是高德 Web 端 JS API Key 未开通。',
     engineOverseas: '海外 · OpenStreetMap', engineChina: '国内 · 高德地图',
     missingKey: '请配置 VITE_AMAP_KEY（高德地图 Web API Key）', loadFailed: '地图加载失败: {error}',
-    overseasLoadFailed: '海外地图加载失败: {error}', refreshFailed: '地图刷新失败: {error}', transit: '交通',
+    overseasLoadFailed: '海外地图加载失败: {error}', leafletScriptLoadFailed: '海外地图组件加载失败',
+    refreshFailed: '地图刷新失败: {error}', transit: '交通',
   },
   auth: {
     badge: 'AI 旅行助手', loginTitle: '欢迎回来', registerTitle: '创建 TravelMind 账号',

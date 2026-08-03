@@ -88,6 +88,7 @@ let leafletMarkers: any[] = []
 let leafletPolyline: any = null
 let leafletMarkerBySlot = new Map<number, any>()
 let _mapLoading = false
+const LEAFLET_SCRIPT_LOAD_FAILED = Symbol('leaflet-script-load-failed')
 
 const SLOT_COLORS: Record<string, string> = {
   '上午': '#c6a15b',
@@ -168,7 +169,7 @@ async function loadLeaflet(): Promise<any> {
       const script = document.createElement('script')
       script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
       script.onload = () => resolve()
-      script.onerror = () => reject(new Error('Leaflet script load failed'))
+      script.onerror = () => reject(LEAFLET_SCRIPT_LOAD_FAILED)
       document.head.appendChild(script)
     })
   }
@@ -277,7 +278,9 @@ async function initLeaflet() {
     mapInstance.invalidateSize?.()
     renderLeafletMarkers()
   } catch (e: any) {
-    mapErrorState.value = { key: 'map.overseasLoadFailed', params: { error: String(e.message || e) } }
+    mapErrorState.value = e === LEAFLET_SCRIPT_LOAD_FAILED
+      ? { key: 'map.leafletScriptLoadFailed' }
+      : { key: 'map.overseasLoadFailed', params: { error: String(e.message || e) } }
     mapReady.value = false
   } finally {
     _mapLoading = false
