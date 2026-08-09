@@ -16,6 +16,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,12 +28,25 @@ from app.services.providers.orchestrator import OrchestratorResult, ProviderOrch
 logger = logging.getLogger(__name__)
 
 _BASE_MAP_KEYWORDS = ("景点", "博物馆", "公园")
+_BASE_MAP_KEYWORDS_EN = ("tourist attractions", "museums", "parks")
 _PREFERENCE_MAP_KEYWORDS = {
     "亲子": ("亲子景点", "儿童博物馆", "动物园", "科技馆"),
     "文化": ("文化景点", "博物馆", "历史街区"),
     "美食": ("本地美食", "小吃街", "特色餐厅"),
     "海边": ("海滩", "海滨景点", "度假区"),
     "慢旅行": ("公园", "历史街区", "咖啡馆"),
+}
+_PREFERENCE_MAP_KEYWORDS_EN = {
+    "亲子": ("family attractions", "children's museums", "zoos"),
+    "family": ("family attractions", "children's museums", "zoos"),
+    "文化": ("cultural attractions", "museums", "historic sites"),
+    "culture": ("cultural attractions", "museums", "historic sites"),
+    "美食": ("local food", "food markets", "restaurants"),
+    "food": ("local food", "food markets", "restaurants"),
+    "海边": ("beaches", "waterfront attractions", "coastal parks"),
+    "beach": ("beaches", "waterfront attractions", "coastal parks"),
+    "慢旅行": ("parks", "historic districts", "cafes"),
+    "slow travel": ("parks", "historic districts", "cafes"),
 }
 _NON_TRAVEL_TERMS = (
     "亲子鉴定",
@@ -110,7 +124,7 @@ class RecallService:
                 assumptions=["QP 未提供有效的召回查询或目的地城市，跳过候选召回。"],
             )
 
-        keywords = _map_keywords(preferences)
+        keywords = _map_keywords(preferences, city=city)
 
         orch_result: OrchestratorResult = await self._orchestrator.recall(
             query=recall_query or city,
@@ -142,7 +156,7 @@ class RecallService:
         orch_result = await self._orchestrator.recall(
             query=query,
             city=city,
-            keywords=_map_keywords(preferences or []),
+            keywords=_map_keywords(preferences or [], city=city),
             context=context,
         )
         candidates, filter_assumptions = _filter_non_travel_candidates(orch_result.candidates)
@@ -156,16 +170,19 @@ class RecallService:
         )
 
 
-def _map_keywords(preferences: list[str] | None) -> list[str]:
-    """Convert user preferences into POI-oriented map keywords."""
+def _map_keywords(preferences: list[str] | None, *, city: str = "") -> list[str]:
+    """Convert preferences into provider-friendly keywords for the destination locale."""
+    is_latin_destination = bool(city and not re.search(r"[\u4e00-\u9fff]", city))
+    preference_map = _PREFERENCE_MAP_KEYWORDS_EN if is_latin_destination else _PREFERENCE_MAP_KEYWORDS
+    base_keywords = _BASE_MAP_KEYWORDS_EN if is_latin_destination else _BASE_MAP_KEYWORDS
     keywords: list[str] = []
     for pref in preferences or []:
-        expanded = _PREFERENCE_MAP_KEYWORDS.get(pref)
+        expanded = preference_map.get(pref)
         if expanded:
             keywords.extend(expanded)
         elif pref:
-            keywords.append(f"{pref}景点")
-    keywords.extend(_BASE_MAP_KEYWORDS)
+            keywords.append(f"{pref} attractions" if is_latin_destination else f"{pref}景点")
+    keywords.extend(base_keywords)
     return list(dict.fromkeys(k for k in keywords if k))
 
 

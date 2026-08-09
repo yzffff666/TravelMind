@@ -50,6 +50,11 @@ class SmokeCase:
     reset_conversation: bool = False
     expect_events: tuple[str, ...] = ()
     forbid_events: tuple[str, ...] = ()
+    ui_locale: str | None = None
+    expected_intent: str | None = None
+    expected_response_language: str | None = None
+    expected_destination: str | None = None
+    expected_changed_days: tuple[int, ...] = ()
 
 
 CASE_SETS: dict[str, list[SmokeCase]] = {
@@ -137,18 +142,27 @@ CASE_SETS: dict[str, list[SmokeCase]] = {
             conversation_alias="english",
             reset_conversation=True,
             expect_events=("intent_routed", "final_itinerary"),
+            ui_locale="en",
+            expected_intent="create",
+            expected_response_language="en",
         ),
         SmokeCase(
             name="english_qa",
             query="What is the plan for day 2?",
             conversation_alias="english",
             expect_events=("intent_routed", "final_text"),
+            ui_locale="en",
+            expected_intent="qa",
+            expected_response_language="en",
         ),
         SmokeCase(
             name="english_edit",
             query="Change day 2 afternoon to an indoor activity",
             conversation_alias="english",
             expect_events=("intent_routed", "edit_diff", "final_itinerary"),
+            ui_locale="en",
+            expected_intent="edit",
+            expected_response_language="en",
         ),
         SmokeCase(
             name="mixed_poi_create",
@@ -165,6 +179,49 @@ CASE_SETS: dict[str, list[SmokeCase]] = {
             conversation_alias="live_probe",
             reset_conversation=True,
             expect_events=("intent_routed",),
+        ),
+    ],
+    "live_e2e": [
+        SmokeCase(
+            name="live_create_hobart",
+            query="Plan a 3 day trip to Hobart with budget 5000 CNY, relaxed culture and food",
+            conversation_alias="live_e2e",
+            reset_conversation=True,
+            expect_events=("intent_routed", "final_itinerary"),
+            ui_locale="en",
+            expected_intent="create",
+            expected_response_language="en",
+            expected_destination="Hobart",
+        ),
+        SmokeCase(
+            name="live_qa_hobart",
+            query="What is the plan for day 2?",
+            conversation_alias="live_e2e",
+            expect_events=("intent_routed", "final_text"),
+            forbid_events=("edit_diff", "final_itinerary"),
+            ui_locale="en",
+            expected_intent="qa",
+            expected_response_language="en",
+        ),
+        SmokeCase(
+            name="live_edit_hobart",
+            query="Change day 2 to an indoor activity",
+            conversation_alias="live_e2e",
+            expect_events=("intent_routed", "edit_diff", "final_itinerary"),
+            ui_locale="en",
+            expected_intent="edit",
+            expected_response_language="en",
+            expected_changed_days=(2,),
+        ),
+        SmokeCase(
+            name="live_switch_oaxaca",
+            query="Let's switch the trip to Oaxaca",
+            conversation_alias="live_e2e",
+            expect_events=("intent_routed", "final_itinerary"),
+            ui_locale="en",
+            expected_intent="change_destination",
+            expected_response_language="en",
+            expected_destination="Oaxaca",
         ),
     ],
 }
@@ -227,6 +284,56 @@ def _event_names(events: list[dict[str, Any]]) -> list[str]:
         if isinstance(data, dict) and data.get("event"):
             names.append(str(data["event"]))
     return names
+
+
+def _event_payload(events: list[dict[str, Any]], event_name: str) -> dict[str, Any] | None:
+    for event in reversed(events):
+        if event.get("event") != event_name:
+            continue
+        data = event.get("data")
+        if not isinstance(data, dict):
+            return None
+        payload = data.get("payload")
+        return payload if isinstance(payload, dict) else data
+    return None
+
+
+def _validate_case_contract(case: SmokeCase, events: list[dict[str, Any]]) -> list[str]:
+    failures: list[str] = []
+    routed = _event_payload(events, "intent_routed") or {}
+    actual_intent = routed.get("intent")
+    if case.expected_intent and actual_intent != case.expected_intent:
+        failures.append(f"intent={case.expected_intent}, actual={actual_intent}")
+
+    actual_language = routed.get("response_language")
+    if case.expected_response_language and actual_language != case.expected_response_language:
+        failures.append(
+            f"response_language={case.expected_response_language}, actual={actual_language}"
+        )
+
+    if case.expected_destination:
+        final_payload = _event_payload(events, "final_itinerary") or {}
+        itinerary = final_payload.get("itinerary")
+        profile = itinerary.get("trip_profile") if isinstance(itinerary, dict) else None
+        actual_destination = profile.get("destination_city") if isinstance(profile, dict) else None
+        if actual_destination != case.expected_destination:
+            failures.append(
+                f"destination={case.expected_destination}, actual={actual_destination}"
+            )
+
+    if case.expected_changed_days:
+        edit_payload = _event_payload(events, "edit_diff") or {}
+        change_summary = edit_payload.get("change_summary")
+        actual_days = tuple(
+            int(day)
+            for day in (change_summary.get("changed_days") or [])
+            if isinstance(day, int)
+        ) if isinstance(change_summary, dict) else ()
+        if actual_days != case.expected_changed_days:
+            failures.append(
+                f"changed_days={case.expected_changed_days}, actual={actual_days}"
+            )
+    return failures
 
 
 def _write_jsonl(path: Path, events: list[dict[str, Any]]) -> None:
@@ -298,6 +405,20 @@ def build_run_metadata(
     structured_log_end_offset: int | None,
     results: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    cases: list[dict[str, Any]] = []
+    for result in results:
+        case_metadata = {
+            "name": result.get("name"),
+            "conversation_alias": result.get("conversation_alias"),
+            "conversation_id": result.get("conversation_id"),
+            "elapsed_ms": result.get("elapsed_ms"),
+            "event_count": result.get("event_count"),
+            "missing_expected_events": result.get("missing_expected_events") or [],
+            "forbidden_observed_events": result.get("forbidden_observed_events") or [],
+        }
+        if result.get("contract_failures"):
+            case_metadata["contract_failures"] = result["contract_failures"]
+        cases.append(case_metadata)
     return {
         "run_id": run_dir.name,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -310,18 +431,7 @@ def build_run_metadata(
         "structured_log_start_offset": structured_log_start_offset,
         "structured_log_end_offset": structured_log_end_offset,
         "case_count": len(results),
-        "cases": [
-            {
-                "name": result.get("name"),
-                "conversation_alias": result.get("conversation_alias"),
-                "conversation_id": result.get("conversation_id"),
-                "elapsed_ms": result.get("elapsed_ms"),
-                "event_count": result.get("event_count"),
-                "missing_expected_events": result.get("missing_expected_events") or [],
-                "forbidden_observed_events": result.get("forbidden_observed_events") or [],
-            }
-            for result in results
-        ],
+        "cases": cases,
     }
 
 
@@ -337,15 +447,18 @@ def run_case(
     conversation_id = None if case.reset_conversation else conversation_ids.get(case.conversation_alias)
     started = time.perf_counter()
     lines: list[str] = []
+    request_data = {
+        "query": case.query,
+        "user_id": str(user_id),
+        "conversation_id": conversation_id or "",
+    }
+    if case.ui_locale:
+        request_data["ui_locale"] = case.ui_locale
 
     with client.stream(
         "POST",
         query_path,
-        data={
-            "query": case.query,
-            "user_id": str(user_id),
-            "conversation_id": conversation_id or "",
-        },
+        data=request_data,
     ) as response:
         response.raise_for_status()
         header_conversation_id = response.headers.get("X-Conversation-ID")
@@ -361,6 +474,7 @@ def run_case(
     event_names = _event_names(events)
     missing_events = [name for name in case.expect_events if name not in event_names]
     forbidden_observed_events = [name for name in case.forbid_events if name in event_names]
+    contract_failures = _validate_case_contract(case, events)
     events_path = output_dir / f"{case.name}.events.jsonl"
     _write_jsonl(events_path, events)
 
@@ -374,6 +488,7 @@ def run_case(
         "event_names": event_names,
         "missing_expected_events": missing_events,
         "forbidden_observed_events": forbidden_observed_events,
+        "contract_failures": contract_failures,
         "events_path": str(events_path),
     }
 
@@ -389,14 +504,15 @@ def render_run_report(results: list[dict[str, Any]], *, base_url: str, query_pat
         "",
         "## Case Results",
         "",
-        "| Case | Elapsed ms | Events | Missing expected events | Forbidden observed events |",
-        "|------|------------|--------|-------------------------|---------------------------|",
+        "| Case | Elapsed ms | Events | Missing expected events | Forbidden observed events | Payload contract failures |",
+        "|------|------------|--------|-------------------------|---------------------------|---------------------------|",
     ]
     for result in results:
         missing = ", ".join(result["missing_expected_events"]) or "-"
         forbidden = ", ".join(result.get("forbidden_observed_events") or []) or "-"
+        contract = ", ".join(result.get("contract_failures") or []) or "-"
         lines.append(
-            f"| `{result['name']}` | {result['elapsed_ms']} | {result['event_count']} | {missing} | {forbidden} |"
+            f"| `{result['name']}` | {result['elapsed_ms']} | {result['event_count']} | {missing} | {forbidden} | {contract} |"
         )
 
     lines.extend(["", "## Event Names", ""])
@@ -417,7 +533,9 @@ def render_run_report(results: list[dict[str, Any]], *, base_url: str, query_pat
 
 def has_contract_failures(results: list[dict[str, Any]]) -> bool:
     return any(
-        result.get("missing_expected_events") or result.get("forbidden_observed_events")
+        result.get("missing_expected_events")
+        or result.get("forbidden_observed_events")
+        or result.get("contract_failures")
         for result in results
     )
 

@@ -69,6 +69,7 @@ class DayReplanService:
         replan_requests: list[dict[str, Any]],
         *,
         context: ProviderCallContext | None = None,
+        response_language: str | None = None,
     ) -> DayReplanReport:
         report = DayReplanReport()
         if not replan_requests:
@@ -204,18 +205,63 @@ class DayReplanService:
             selected_count = len(plan_result.skeleton.selections) if plan_result.skeleton else 0
             report.candidate_counts[day_index] = selected_count
 
-            if not plan_result.feasible or selected_count < required_count:
+            # A whole-day constraint edit should try to satisfy every slot,
+            # but a sparse destination must not turn a verified partial result
+            # into a total no-op. Keep the target-day scope bounded and retry
+            # with fewer slots before preserving the remaining original slots.
+            partial_replan = False
+            if (
+                (not plan_result.feasible or selected_count < required_count)
+                and not explicit_place
+                and not target_slot
+            ):
+                for fallback_count in range(min(required_count - 1, len(SLOT_LABELS)), 0, -1):
+                    fallback_plan = self._planner.plan(
+                        ranked,
+                        destination=destination,
+                        days=1,
+                        total_budget=_daily_budget(itinerary),
+                        preferences=terms,
+                        pace="relaxed" if "relaxed" in constraints else "moderate",
+                        constraints=constraints,
+                        excluded_titles=_locked_places(itinerary, day_index),
+                        anchor_location=_anchor_location(request),
+                        day_indexes=[day_index],
+                        slots_per_day=fallback_count,
+                    )
+                    fallback_selected_count = (
+                        len(fallback_plan.skeleton.selections)
+                        if fallback_plan.skeleton
+                        else 0
+                    )
+                    if fallback_plan.feasible and fallback_selected_count >= 1:
+                        plan_result = fallback_plan
+                        selected_count = fallback_selected_count
+                        partial_replan = selected_count < required_count
+                        report.planner_statuses[day_index] = (
+                            "planned_partial" if partial_replan else "planned"
+                        )
+                        report.candidate_counts[day_index] = selected_count
+                        break
+
+            if not plan_result.feasible or selected_count < 1:
                 report.assumptions.append(
                     f"第{day_index}天候选不足或无法组成满足约束的计划（{selected_count} 个），已保留原行程。"
                 )
                 continue
 
+            planned_slot_labels = (
+                [target_slot]
+                if target_slot
+                else target_slots[:selected_count]
+            )
             planned_slots = plan_slots_as_payloads(
                 plan_result.skeleton,
                 day_index,
-                slot_labels=target_slots,
+                slot_labels=planned_slot_labels,
+                response_language=response_language,
             )
-            if len(planned_slots) != required_count:
+            if len(planned_slots) != selected_count:
                 report.assumptions.append(f"第{day_index}天候选计划缺少目标时段，已保留原行程。")
                 continue
             if target_slot:
@@ -224,6 +270,18 @@ class DayReplanService:
                     planned if _normalize_slot(slot.get("slot")) == target_slot else slot
                     for slot in day.get("slots") or []
                 ]
+            elif partial_replan:
+                replacements = {
+                    _normalize_slot(label): planned
+                    for label, planned in zip(planned_slot_labels, planned_slots)
+                }
+                day["slots"] = [
+                    replacements.get(_normalize_slot(slot.get("slot")), slot)
+                    for slot in day.get("slots") or []
+                ]
+                report.assumptions.append(
+                    f"第{day_index}天仅找到 {selected_count}/{required_count} 个满足约束的可验证候选，已替换部分时段，其余时段保留原安排。"
+                )
             else:
                 day["theme"] = plan_result.skeleton.days[0].theme
                 day["slots"] = planned_slots
@@ -233,7 +291,11 @@ class DayReplanService:
                 (
                     f"第{day_index}天{scope}已替换为已验证地点“{explicit_place}”（候选{selected_count}个，来源召回排序）。"
                     if explicit_place
-                    else f"第{day_index}天{scope}已基于共享约束规划器重新规划（候选{selected_count}个，来源召回排序）。"
+                    else (
+                        f"第{day_index}天已基于共享约束规划器部分重规划（{selected_count}/{required_count}个时段，来源召回排序）。"
+                        if partial_replan
+                        else f"第{day_index}天{scope}已基于共享约束规划器重新规划（候选{selected_count}个，来源召回排序）。"
+                    )
                 )
             )
 

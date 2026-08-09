@@ -1199,6 +1199,7 @@ async def _stream_edit_result(
                         conversation_id=conversation_id,
                         user_id=user_id,
                     ),
+                    response_language=response_language,
                 )
                 requested_days = {
                     int(request["day_index"])

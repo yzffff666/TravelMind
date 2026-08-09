@@ -183,7 +183,7 @@ class TestEditDiffEvent:
         import app.api.travel as travel_api
 
         class FakeDayReplanService:
-            async def replan_days(self, itinerary, replan_requests, *, context=None):
+            async def replan_days(self, itinerary, replan_requests, *, context=None, response_language=None):
                 assert replan_requests[0]["day_index"] == 2
                 day2 = next(day for day in itinerary["days"] if day["day_index"] == 2)
                 day2["theme"] = "候选驱动的室内体验"
@@ -272,7 +272,7 @@ class TestEditDiffEvent:
         original = _make_itinerary()
 
         class FakeDayReplanService:
-            async def replan_days(self, itinerary, replan_requests, *, context=None):
+            async def replan_days(self, itinerary, replan_requests, *, context=None, response_language=None):
                 request = replan_requests[0]
                 assert request["explicit_place"] == "上海博物馆"
                 assert request["target_slot"] == "下午"
@@ -350,7 +350,7 @@ class TestEditDiffEvent:
         persisted = False
 
         class FakeDayReplanService:
-            async def replan_days(self, itinerary, replan_requests, *, context=None):
+            async def replan_days(self, itinerary, replan_requests, *, context=None, response_language=None):
                 assert replan_requests[0]["explicit_place"] == "上海博物馆"
 
                 class Report:
@@ -404,7 +404,7 @@ class TestEditDiffEvent:
         original_day2 = original["days"][1]
 
         class FakeDayReplanService:
-            async def replan_days(self, itinerary, replan_requests, *, context=None):
+            async def replan_days(self, itinerary, replan_requests, *, context=None, response_language=None):
                 request = replan_requests[0]
                 assert request["day_index"] == 2
                 assert request["target_slot"] == "下午"
@@ -490,7 +490,7 @@ class TestEditDiffEvent:
         persisted = False
 
         class FakeDayReplanService:
-            async def replan_days(self, itinerary, replan_requests, *, context=None):
+            async def replan_days(self, itinerary, replan_requests, *, context=None, response_language=None):
                 class Report:
                     applied_days = []
                     assumptions = ["第2天候选不足或无法组成满足约束的计划（0 个），已保留原行程。"]
@@ -550,7 +550,7 @@ class TestEditDiffEvent:
         persisted = False
 
         class FailingDayReplanService:
-            async def replan_days(self, itinerary, replan_requests, *, context=None):
+            async def replan_days(self, itinerary, replan_requests, *, context=None, response_language=None):
                 raise RuntimeError("provider timeout")
 
         async def fake_persist(**kwargs):

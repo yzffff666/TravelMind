@@ -146,6 +146,7 @@ def test_pending_clarification_reclassifies_flexible_chat_reply():
         ("不去深圳了，换成厦门", "厦门"),
         ("change the destination to Hangzhou", "Hangzhou"),
         ("let's go to Xiamen instead", "Xiamen"),
+        ("Let's switch the trip to Oaxaca", "Oaxaca"),
     ],
 )
 def test_destination_switch_requires_explicit_replacement(query: str, incoming: str):

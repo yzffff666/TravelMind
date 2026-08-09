@@ -5,11 +5,14 @@ from scripts.observability_smoke import (
     _conversation_id_from_events,
     _event_names,
     _file_size,
+    _validate_case_contract,
     has_contract_failures,
     _iter_log_events_since,
     _parse_sse_events,
     build_run_metadata,
     render_run_report,
+    run_case,
+    SmokeCase,
     write_candidate_dataset_manifest_artifacts,
     write_candidate_decision_artifact,
 )
@@ -62,6 +65,115 @@ def test_case_sets_include_single_live_probe():
     assert cases[0].reset_conversation is True
     assert cases[0].conversation_alias == "live_probe"
     assert "Phuket" in cases[0].query
+
+
+def test_live_e2e_cases_assert_intent_language_and_destination():
+    cases = {case.name: case for case in CASE_SETS["live_e2e"]}
+
+    assert set(cases) == {
+        "live_create_hobart",
+        "live_qa_hobart",
+        "live_edit_hobart",
+        "live_switch_oaxaca",
+    }
+    assert cases["live_create_hobart"].ui_locale == "en"
+    assert cases["live_create_hobart"].expected_intent == "create"
+    assert cases["live_create_hobart"].expected_response_language == "en"
+    assert cases["live_create_hobart"].expected_destination == "Hobart"
+    assert cases["live_switch_oaxaca"].expected_intent == "change_destination"
+    assert cases["live_switch_oaxaca"].expected_destination == "Oaxaca"
+    assert cases["live_edit_hobart"].expected_changed_days == (2,)
+
+
+def test_case_contract_rejects_wrong_intent_language_or_destination():
+    case = CASE_SETS["live_e2e"][0]
+    events = [
+        {
+            "event": "intent_routed",
+            "data": {
+                "payload": {"intent": "qa", "response_language": "zh-CN"}
+            },
+        },
+        {
+            "event": "final_itinerary",
+            "data": {
+                "payload": {
+                    "itinerary": {"trip_profile": {"destination_city": "Paris"}}
+                }
+            },
+        },
+    ]
+
+    failures = _validate_case_contract(case, events)
+
+    assert "intent=create, actual=qa" in failures
+    assert "response_language=en, actual=zh-CN" in failures
+    assert "destination=Hobart, actual=Paris" in failures
+
+
+def test_has_contract_failures_detects_payload_assertions():
+    assert has_contract_failures(
+        [{"missing_expected_events": [], "forbidden_observed_events": [], "contract_failures": ["bad"]}]
+    )
+
+
+def test_run_case_forwards_ui_locale_and_checks_payload_contract(tmp_path):
+    class FakeResponse:
+        headers = {"X-Conversation-ID": "conv-hobart"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_lines(self):
+            return iter(
+                [
+                    "event: intent_routed",
+                    'data: {"payload":{"intent":"create","response_language":"en"}}',
+                    "",
+                    "event: final_itinerary",
+                    'data: {"payload":{"itinerary":{"trip_profile":{"destination_city":"Hobart"}}}}',
+                    "",
+                ]
+            )
+
+    class FakeClient:
+        def __init__(self):
+            self.request = None
+
+        def stream(self, method, path, *, data):
+            self.request = {"method": method, "path": path, "data": data}
+            return FakeResponse()
+
+    client = FakeClient()
+    case = SmokeCase(
+        name="live_create_hobart",
+        query="Plan a 3 day trip to Hobart",
+        conversation_alias="live_e2e",
+        reset_conversation=True,
+        expect_events=("intent_routed", "final_itinerary"),
+        ui_locale="en",
+        expected_intent="create",
+        expected_response_language="en",
+        expected_destination="Hobart",
+    )
+
+    result = run_case(
+        client,
+        case,
+        user_id=1,
+        query_path="/api/travel/query",
+        conversation_ids={},
+        output_dir=tmp_path,
+    )
+
+    assert client.request["data"]["ui_locale"] == "en"
+    assert result["contract_failures"] == []
 
 
 def test_parse_sse_events_handles_named_and_data_events():

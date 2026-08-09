@@ -37,6 +37,7 @@ _DESTINATION_REPLACEMENT_PATTERN = re.compile(
     r"不去.+?(?:去|换成|改去)|"
     r"还是\s*(?:改去|换去|去)|"
     r"change\s+(?:the\s+)?destination\s+to|"
+    r"switch\s+(?:the\s+)?(?:trip|destination|plan)\s+to|"
     r"(?:go|travel)\s+to.+\s+instead|"
     r"let['’]?s\s+go\s+to.+\s+instead"
     r")",

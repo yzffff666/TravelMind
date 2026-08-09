@@ -157,6 +157,27 @@ async def test_day_replan_uses_ranked_candidates_for_target_day_only():
 
 
 @pytest.mark.asyncio
+async def test_day_replan_localizes_generated_activity_hints_for_english_response():
+    itinerary = _make_itinerary()
+    recall = _FakeRecall([
+        _candidate("Shanghai Museum"),
+        _candidate("Shanghai Art Museum"),
+        _candidate("K11 Art Mall"),
+    ])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "constraints": ["indoor"], "raw_request": "Change day 2 to indoor"}],
+        response_language="en",
+    )
+
+    assert report.applied_days == [2]
+    activities = [slot["activity"] for slot in itinerary["days"][1]["slots"]]
+    assert all(not any("\u4e00" <= char <= "\u9fff" for char in activity) for activity in activities)
+
+
+@pytest.mark.asyncio
 async def test_day_replan_keeps_existing_day_when_candidates_are_insufficient():
     itinerary = _make_itinerary()
     original_day2 = copy.deepcopy(itinerary["days"][1])
@@ -582,6 +603,34 @@ async def test_indoor_replan_requires_indoor_candidate_relevance():
     assert "外滩" not in places
     assert "南京路步行街" not in places
     assert set(places) == {"上海博物馆", "上海当代艺术博物馆", "K11购物艺术中心"}
+
+
+@pytest.mark.asyncio
+async def test_indoor_replan_applies_verified_subset_when_locked_days_exhaust_supply():
+    itinerary = _make_itinerary()
+    itinerary["days"][0]["slots"][0]["place"] = "上海博物馆"
+    itinerary["days"][2]["slots"][0]["place"] = "上海当代艺术博物馆"
+    itinerary["days"][2]["slots"][1]["place"] = "K11购物艺术中心"
+    original_day2 = copy.deepcopy(itinerary["days"][1])
+    recall = _FakeRecall([
+        _candidate("上海博物馆"),
+        _candidate("上海当代艺术博物馆"),
+        _candidate("K11购物艺术中心"),
+        _candidate("上海科技馆"),
+    ])
+    service = DayReplanService(recall_service=recall)
+
+    report = await service.replan_days(
+        itinerary,
+        [{"day_index": 2, "constraints": ["indoor"], "raw_request": "把第二天改成室内"}],
+    )
+
+    assert report.applied_days == [2]
+    assert report.candidate_counts[2] == 1
+    assert any("部分时段" in assumption for assumption in report.assumptions)
+    day2 = itinerary["days"][1]
+    assert day2["slots"][0]["place"] == "上海科技馆"
+    assert day2["slots"][1:] == original_day2["slots"][1:]
 
 
 @pytest.mark.asyncio

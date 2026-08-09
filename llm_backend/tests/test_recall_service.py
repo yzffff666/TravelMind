@@ -140,6 +140,21 @@ class TestRecallCandidateHygiene:
         assert "文化景点" in keywords
         assert "景点" in keywords
 
+    def test_latin_destination_keywords_use_provider_friendly_english_terms(self):
+        keywords = _map_keywords(["culture", "food"], city="Tromso")
+
+        assert "cultural attractions" in keywords
+        assert "local food" in keywords
+        assert "tourist attractions" in keywords
+        assert not any("景点" in keyword or "博物馆" in keyword for keyword in keywords)
+
+    def test_chinese_destination_keywords_keep_chinese_terms(self):
+        keywords = _map_keywords(["文化"], city="敦煌")
+
+        assert "文化景点" in keywords
+        assert "博物馆" in keywords
+        assert "景点" in keywords
+
     def test_filters_obvious_non_travel_candidates(self):
         candidates = [
             ProviderCandidate(

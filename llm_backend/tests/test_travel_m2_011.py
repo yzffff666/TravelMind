@@ -140,6 +140,7 @@ def test_qp_negated_or_preserving_mutation_language_is_read_only(query):
         ("不去澳门了，换成厦门", "厦门"),
         ("Change the destination to Kyoto", "Kyoto"),
         ("Let's go to Paris instead", "Paris"),
+        ("Let's switch the trip to Oaxaca", "Oaxaca"),
         ("帮我规划深圳", "深圳"),
     ],
 )

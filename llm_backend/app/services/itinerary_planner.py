@@ -512,6 +512,7 @@ def plan_slots_as_payloads(
     day_index: int,
     *,
     slot_labels: Iterable[str] | None = None,
+    response_language: str | None = None,
 ) -> list[dict[str, Any]]:
     """Render one planned day for the edit API without depending on an LLM."""
     day = next((item for item in skeleton.days if item.day_index == day_index), None)
@@ -530,7 +531,11 @@ def plan_slots_as_payloads(
             image_url = photos[0]
         payload: dict[str, Any] = {
             "slot": requested_slots[position] if requested_slots else selection.slot,
-            "activity": _activity_hint(candidate, selection.slot),
+            "activity": _activity_hint(
+                candidate,
+                selection.slot,
+                response_language=response_language,
+            ),
             "place": candidate.title,
             "transit": "公共交通/步行",
             "alternatives": [],
@@ -635,6 +640,10 @@ def _theme_for(day_index: int, constraints: tuple[str, ...], preferences: tuple[
     return "候选驱动的城市探索"
 
 
-def _activity_hint(candidate: Any, slot: str) -> str:
+def _activity_hint(candidate: Any, slot: str, *, response_language: str | None = None) -> str:
+    if response_language == "en":
+        if slot == "晚上":
+            return f"Enjoy an evening experience at {candidate.title}"
+        return f"Explore {candidate.title}"
     suffix = "游览" if slot != "晚上" else "夜间体验"
     return f"在{candidate.title}{suffix}"

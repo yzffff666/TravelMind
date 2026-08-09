@@ -1,0 +1,37 @@
+[
+  {
+    "case_id": "live_tromso",
+    "destination": "Tromso",
+    "query": "Tromso tourist attractions",
+    "preferences": ["culture"],
+    "min_validated_candidates": 3
+  },
+  {
+    "case_id": "live_hobart",
+    "destination": "Hobart",
+    "query": "Hobart tourist attractions",
+    "preferences": ["culture"],
+    "min_validated_candidates": 3
+  },
+  {
+    "case_id": "live_valletta",
+    "destination": "Valletta",
+    "query": "Valletta tourist attractions",
+    "preferences": ["culture"],
+    "min_validated_candidates": 3
+  },
+  {
+    "case_id": "live_san_francisco",
+    "destination": "San Francisco",
+    "query": "San Francisco tourist attractions",
+    "preferences": ["culture"],
+    "min_validated_candidates": 3
+  },
+  {
+    "case_id": "live_oaxaca",
+    "destination": "Oaxaca",
+    "query": "Oaxaca tourist attractions",
+    "preferences": ["culture"],
+    "min_validated_candidates": 3
+  }
+]
